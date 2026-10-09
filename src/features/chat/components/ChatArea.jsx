@@ -379,7 +379,7 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention })
                      }
                      return <>
                        {m.reply_to && <button type="button" onClick={() => jumpToMessage(m.reply_to.id)} className="mb-1.5 max-w-full border-l-2 border-violet-300/60 pl-2 text-left text-xs text-slate-400 hover:text-violet-200"><span className="font-semibold text-violet-200">{m.reply_to.username}</span><span className="ml-2 line-clamp-1">{m.reply_to.content || 'Ek'}</span></button>}
-                       <span className={`text-sm text-slate-300 ${isGrouped ? 'leading-5' : 'mt-0.5 leading-relaxed'}`}><FormattedMessage content={m.content || ''} userMap={mentionUserMap} roleMap={mentionRoleMap} channelMap={mentionChannelMap} onChannelClick={onOpenChannelMention} onUserClick={(profile) => setViewedProfile(profile)} />{m.is_edited && <span className="text-[10px] text-slate-500 ml-1 select-none">(düzenlendi)</span>}</span>
+                       <span className={`text-sm text-slate-300 ${isGrouped ? 'leading-5' : 'mt-0.5 leading-relaxed'}`}><FormattedMessage content={m.content || ''} userMap={mentionUserMap} roleMap={mentionRoleMap} channelMap={mentionChannelMap} onChannelClick={onOpenChannelMention} onUserClick={(profile) => setViewedProfile(profile)} onPublicProfileClick={(profile) => setViewedProfile(profile)} />{m.is_edited && <span className="text-[10px] text-slate-500 ml-1 select-none">(düzenlendi)</span>}</span>
                      </>;
                    };
 

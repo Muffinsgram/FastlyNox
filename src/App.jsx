@@ -27,6 +27,7 @@ import { usePresenceStore } from './store/usePresenceStore';
 import { ActionContextMenu } from './components/layout/ActionContextMenu';
 import { SharedProfilePage } from './components/layout/SharedProfilePage';
 import { ServerViewBoundary } from './components/layout/ServerViewBoundary';
+import { NsfwConsentModal } from './components/layout/NsfwConsentModal';
 
 const CreateServerModal = lazy(() => import('./features/servers/components/CreateServerModal').then((module) => ({ default: module.CreateServerModal })));
 const ServerSettingsModal = lazy(() => import('./features/servers/components/ServerSettingsModal').then((module) => ({ default: module.ServerSettingsModal })));
@@ -58,6 +59,18 @@ export default function App() {
     applyAppPreferences(getAppPreferences(user?.id));
   }, [user?.id]);
 
+  useEffect(() => {
+    if (!window.fastlynoxDesktop) return undefined;
+    document.documentElement.classList.add('electron-desktop');
+    const updateWindowState = (state) => setIsWindowMaximized(Boolean(state?.maximized));
+    const unsubscribe = window.fastcordWindow?.onWindowState?.(updateWindowState);
+    void window.fastcordWindow?.isMaximized?.().then((maximized) => updateWindowState({ maximized })).catch(() => {});
+    return () => {
+      unsubscribe?.();
+      document.documentElement.classList.remove('electron-desktop');
+    };
+  }, []);
+
   // App State
   const [layout, setLayout] = useState('home'); 
   const [showSettings, setShowSettings] = useState(false);
@@ -86,6 +99,7 @@ export default function App() {
   const [voiceMemberMenuRequest, setVoiceMemberMenuRequest] = useState(null);
   const [voiceNotice, setVoiceNotice] = useState('');
   const [windowNotice, setWindowNotice] = useState('');
+  const [nsfwPromptChannel, setNsfwPromptChannel] = useState(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState(Boolean(document.fullscreenElement));
   const [networkOnline, setNetworkOnline] = useState(() => globalThis.navigator?.onLine ?? true);
 
@@ -440,8 +454,8 @@ export default function App() {
   const handleChannelSelect = (channel) => {
     setServerEventsFor(null);
     if (channel.nsfw && !sessionStorage.getItem('fastcord:nsfw-consent')) {
-      if (!window.confirm('Bu kanal 18+ olarak işaretlenmiş. Devam etmek istediğini onaylıyor musun?')) return;
-      sessionStorage.setItem('fastcord:nsfw-consent', '1');
+      setNsfwPromptChannel(channel);
+      return;
     }
     if (channel.type === 'voice') {
       if (voiceSession && voiceSession.channelId !== channel.id) {
@@ -743,6 +757,7 @@ export default function App() {
         {editingChannel && canManageChannels && <EditChannelModal serverId={activeServerId} channel={editingChannel} onClose={() => setEditingChannel(null)} />}
         {showCreateServer && <CreateServerModal onClose={() => setShowCreateServer(false)} />}
       </Suspense>
+      {nsfwPromptChannel && <NsfwConsentModal channelName={nsfwPromptChannel.name} onCancel={() => setNsfwPromptChannel(null)} onContinue={() => { const channel = nsfwPromptChannel; sessionStorage.setItem('fastcord:nsfw-consent', '1'); setNsfwPromptChannel(null); handleChannelSelect(channel); }} />}
       <ActionContextMenu position={managementContext} items={managementMenuItems} onClose={() => setManagementContext(null)} label={managementContext?.kind === 'category' ? 'Kategori işlemleri' : 'Kanal işlemleri'} />
     </div>
   );

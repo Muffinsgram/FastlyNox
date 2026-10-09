@@ -1,11 +1,33 @@
-import { Fragment } from 'react';
-import { Hash, Volume2 } from 'lucide-react';
+import { Fragment, useEffect, useState } from 'react';
+import { ArrowUpRight, Hash, LoaderCircle, Volume2 } from 'lucide-react';
+import { fetchPublicProfile, getAvatarUrl } from '../../../lib/profileMedia';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const ENTITY_ID = `(?:${UUID}|[0-9]+)`;
-const INLINE = new RegExp(`(<@&${ENTITY_ID}>|<@!?${ENTITY_ID}>|<#${ENTITY_ID}>|@everyone|@[\\p{L}\\p{N}_.-]+|\\*\\*[^\\n*]+\\*\\*|__[^\\n_]+__|~~[^\\n~]+~~|\\*[^\\n*]+\\*|_[^\\n_]+_|\\x60[^\\n\\x60]+\\x60)`, 'giu');
+const PROFILE_LINK = String.raw`(?:https?://)?(?:www\.)?fastlynox(?:\.[a-z0-9-]+)*/user/[0-9]+`;
+const INLINE = new RegExp(`(${PROFILE_LINK}|<@&${ENTITY_ID}>|<@!?${ENTITY_ID}>|<#${ENTITY_ID}>|@everyone|@[\\p{L}\\p{N}_.-]+|\\*\\*[^\\n*]+\\*\\*|__[^\\n_]+__|~~[^\\n~]+~~|\\*[^\\n*]+\\*|_[^\\n_]+_|\\x60[^\\n\\x60]+\\x60)`, 'giu');
 
-function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, showSyntax) {
+function PublicProfileLinkCard({ publicId, onOpen }) {
+  const [profile, setProfile] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void fetchPublicProfile(publicId).then((result) => {
+      if (!active) return;
+      setProfile(result);
+      setLoaded(true);
+    });
+    return () => { active = false; };
+  }, [publicId]);
+
+  return <button type="button" onClick={() => profile ? onOpen?.(profile) : undefined} disabled={!profile} title={profile ? `${profile.username} · profili görüntüle` : `Fastlynox profil bağlantısı · #${publicId}`} className="my-1 inline-flex max-w-full items-center gap-2 rounded-[13px] border border-violet-200/15 bg-[linear-gradient(110deg,rgba(119,102,255,.13),rgba(46,56,83,.18))] px-2.5 py-1.5 text-left align-middle transition hover:border-violet-200/30 hover:bg-violet-300/[0.13] disabled:cursor-default">
+    {profile ? <img src={getAvatarUrl(profile.avatar_url, profile.username)} alt="" className="h-8 w-8 shrink-0 rounded-[10px] object-cover ring-1 ring-white/10" /> : <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] bg-violet-300/10 text-violet-200">{loaded ? <span className="text-[10px] font-bold">FN</span> : <LoaderCircle className="h-4 w-4 animate-spin" />}</span>}
+    <span className="min-w-0"><span className="block max-w-52 truncate text-xs font-bold text-violet-100">{profile?.username || (loaded ? 'Profil bulunamadı' : 'Fastlynox profili')}</span><span className="mt-0.5 block text-[9px] font-medium text-slate-400">{profile ? `Kullanıcı profili · #${profile.public_id || publicId}` : `fastlynox/user/${publicId}`}</span></span>
+    {profile && <ArrowUpRight className="ml-1 h-3.5 w-3.5 shrink-0 text-violet-200/70" />}
+  </button>;
+}
+
+function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, onPublicProfileClick, showSyntax) {
   const pieces = [];
   let cursor = 0;
   for (const match of text.matchAll(INLINE)) {
@@ -16,7 +38,10 @@ function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, showSy
     const userMatch = token.match(new RegExp(`^<@!?(${ENTITY_ID})>$`, 'i'));
     const roleMatch = token.match(new RegExp(`^<@&(${ENTITY_ID})>$`, 'i'));
     const channelMatch = token.match(new RegExp(`^<#(${ENTITY_ID})>$`, 'i'));
-    if (userMatch) {
+    const profileLinkMatch = token.match(/^\s*(?:https?:\/\/)?(?:www\.)?fastlynox(?:\.[a-z0-9-]+)*\/user\/(\d+)\s*$/iu);
+    if (profileLinkMatch) {
+      pieces.push(<PublicProfileLinkCard key={key} publicId={profileLinkMatch[1]} onOpen={onPublicProfileClick} />);
+    } else if (userMatch) {
       const profile = maps.users?.[userMatch[1]];
       pieces.push(profile
         ? <button key={key} type="button" title={`@${profile.username} · profili aç`} onClick={() => onUserClick?.(profile)} className="rounded bg-violet-300/15 px-1 font-medium text-violet-100 hover:bg-violet-300/25">@{profile.username}</button>
@@ -43,7 +68,7 @@ function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, showSy
   return pieces;
 }
 
-export function FormattedMessage({ content, userMap = {}, roleMap = {}, channelMap = {}, onChannelClick, onUserClick, showSyntax = false }) {
+export function FormattedMessage({ content, userMap = {}, roleMap = {}, channelMap = {}, onChannelClick, onUserClick, onPublicProfileClick, showSyntax = false }) {
   const maps = { users: userMap, roles: roleMap, channels: channelMap };
   const lines = (content || '').split('\n');
   const blocks = [];
@@ -51,9 +76,9 @@ export function FormattedMessage({ content, userMap = {}, roleMap = {}, channelM
     if (lines[index].startsWith('>')) {
       const quoteLines = [];
       while (index < lines.length && lines[index].startsWith('>')) quoteLines.push(lines[index++].replace(/^> ?/, ''));
-      blocks.push(<blockquote key={`quote-${index}`} className={`my-1 border-l-[3px] border-violet-300/70 pl-3 ${showSyntax ? 'text-slate-100' : 'text-slate-300'}`}>{quoteLines.map((line, quoteIndex) => <div key={quoteIndex}>{showSyntax && <span className="text-violet-200/35">&gt; </span>}{renderInline(line, `quote-${index}-${quoteIndex}`, maps, onChannelClick, onUserClick, showSyntax)}</div>)}</blockquote>);
+      blocks.push(<blockquote key={`quote-${index}`} className={`my-1 border-l-[3px] border-violet-300/70 pl-3 ${showSyntax ? 'text-slate-100' : 'text-slate-300'}`}>{quoteLines.map((line, quoteIndex) => <div key={quoteIndex}>{showSyntax && <span className="text-violet-200/35">&gt; </span>}{renderInline(line, `quote-${index}-${quoteIndex}`, maps, onChannelClick, onUserClick, onPublicProfileClick, showSyntax)}</div>)}</blockquote>);
     } else {
-      blocks.push(<span key={`line-${index}`}>{renderInline(lines[index], `line-${index}`, maps, onChannelClick, onUserClick, showSyntax)}{index < lines.length - 1 ? '\n' : ''}</span>);
+      blocks.push(<span key={`line-${index}`}>{renderInline(lines[index], `line-${index}`, maps, onChannelClick, onUserClick, onPublicProfileClick, showSyntax)}{index < lines.length - 1 ? '\n' : ''}</span>);
       index += 1;
     }
   }

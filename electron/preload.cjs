@@ -5,6 +5,12 @@ contextBridge.exposeInMainWorld('fastcordWindow', {
   minimize: () => windowControl('minimize'),
   toggleMaximize: () => windowControl('maximize'),
   close: () => windowControl('close'),
+  isMaximized: () => ipcRenderer.invoke('fastlynox:is-maximized'),
+  onWindowState: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on('fastlynox:window-state', listener);
+    return () => ipcRenderer.removeListener('fastlynox:window-state', listener);
+  },
 });
 
 contextBridge.exposeInMainWorld('fastlynoxDesktop', {

@@ -12,6 +12,12 @@ function publishUpdateStatus(status) {
   }
 }
 
+function publishWindowState() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('fastlynox:window-state', { maximized: mainWindow.isMaximized() });
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -30,9 +36,16 @@ function createWindow() {
     },
   });
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.on('maximize', publishWindowState);
+  mainWindow.on('unmaximize', publishWindowState);
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.maximize();
+    mainWindow.show();
+    publishWindowState();
+  });
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.send('fastlynox:update-status', lastUpdateStatus);
+    publishWindowState();
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://') || url.startsWith('mailto:')) void shell.openExternal(url);
@@ -68,6 +81,7 @@ ipcMain.handle('fastlynox:window-control', (event, action) => {
 });
 
 ipcMain.handle('fastlynox:app-version', () => app.getVersion());
+ipcMain.handle('fastlynox:is-maximized', (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() || false);
 ipcMain.handle('fastlynox:check-update', async () => {
   if (!app.isPackaged) return { state: 'development' };
   publishUpdateStatus({ state: 'checking' });

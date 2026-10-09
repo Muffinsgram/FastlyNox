@@ -4,6 +4,19 @@ import { getUploadLimit } from '../hooks/useUploadLimit';
 
 const PROFILE_MEDIA_BUCKET = 'profile-media';
 let profileExtrasSupported;
+const publicProfileCache = new Map();
+
+export async function fetchPublicProfile(publicId) {
+  const normalizedId = String(publicId || '').trim();
+  if (!/^\d+$/u.test(normalizedId)) return null;
+  if (publicProfileCache.has(normalizedId)) return publicProfileCache.get(normalizedId);
+  const { data, error } = await supabase.from('profiles')
+    .select('id,public_id,username,avatar_url,banner_url,bio,status_text,status_expires_at,banner_position_x,banner_position_y,banner_zoom')
+    .eq('public_id', normalizedId).maybeSingle();
+  if (error) return null;
+  publicProfileCache.set(normalizedId, data || null);
+  return data || null;
+}
 
 export function getAvatarUrl(value, fallback = 'Fastlynox') {
   if (typeof value === 'string' && /^https?:\/\//i.test(value)) return value;
