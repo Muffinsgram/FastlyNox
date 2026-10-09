@@ -1,7 +1,7 @@
 {
   "name": "fastlynox-app",
   "private": true,
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "Fastlynox desktop chat and voice application",
   "author": "Muffinsgram",
   "type": "module",
@@ -10,7 +10,7 @@
     "dev": "vite",
     "desktop:dev": "electron .",
     "build": "vite build",
-    "dist:win": "node scripts/build-windows.cjs",
+    "dist:win": "node scripts/build-windows.cjs --publish never",
     "release:win": "node scripts/build-windows.cjs --publish always",
     "lint": "oxlint",
     "test": "node --test",
