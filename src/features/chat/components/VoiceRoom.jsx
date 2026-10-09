@@ -566,6 +566,8 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const [controlError, setControlError] = useState('');
   const [microphoneBeforeDeafen, setMicrophoneBeforeDeafen] = useState(false);
   const [soundboardOpen, setSoundboardOpen] = useState(false);
+  const [screenSources, setScreenSources] = useState([]);
+  const [screenSourcePickerOpen, setScreenSourcePickerOpen] = useState(false);
   const currentUserId = useAuthStore((state) => state.user?.id);
   const voiceAudioSettings = getAppPreferences(currentUserId).voiceAudioSettings || DEFAULT_VOICE_AUDIO_SETTINGS;
 
@@ -576,6 +578,45 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     try { await action(); }
     catch (error) { setControlError(error instanceof Error ? error.message : 'Medya aygıtı değiştirilemedi.'); }
     finally { setPendingControl(''); }
+  };
+
+  const startScreenShare = async () => {
+    if (isScreenShareEnabled) {
+      await toggle('screen', () => localParticipant.setScreenShareEnabled(false));
+      return;
+    }
+    if (!window.fastlynoxDesktop?.listScreenSources) {
+      await toggle('screen', () => localParticipant.setScreenShareEnabled(true));
+      return;
+    }
+    setPendingControl('screen');
+    setControlError('');
+    try {
+      const sources = await window.fastlynoxDesktop.listScreenSources();
+      if (!sources?.length) throw new Error('Paylaşılabilir ekran veya pencere bulunamadı.');
+      setScreenSources(sources);
+      setScreenSourcePickerOpen(true);
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : 'Ekran kaynakları alınamadı.');
+    } finally {
+      setPendingControl('');
+    }
+  };
+
+  const chooseScreenSource = async (source) => {
+    if (pendingControl) return;
+    setPendingControl('screen');
+    setControlError('');
+    try {
+      const selected = await window.fastlynoxDesktop.selectScreenSource(source.id);
+      if (!selected) throw new Error('Ekran kaynağı seçilemedi. Yeniden dene.');
+      await localParticipant.setScreenShareEnabled(true);
+      setScreenSourcePickerOpen(false);
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : 'Ekran paylaşımı başlatılamadı.');
+    } finally {
+      setPendingControl('');
+    }
   };
 
   const toggleDeafen = () => toggle('deafen', async () => {
@@ -595,7 +636,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     { key: 'mic', label: isMicrophoneEnabled ? 'Mikrofonu kapat' : 'Mikrofonu aç', active: isMicrophoneEnabled, icon: isMicrophoneEnabled ? Mic : MicOff, action: () => toggle('mic', () => localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings))) },
     { key: 'deafen', label: isDeafened ? 'Kulaklığı aç' : 'Kulaklığı kapat', active: isDeafened, icon: isDeafened ? HeadphoneOff : Headphones, action: toggleDeafen },
     { key: 'camera', label: isCameraEnabled ? 'Kamerayı kapat' : 'Kamerayı aç', active: isCameraEnabled, icon: isCameraEnabled ? CameraOff : Camera, action: () => toggle('camera', () => localParticipant.setCameraEnabled(!isCameraEnabled)) },
-    { key: 'screen', label: isScreenShareEnabled ? 'Ekran paylaşımını durdur' : 'Ekran paylaş', active: isScreenShareEnabled, icon: MonitorUp, action: () => toggle('screen', () => localParticipant.setScreenShareEnabled(!isScreenShareEnabled)) },
+    { key: 'screen', label: isScreenShareEnabled ? 'Ekran paylaşımını durdur' : 'Ekran paylaş', active: isScreenShareEnabled, icon: MonitorUp, action: startScreenShare },
   ];
 
   return (
@@ -622,6 +663,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
           {!compact && <span className="text-xs font-semibold">Ayrıl</span>}
         </button>
       </div>
+      {screenSourcePickerOpen && <div className="fixed inset-0 z-[1500] grid place-items-center bg-[#03050a]/80 p-4 backdrop-blur-md" onMouseDown={(event) => { if (event.target === event.currentTarget) setScreenSourcePickerOpen(false); }}><section role="dialog" aria-modal="true" aria-labelledby="screen-source-title" className="w-full max-w-2xl overflow-hidden rounded-[24px] border border-white/[0.12] bg-[linear-gradient(150deg,#1a2030,#10141d)] shadow-[0_30px_100px_rgba(0,0,0,.72)]"><header className="flex items-center gap-3 border-b border-white/[0.07] px-5 py-4"><span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-300/10 text-violet-200"><MonitorUp className="h-4 w-4" /></span><div className="min-w-0 flex-1"><h2 id="screen-source-title" className="text-sm font-bold text-white">Paylaşılacak ekranı seç</h2><p className="mt-0.5 text-[10px] text-slate-500">Tüm ekranı veya tek bir uygulama penceresini paylaş.</p></div><button type="button" onClick={() => setScreenSourcePickerOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-white/[0.07] hover:text-white" aria-label="Kapat"><X className="h-4 w-4" /></button></header><div className="grid max-h-[min(62vh,540px)] grid-cols-1 gap-3 overflow-y-auto p-4 sm:grid-cols-2">{screenSources.map((source) => <button key={source.id} type="button" onClick={() => void chooseScreenSource(source)} disabled={pendingControl !== ''} className="group overflow-hidden rounded-2xl border border-white/[0.08] bg-black/15 text-left transition hover:border-violet-200/35 hover:bg-violet-300/[0.06] disabled:opacity-50"><div className="relative aspect-video overflow-hidden bg-[#090c12]">{source.thumbnail ? <img src={source.thumbnail} alt="" className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]" /> : <div className="grid h-full place-items-center text-violet-200"><MonitorUp className="h-8 w-8" /></div>}<span className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-70" />{source.appIcon && <img src={source.appIcon} alt="" className="absolute bottom-2 left-2 h-5 w-5 rounded object-cover" />}</div><div className="truncate px-3 py-2.5 text-xs font-semibold text-slate-200">{source.name}</div></button>)}</div><footer className="flex items-center justify-between border-t border-white/[0.07] px-5 py-3"><span className="text-[10px] text-slate-500">Paylaşım istediğin zaman ses panelinden durdurulabilir.</span><button type="button" onClick={() => setScreenSourcePickerOpen(false)} className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-400 transition hover:bg-white/[0.06] hover:text-white">Vazgeç</button></footer></section></div>}
       <RoomAudioRenderer muted={isDeafened} />
     </div>
   );

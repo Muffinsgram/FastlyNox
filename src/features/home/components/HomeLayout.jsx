@@ -20,7 +20,7 @@ const visiblePresence = (profile, statuses, visibility) => {
 const presenceLabel = (status) => status === 'idle' ? 'Boşta' : status === 'dnd' ? 'Rahatsız etmeyin' : status === 'online' ? 'Çevrim içi' : 'Çevrim dışı';
 const presenceDot = (status) => status === 'idle' ? 'bg-amber-300' : status === 'dnd' ? 'bg-rose-400' : status === 'online' ? 'bg-emerald-400' : 'bg-slate-600';
 
-export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onStartCall, incomingCallInvite, onAcceptCall, onDeclineCall }) {
+export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onStartCall, incomingCallInvite, onAcceptCall, onDeclineCall, onInviteClick }) {
   const { user } = useAuthStore();
   const searchShortcut = getAppPreferences(user?.id).searchShortcut || 'ctrl+k';
   const searchShortcutLabel = searchShortcut === 'alt+k' ? 'Alt K' : searchShortcut === 'ctrl+shift+k' ? 'Ctrl ⇧ K' : 'Ctrl K';
@@ -127,7 +127,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
       {/* Ana İçerik */}
       <div className="macos-main flex-1 h-full min-h-0 flex flex-col min-w-0 bg-[radial-gradient(ellipse_at_top,_rgba(139,92,246,.055),_transparent_48%),#0B0E14] relative">
         {activeDM ? (
-          <DMChatArea activeChannelId={activeDM.id} otherUser={activeDM.user} channelName={activeDM.user?.username} avatarUrl={getAvatarUrl(activeDM.user?.avatar_url, activeDM.user?.username)} onStartCall={onStartCall} incomingCallInvite={incomingCallInvite} onAcceptCall={onAcceptCall} onDeclineCall={onDeclineCall} />
+          <DMChatArea activeChannelId={activeDM.id} otherUser={activeDM.user} channelName={activeDM.user?.username} avatarUrl={getAvatarUrl(activeDM.user?.avatar_url, activeDM.user?.username)} onStartCall={onStartCall} incomingCallInvite={incomingCallInvite} onAcceptCall={onAcceptCall} onDeclineCall={onDeclineCall} onInviteClick={onInviteClick} />
         ) : (
           <>
             {/* Dekoratif Arka Plan Işığı */}

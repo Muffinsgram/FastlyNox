@@ -1,7 +1,7 @@
 {
   "name": "fastlynox-app",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Fastlynox desktop chat and voice application",
   "author": "Muffinsgram",
   "type": "module",
@@ -57,6 +57,7 @@
     ],
     "asar": true,
     "win": {
+      "icon": "electron/app-icon.ico",
       "target": [
         {
           "target": "nsis",

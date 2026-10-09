@@ -28,6 +28,8 @@ import { ActionContextMenu } from './components/layout/ActionContextMenu';
 import { SharedProfilePage } from './components/layout/SharedProfilePage';
 import { ServerViewBoundary } from './components/layout/ServerViewBoundary';
 import { NsfwConsentModal } from './components/layout/NsfwConsentModal';
+import { MarketingLanding } from './components/layout/MarketingLanding';
+import { ServerInviteModal } from './components/layout/ServerInviteModal';
 
 const CreateServerModal = lazy(() => import('./features/servers/components/CreateServerModal').then((module) => ({ default: module.CreateServerModal })));
 const ServerSettingsModal = lazy(() => import('./features/servers/components/ServerSettingsModal').then((module) => ({ default: module.ServerSettingsModal })));
@@ -71,6 +73,13 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!window.fastlynoxDesktop?.onDeepLink) return undefined;
+    return window.fastlynoxDesktop.onDeepLink(({ inviteCode }) => {
+      if (inviteCode) setInviteDialogCode(inviteCode);
+    });
+  }, []);
+
   // App State
   const [layout, setLayout] = useState('home'); 
   const [showSettings, setShowSettings] = useState(false);
@@ -100,6 +109,7 @@ export default function App() {
   const [voiceNotice, setVoiceNotice] = useState('');
   const [windowNotice, setWindowNotice] = useState('');
   const [nsfwPromptChannel, setNsfwPromptChannel] = useState(null);
+  const [inviteDialogCode, setInviteDialogCode] = useState(null);
   const [isWindowMaximized, setIsWindowMaximized] = useState(Boolean(document.fullscreenElement));
   const [networkOnline, setNetworkOnline] = useState(() => globalThis.navigator?.onLine ?? true);
 
@@ -415,31 +425,33 @@ export default function App() {
   }, [session?.user?.id, subscribeToMembership]);
 
   useEffect(() => {
-    if (!isInitialized || !user?.id || !sharedInviteCode) return undefined;
-    const inviteKey = `${user.id}:${sharedInviteCode}`;
-    if (processedInviteRef.current === inviteKey) return undefined;
+    if (!isInitialized || !sharedInviteCode) return;
+    const inviteKey = `${user?.id || 'guest'}:${sharedInviteCode}`;
+    if (processedInviteRef.current === inviteKey) return;
     processedInviteRef.current = inviteKey;
-    let active = true;
-    void joinServer(sharedInviteCode).then(result => {
-      if (!active) return;
-      window.history.replaceState(null, '', '/');
-      if (result.success) {
-        setLayout('server');
-        setVoiceNotice('Sunucuya katıldın.');
-      } else {
-        setVoiceNotice(result.error || 'Davet bağlantısı kullanılamadı.');
-      }
-    });
-    return () => { active = false; };
-  }, [isInitialized, user?.id, sharedInviteCode, joinServer]);
+    setInviteDialogCode(sharedInviteCode);
+  }, [isInitialized, user?.id, sharedInviteCode]);
 
+  if (!window.fastlynoxDesktop && window.location.pathname === '/' && !sharedInviteCode && !sharedProfileId) return <MarketingLanding />;
   if (!isInitialized) return <div className="flex h-screen items-center justify-center bg-fastcord-bg text-white">Yükleniyor...</div>;
 
   if (sharedProfileId) return <SharedProfilePage publicId={sharedProfileId} />;
 
   if (!session) {
+    if (!window.fastlynoxDesktop && window.location.pathname !== '/app' && (inviteDialogCode || sharedInviteCode)) return <div className="relative min-h-screen bg-[#080b11]"><MarketingLanding /><ServerInviteModal inviteCode={inviteDialogCode || sharedInviteCode} authenticated={false} onClose={() => { setInviteDialogCode(null); window.location.assign('/'); }} /></div>;
+    if (!window.fastlynoxDesktop && window.location.pathname !== '/app') return <MarketingLanding />;
     return <AuthScreen />;
   }
+
+  const handleJoinInvite = async (inviteCode) => {
+    const result = await joinServer(inviteCode);
+    if (result.success) {
+      window.history.replaceState(null, '', '/');
+      setLayout('server');
+      setVoiceNotice('Sunucuya katıldın.');
+    }
+    return result;
+  };
 
   // APP RENDER (Logged In)
   const currentServerData = servers.find(s => s.id === activeServerId);
@@ -615,7 +627,7 @@ export default function App() {
         {/* LAYOUT: HOME */}
         {layout === 'home' && (
           <div className="flex-1 min-h-0 flex relative animate-in fade-in duration-200">
-             <HomeLayout onOpenSearch={() => setShowGlobalSearch(true)} pendingDMId={pendingDMId} onPendingDMHandled={() => setPendingDMId(null)} onStartCall={handleStartDMCall} incomingCallInvite={incomingCallInvite} onAcceptCall={handleCallInviteAccepted} onDeclineCall={handleCallInviteDeclined} />
+             <HomeLayout onOpenSearch={() => setShowGlobalSearch(true)} pendingDMId={pendingDMId} onPendingDMHandled={() => setPendingDMId(null)} onStartCall={handleStartDMCall} incomingCallInvite={incomingCallInvite} onAcceptCall={handleCallInviteAccepted} onDeclineCall={handleCallInviteDeclined} onInviteClick={setInviteDialogCode} />
           </div>
         )}
 
@@ -682,7 +694,7 @@ export default function App() {
                   </div>
               </div>
               <div className="flex min-h-0 min-w-0 flex-1">
-                  {serverEventsFor === activeServerId ? <div className="flex min-h-0 min-w-0 flex-1 flex-col"><header className="flex h-12 shrink-0 items-center gap-3 border-b border-white/[0.06] px-4"><button type="button" onClick={() => setServerEventsFor(null)} className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-400 hover:bg-white/5 hover:text-white"><ArrowLeft className="h-3.5 w-3.5" /> Sohbete dön</button><span className="text-sm font-bold text-slate-200">{currentServerData.name} · Etkinlikler</span></header><div className="min-h-0 flex-1 overflow-y-auto p-5"><ServerEventsPanel key={activeServerId} user={user} serverFilterId={activeServerId} onOpenChannel={(serverId, channelId) => { openServer(serverId); setActiveChannel(channelId); setServerEventsFor(null); }} /></div></div> : activeChannelType === 'voice' ? <div className="flex-1 min-w-0" /> : <div className="flex min-h-0 min-w-0 flex-1 flex-col"><ServerWelcomeBanner server={currentServerData} user={user} onNavigate={setActiveChannel} /><ChatArea activeChannelId={activeChannelId} channelName={currentChannelName} onOpenChannelMention={handleChannelMention} /></div>}
+                  {serverEventsFor === activeServerId ? <div className="flex min-h-0 min-w-0 flex-1 flex-col"><header className="flex h-12 shrink-0 items-center gap-3 border-b border-white/[0.06] px-4"><button type="button" onClick={() => setServerEventsFor(null)} className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-400 hover:bg-white/5 hover:text-white"><ArrowLeft className="h-3.5 w-3.5" /> Sohbete dön</button><span className="text-sm font-bold text-slate-200">{currentServerData.name} · Etkinlikler</span></header><div className="min-h-0 flex-1 overflow-y-auto p-5"><ServerEventsPanel key={activeServerId} user={user} serverFilterId={activeServerId} onOpenChannel={(serverId, channelId) => { openServer(serverId); setActiveChannel(channelId); setServerEventsFor(null); }} /></div></div> : activeChannelType === 'voice' ? <div className="flex-1 min-w-0" /> : <div className="flex min-h-0 min-w-0 flex-1 flex-col"><ServerWelcomeBanner server={currentServerData} user={user} onNavigate={setActiveChannel} /><ChatArea activeChannelId={activeChannelId} channelName={currentChannelName} onOpenChannelMention={handleChannelMention} onInviteClick={setInviteDialogCode} /></div>}
                   <ServerMemberList activeServerId={activeServerId} voiceMemberChannels={voiceMemberChannels} />
                </div>
            </div>
@@ -758,6 +770,7 @@ export default function App() {
         {showCreateServer && <CreateServerModal onClose={() => setShowCreateServer(false)} />}
       </Suspense>
       {nsfwPromptChannel && <NsfwConsentModal channelName={nsfwPromptChannel.name} onCancel={() => setNsfwPromptChannel(null)} onContinue={() => { const channel = nsfwPromptChannel; sessionStorage.setItem('fastcord:nsfw-consent', '1'); setNsfwPromptChannel(null); handleChannelSelect(channel); }} />}
+      {inviteDialogCode && <ServerInviteModal inviteCode={inviteDialogCode} authenticated onClose={() => { setInviteDialogCode(null); if (window.location.pathname.startsWith('/invite/')) window.history.replaceState(null, '', '/'); }} onJoin={handleJoinInvite} />}
       <ActionContextMenu position={managementContext} items={managementMenuItems} onClose={() => setManagementContext(null)} label={managementContext?.kind === 'category' ? 'Kategori işlemleri' : 'Kanal işlemleri'} />
     </div>
   );

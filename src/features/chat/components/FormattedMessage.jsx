@@ -5,7 +5,8 @@ import { fetchPublicProfile, getAvatarUrl } from '../../../lib/profileMedia';
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const ENTITY_ID = `(?:${UUID}|[0-9]+)`;
 const PROFILE_LINK = String.raw`(?:https?://)?(?:www\.)?fastlynox(?:\.[a-z0-9-]+)*/user/[0-9]+`;
-const INLINE = new RegExp(`(${PROFILE_LINK}|<@&${ENTITY_ID}>|<@!?${ENTITY_ID}>|<#${ENTITY_ID}>|@everyone|@[\\p{L}\\p{N}_.-]+|\\*\\*[^\\n*]+\\*\\*|__[^\\n_]+__|~~[^\\n~]+~~|\\*[^\\n*]+\\*|_[^\\n_]+_|\\x60[^\\n\\x60]+\\x60)`, 'giu');
+const INVITE_LINK = String.raw`(?:https?://)?(?:www\.)?fastlynox(?:\.[a-z0-9-]+)*/invite/[a-z0-9_-]{3,32}`;
+const INLINE = new RegExp(`(${PROFILE_LINK}|${INVITE_LINK}|<@&${ENTITY_ID}>|<@!?${ENTITY_ID}>|<#${ENTITY_ID}>|@everyone|@[\\p{L}\\p{N}_.-]+|\\*\\*[^\\n*]+\\*\\*|__[^\\n_]+__|~~[^\\n~]+~~|\\*[^\\n*]+\\*|_[^\\n_]+_|\\x60[^\\n\\x60]+\\x60)`, 'giu');
 
 function PublicProfileLinkCard({ publicId, onOpen }) {
   const [profile, setProfile] = useState(null);
@@ -27,7 +28,7 @@ function PublicProfileLinkCard({ publicId, onOpen }) {
   </button>;
 }
 
-function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, onPublicProfileClick, showSyntax) {
+function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, onPublicProfileClick, onInviteClick, showSyntax) {
   const pieces = [];
   let cursor = 0;
   for (const match of text.matchAll(INLINE)) {
@@ -41,6 +42,9 @@ function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, onPubl
     const profileLinkMatch = token.match(/^\s*(?:https?:\/\/)?(?:www\.)?fastlynox(?:\.[a-z0-9-]+)*\/user\/(\d+)\s*$/iu);
     if (profileLinkMatch) {
       pieces.push(<PublicProfileLinkCard key={key} publicId={profileLinkMatch[1]} onOpen={onPublicProfileClick} />);
+    } else if (new RegExp(`^\\s*(?:https?:\\/\\/)?(?:www\\.)?fastlynox(?:\\.[a-z0-9-]+)*\\/invite\\/([a-z0-9_-]{3,32})\\s*$`, 'iu').test(token)) {
+      const inviteMatch = token.match(/\/invite\/([a-z0-9_-]{3,32})\s*$/iu);
+      pieces.push(<button key={key} type="button" onClick={() => onInviteClick?.(inviteMatch?.[1])} className="my-1 inline-flex max-w-full items-center gap-1.5 rounded-lg border border-violet-200/15 bg-violet-300/[0.09] px-2 py-1 text-[11px] font-semibold text-violet-100 transition hover:border-violet-200/30 hover:bg-violet-300/[0.16]"><Hash className="h-3 w-3" /> Fastlynox sunucu daveti <ArrowUpRight className="h-3 w-3 opacity-70" /></button>);
     } else if (userMatch) {
       const profile = maps.users?.[userMatch[1]];
       pieces.push(profile
@@ -68,7 +72,7 @@ function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, onPubl
   return pieces;
 }
 
-export function FormattedMessage({ content, userMap = {}, roleMap = {}, channelMap = {}, onChannelClick, onUserClick, onPublicProfileClick, showSyntax = false }) {
+export function FormattedMessage({ content, userMap = {}, roleMap = {}, channelMap = {}, onChannelClick, onUserClick, onPublicProfileClick, onInviteClick, showSyntax = false }) {
   const maps = { users: userMap, roles: roleMap, channels: channelMap };
   const lines = (content || '').split('\n');
   const blocks = [];
@@ -76,9 +80,9 @@ export function FormattedMessage({ content, userMap = {}, roleMap = {}, channelM
     if (lines[index].startsWith('>')) {
       const quoteLines = [];
       while (index < lines.length && lines[index].startsWith('>')) quoteLines.push(lines[index++].replace(/^> ?/, ''));
-      blocks.push(<blockquote key={`quote-${index}`} className={`my-1 border-l-[3px] border-violet-300/70 pl-3 ${showSyntax ? 'text-slate-100' : 'text-slate-300'}`}>{quoteLines.map((line, quoteIndex) => <div key={quoteIndex}>{showSyntax && <span className="text-violet-200/35">&gt; </span>}{renderInline(line, `quote-${index}-${quoteIndex}`, maps, onChannelClick, onUserClick, onPublicProfileClick, showSyntax)}</div>)}</blockquote>);
+      blocks.push(<blockquote key={`quote-${index}`} className={`my-1 border-l-[3px] border-violet-300/70 pl-3 ${showSyntax ? 'text-slate-100' : 'text-slate-300'}`}>{quoteLines.map((line, quoteIndex) => <div key={quoteIndex}>{showSyntax && <span className="text-violet-200/35">&gt; </span>}{renderInline(line, `quote-${index}-${quoteIndex}`, maps, onChannelClick, onUserClick, onPublicProfileClick, onInviteClick, showSyntax)}</div>)}</blockquote>);
     } else {
-      blocks.push(<span key={`line-${index}`}>{renderInline(lines[index], `line-${index}`, maps, onChannelClick, onUserClick, onPublicProfileClick, showSyntax)}{index < lines.length - 1 ? '\n' : ''}</span>);
+      blocks.push(<span key={`line-${index}`}>{renderInline(lines[index], `line-${index}`, maps, onChannelClick, onUserClick, onPublicProfileClick, onInviteClick, showSyntax)}{index < lines.length - 1 ? '\n' : ''}</span>);
       index += 1;
     }
   }

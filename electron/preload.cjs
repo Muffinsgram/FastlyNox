@@ -17,6 +17,14 @@ contextBridge.exposeInMainWorld('fastlynoxDesktop', {
   getVersion: () => ipcRenderer.invoke('fastlynox:app-version'),
   checkForUpdates: () => ipcRenderer.invoke('fastlynox:check-update'),
   installUpdate: () => ipcRenderer.invoke('fastlynox:install-update'),
+  listScreenSources: () => ipcRenderer.invoke('fastlynox:list-screen-sources'),
+  selectScreenSource: (sourceId) => ipcRenderer.invoke('fastlynox:select-screen-source', sourceId),
+  onDeepLink: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('fastlynox:deep-link', listener);
+    ipcRenderer.send('fastlynox:renderer-ready');
+    return () => ipcRenderer.removeListener('fastlynox:deep-link', listener);
+  },
   onUpdateStatus: (callback) => {
     const listener = (_event, status) => callback(status);
     ipcRenderer.on('fastlynox:update-status', listener);

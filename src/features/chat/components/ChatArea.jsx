@@ -23,11 +23,12 @@ import { useChatPresence } from '../../../hooks/useChatPresence';
 import { ActionContextMenu } from '../../../components/layout/ActionContextMenu';
 import { FormattedMessage } from './FormattedMessage';
 import { useUploadLimit } from '../../../hooks/useUploadLimit';
+import { COMMAND_HELP, resolveChatCommand } from '../../../lib/chatCommands';
 
 const EMPTY_OBJECT = Object.freeze({});
 const EMPTY_ARRAY = Object.freeze([]);
 
-export function ChatArea({ activeChannelId, channelName, onOpenChannelMention }) {
+export function ChatArea({ activeChannelId, channelName, onOpenChannelMention, onInviteClick }) {
   const { user } = useAuthStore();
   const maxUploadBytes = useUploadLimit('attachments', user?.id);
   const { messages, drafts, isLoading, setDraft, clearDraft, fetchMessages, subscribeToChannel, unsubscribe, sendMessage, editMessage, deleteMessage, toggleReaction } = useChatStore();
@@ -44,6 +45,7 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention })
   const [isSending, setIsSending] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [messageError, setMessageError] = useState('');
+  const [commandNotice, setCommandNotice] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editContent, setEditContent] = useState('');
   const [replyTo, setReplyTo] = useState(null);
@@ -165,7 +167,17 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention })
   const sendCurrentMessage = async () => {
     if ((!input.trim() && !selectedFile) || isSending || isUploading) return;
     const channelId = activeChannelId;
-    const content = input.trim();
+    let content = input.trim();
+    const command = resolveChatCommand(content);
+    if (command.type === 'help') {
+      setCommandNotice(COMMAND_HELP);
+      setDraft(channelId, '');
+      setIsTypingNow(false);
+      return;
+    }
+    if (command.type === 'error') { setCommandNotice(command.message); return; }
+    if (command.unknown) { setCommandNotice(`Bilinmeyen komut. ${COMMAND_HELP}`); return; }
+    if (command.handled) { content = command.content; setCommandNotice(''); }
     setMessageError('');
     let imagePath = null;
     try {
@@ -379,7 +391,7 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention })
                      }
                      return <>
                        {m.reply_to && <button type="button" onClick={() => jumpToMessage(m.reply_to.id)} className="mb-1.5 max-w-full border-l-2 border-violet-300/60 pl-2 text-left text-xs text-slate-400 hover:text-violet-200"><span className="font-semibold text-violet-200">{m.reply_to.username}</span><span className="ml-2 line-clamp-1">{m.reply_to.content || 'Ek'}</span></button>}
-                       <span className={`text-sm text-slate-300 ${isGrouped ? 'leading-5' : 'mt-0.5 leading-relaxed'}`}><FormattedMessage content={m.content || ''} userMap={mentionUserMap} roleMap={mentionRoleMap} channelMap={mentionChannelMap} onChannelClick={onOpenChannelMention} onUserClick={(profile) => setViewedProfile(profile)} onPublicProfileClick={(profile) => setViewedProfile(profile)} />{m.is_edited && <span className="text-[10px] text-slate-500 ml-1 select-none">(düzenlendi)</span>}</span>
+                       <span className={`text-sm text-slate-300 ${isGrouped ? 'leading-5' : 'mt-0.5 leading-relaxed'}`}><FormattedMessage content={m.content || ''} userMap={mentionUserMap} roleMap={mentionRoleMap} channelMap={mentionChannelMap} onChannelClick={onOpenChannelMention} onUserClick={(profile) => setViewedProfile(profile)} onPublicProfileClick={(profile) => setViewedProfile(profile)} onInviteClick={onInviteClick} />{m.is_edited && <span className="text-[10px] text-slate-500 ml-1 select-none">(düzenlendi)</span>}</span>
                      </>;
                    };
 
@@ -438,8 +450,10 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention })
           
           <div className="macos-message-composer shrink-0 border-t border-white/[0.04] px-3 pb-[max(.75rem,env(safe-area-inset-bottom))] pt-3 sm:px-5 sm:pb-5">
               {typingUsers.length > 0 && <div aria-live="polite" className="mx-auto mb-1.5 flex h-5 w-full max-w-6xl items-center gap-2 px-1 text-[11px] text-slate-400"><span className="flex items-center gap-0.5" aria-hidden="true"><i className="h-1 w-1 animate-bounce rounded-full bg-violet-300 [animation-delay:-.2s]" /><i className="h-1 w-1 animate-bounce rounded-full bg-violet-300 [animation-delay:-.1s]" /><i className="h-1 w-1 animate-bounce rounded-full bg-violet-300" /></span><span>{typingUsers.length === 1 ? <><b className="font-semibold text-slate-300">{typingUsers[0].username}</b> yazıyor</> : typingUsers.length === 2 ? <><b className="font-semibold text-slate-300">{typingUsers[0].username}</b> ve <b className="font-semibold text-slate-300">{typingUsers[1].username}</b> yazıyor</> : `${typingUsers.length} kişi yazıyor`}</span></div>}
+              {input.trimStart().startsWith('/') && <p className="mx-auto mb-1.5 w-full max-w-6xl px-2 text-[10px] text-violet-200/70">Komutlar: <code>/me</code> · <code>/shrug</code> · <code>/tableflip</code> · <code>/help</code></p>}
               {uploadError && <p role="alert" className="mb-2 text-xs text-rose-400">{uploadError}</p>}
               {messageError && <p role="alert" className="mb-2 text-xs text-rose-400">{messageError}</p>}
+              {commandNotice && <p role="status" className="mb-2 rounded-lg border border-violet-200/10 bg-violet-300/[0.045] px-3 py-2 text-[10px] text-violet-100/80">{commandNotice}</p>}
               {replyTo && <div className="mx-auto mb-2 flex w-full max-w-6xl items-center gap-2 rounded-xl border border-violet-300/15 bg-violet-400/[0.06] px-3 py-2 text-xs"><Reply className="h-3.5 w-3.5 text-violet-200" /><span className="min-w-0 flex-1 truncate text-slate-300"><b className="text-violet-200">{replyTo.username}</b> kişisine yanıt veriyorsun · {replyTo.content || 'Ek'}</span><button type="button" onClick={() => setReplyTo(null)} aria-label="Yanıtı iptal et" className="rounded p-1 text-slate-400 hover:text-white"><X className="h-3.5 w-3.5" /></button></div>}
               {selectedFile && <div className="mx-auto mb-2 w-full max-w-6xl rounded-xl border border-violet-300/15 bg-violet-400/[0.06] p-2.5">
                 <div className="flex items-center gap-3"><img src={mediaPreviewUrl} alt="Gönderilecek medya önizlemesi" className="h-11 w-14 shrink-0 rounded-lg bg-black/20 object-cover" /><span className="min-w-0 flex-1 truncate text-xs text-slate-200">{selectedFile.name}<span className="ml-2 text-slate-500">{(selectedFile.size / 1024 / 1024).toFixed(1)} MB</span></span>{isUploading ? <span className="text-[11px] text-violet-200">{uploadProgress}%</span> : <button type="button" aria-label="Seçilen medyayı kaldır" onClick={clearSelectedFile} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white"><X className="h-4 w-4" /></button>}</div>
