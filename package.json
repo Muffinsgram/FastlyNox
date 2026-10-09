@@ -10,8 +10,8 @@
     "dev": "vite",
     "desktop:dev": "electron .",
     "build": "vite build",
-    "dist:win": "npm run build && electron-builder --win nsis --x64",
-    "release:win": "npm run build && electron-builder --win nsis --x64 --publish always",
+    "dist:win": "npm run build && node scripts/build-windows.cjs",
+    "release:win": "npm run build && node scripts/build-windows.cjs --publish always",
     "lint": "oxlint",
     "test": "node --test",
     "preview": "vite preview"
