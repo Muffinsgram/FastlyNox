@@ -130,6 +130,13 @@ function createTray() {
     { label: 'Güncellemeleri kontrol et', click: () => { focusMainWindow(); void checkForUpdates(); } },
     { label: 'Uygulamayı yeniden başlat', click: () => restartApp() },
     { type: 'separator' },
+    { label: 'Hakkında', submenu: [
+      { label: `Fastlynox · Sürüm ${app.getVersion()}`, enabled: false },
+      { type: 'separator' },
+      { label: 'Fastlynox web sitesini aç', click: () => { void shell.openExternal('https://fastlynox.vercel.app'); } },
+      { label: 'Sürümleri görüntüle', click: () => { void shell.openExternal('https://github.com/Muffinsgram/FastlyNox/releases/latest'); } },
+    ] },
+    { type: 'separator' },
     { label: 'Fastlynox’tan çık', click: () => quitApp() },
   ]));
   refreshMenu();

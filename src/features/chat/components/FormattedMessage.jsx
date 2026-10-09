@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
-import { ArrowUpRight, BadgeCheck, Hash, LoaderCircle, Sparkles, Users, Volume2 } from 'lucide-react';
+import { ArrowUpRight, Check, Hash, LoaderCircle, Sparkles, Users, Volume2 } from 'lucide-react';
 import { fetchPublicProfile, getAvatarUrl, getBannerUrl } from '../../../lib/profileMedia';
+import { supabase } from '../../../lib/supabase';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const ENTITY_ID = `(?:${UUID}|[0-9]+)`;
@@ -23,8 +24,39 @@ function PublicProfileLinkCard({ publicId, onOpen }) {
 
   return <button type="button" onClick={() => profile && onOpen?.(profile)} disabled={!profile} title={profile ? `${profile.username} · profili görüntüle` : `Fastlynox profil bağlantısı · #${publicId}`} className="group my-2 block w-full max-w-[390px] overflow-hidden rounded-[18px] border border-violet-200/15 bg-[#111521] text-left align-middle shadow-[0_12px_34px_rgba(0,0,0,.24)] transition duration-200 hover:-translate-y-0.5 hover:border-violet-200/35 hover:shadow-[0_18px_42px_rgba(67,56,202,.18)] disabled:cursor-default">
     <span className="relative block h-[66px] overflow-hidden bg-[radial-gradient(ellipse_at_20%_10%,rgba(167,139,250,.55),transparent_45%),linear-gradient(110deg,#282344,#131b2a_60%,#0f1923)]">{getBannerUrl(profile?.banner_url) && <img src={getBannerUrl(profile.banner_url)} alt="" className="absolute inset-0 h-full w-full object-cover opacity-60"/>}<span className="absolute inset-0 bg-gradient-to-r from-[#171624]/25 via-transparent to-cyan-300/10"/><span className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-xl border border-white/15 bg-black/20 text-violet-100 backdrop-blur"><Sparkles className="h-4 w-4"/></span></span>
-    <span className="relative flex items-center gap-3 px-3.5 pb-3 pt-0"><span className="-mt-6 grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-[15px] border-[3px] border-[#111521] bg-[#20243a] text-violet-100 shadow-lg">{profile ? <img src={getAvatarUrl(profile.avatar_url, profile.username)} alt="" className="h-full w-full object-cover"/> : loaded ? <span className="text-xs font-bold">FN</span> : <LoaderCircle className="h-4 w-4 animate-spin"/>}</span><span className="min-w-0 flex-1 pb-0.5"><span className="flex min-w-0 items-center gap-1.5"><span className="truncate text-sm font-extrabold text-white">{profile?.username || (loaded ? 'Profil bulunamadı' : 'Fastlynox profili')}</span>{profile && <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-violet-200"/>}</span><span className="mt-0.5 block truncate text-[10px] text-slate-400">{profile?.status_text || profile?.bio || (profile ? 'Kullanıcı profili' : `fastlynox/user/${publicId}`)}</span></span><span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-slate-300 transition group-hover:border-violet-200/20 group-hover:bg-violet-300/10 group-hover:text-white"><ArrowUpRight className="h-4 w-4"/></span></span>
+    <span className="relative flex items-center gap-3 px-3.5 pb-3 pt-0"><span className="-mt-6 grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-[15px] border-[3px] border-[#111521] bg-[#20243a] text-violet-100 shadow-lg">{profile ? <img src={getAvatarUrl(profile.avatar_url, profile.username)} alt="" className="h-full w-full object-cover"/> : loaded ? <span className="text-xs font-bold">FN</span> : <LoaderCircle className="h-4 w-4 animate-spin"/>}</span><span className="min-w-0 flex-1 pb-0.5"><span className="flex min-w-0 items-center gap-1.5"><span className="truncate text-sm font-extrabold text-white">{profile?.username || (loaded ? 'Profil bulunamadı' : 'Fastlynox profili')}</span></span><span className="mt-0.5 block truncate text-[10px] text-slate-400">{profile?.status_text || profile?.bio || (profile ? 'Kullanıcı profili' : `fastlynox/user/${publicId}`)}</span></span><span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-slate-300 transition group-hover:border-violet-200/20 group-hover:bg-violet-300/10 group-hover:text-white"><ArrowUpRight className="h-4 w-4"/></span></span>
     <span className="flex items-center gap-1.5 border-t border-white/[0.06] px-3.5 py-2 text-[9px] font-semibold tracking-wide text-violet-200/75"><span className="h-1.5 w-1.5 rounded-full bg-violet-300"/>{profile ? `FASTLYNOX · #${profile.public_id || publicId}` : `fastlynox/user/${publicId}`}</span>
+  </button>;
+}
+
+function ServerInviteLinkCard({ inviteCode, onOpen }) {
+  const [server, setServer] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    void supabase.rpc('get_server_invite_preview', { invite_code: inviteCode }).then(({ data, error }) => {
+      if (!active) return;
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!error) setServer(result || null);
+      setLoaded(true);
+    }).catch(() => { if (active) setLoaded(true); });
+    return () => { active = false; };
+  }, [inviteCode]);
+
+  const open = () => {
+    if (onOpen) onOpen(inviteCode);
+    else window.location.assign(`/invite/${encodeURIComponent(inviteCode)}`);
+  };
+  const icon = typeof server?.server_icon_url === 'string' && /^https?:\/\//iu.test(server.server_icon_url) ? server.server_icon_url : '';
+  return <button type="button" onClick={open} className="group my-2 block w-full max-w-[430px] overflow-hidden rounded-[20px] border border-emerald-200/15 bg-[#101721] text-left align-middle shadow-[0_14px_40px_rgba(0,0,0,.28)] transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200/30 hover:shadow-[0_20px_50px_rgba(16,185,129,.13)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-200/50">
+    <span className="relative flex h-[88px] items-center gap-3 overflow-hidden bg-[radial-gradient(ellipse_at_86%_0%,rgba(16,185,129,.2),transparent_50%),linear-gradient(112deg,#20223a,#12201f_72%,#0f171d)] px-4">
+      {icon && <img src={icon} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover opacity-[.13] blur-xl"/>}
+      <span className="absolute inset-0 bg-gradient-to-r from-[#151927]/30 via-transparent to-emerald-300/[0.04]"/>
+      <span className="relative grid h-[54px] w-[54px] shrink-0 place-items-center overflow-hidden rounded-[17px] border border-white/15 bg-[#20283a] text-xl font-black text-emerald-100 shadow-lg">{icon ? <img src={icon} alt="" className="h-full w-full object-cover"/> : server?.server_name?.slice(0, 1) || <Users className="h-6 w-6"/>}</span>
+      <span className="relative min-w-0 flex-1"><span className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[.18em] text-emerald-200/80">Fastlynox daveti{server?.is_vanity && <Check className="h-3 w-3"/>}</span><span className="mt-1 block truncate text-[15px] font-extrabold text-white">{server?.server_name || (loaded ? 'Sunucu daveti' : 'Sunucu bilgileri yükleniyor…')}</span><span className="mt-0.5 block truncate text-[10px] text-slate-400">{server ? 'Topluluğa katılmak için daveti görüntüle' : 'Davet bağlantısını aç ve sunucuya katıl'}</span></span>
+      <span className="relative grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/[0.09] bg-white/[0.05] text-slate-200 transition group-hover:border-emerald-200/25 group-hover:bg-emerald-300/10 group-hover:text-white"><ArrowUpRight className="h-4 w-4"/></span>
+    </span>
+    <span className="flex items-center justify-between gap-3 border-t border-white/[0.06] bg-black/[0.12] px-4 py-2.5"><span className="flex min-w-0 items-center gap-2 text-[10px] font-medium text-slate-400"><Users className="h-3.5 w-3.5 shrink-0 text-emerald-200/80"/><span className="truncate">{server ? `${Number(server.member_count || 0).toLocaleString('tr-TR')} üye` : 'Sunucu önizlemesi'}</span><span className="text-slate-700">·</span><span className="truncate font-mono text-slate-500">${inviteCode}</span></span><span className="shrink-0 rounded-lg bg-emerald-300/[0.11] px-2.5 py-1 text-[9px] font-bold text-emerald-100 transition group-hover:bg-emerald-300/20">{loaded && !server ? 'DAVETİ AÇ' : 'KATIL'} <span aria-hidden="true">→</span></span></span>
   </button>;
 }
 
@@ -44,7 +76,7 @@ function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, onPubl
       pieces.push(<PublicProfileLinkCard key={key} publicId={profileLinkMatch[1]} onOpen={onPublicProfileClick} />);
     } else if (new RegExp(`^\\s*(?:https?:\\/\\/)?(?:www\\.)?fastlynox(?:\\.[a-z0-9-]+)*\\/invite\\/([a-z0-9_-]{3,32})\\s*$`, 'iu').test(token)) {
       const inviteMatch = token.match(/\/invite\/([a-z0-9_-]{3,32})\s*$/iu);
-      pieces.push(<button key={key} type="button" onClick={() => onInviteClick?.(inviteMatch?.[1])} className="group my-2 block w-full max-w-[390px] overflow-hidden rounded-[18px] border border-emerald-200/15 bg-[#111720] text-left align-middle shadow-[0_12px_34px_rgba(0,0,0,.22)] transition duration-200 hover:-translate-y-0.5 hover:border-emerald-200/30 hover:shadow-[0_18px_42px_rgba(16,185,129,.12)]"><span className="flex items-center gap-3 bg-[radial-gradient(ellipse_at_90%_0%,rgba(16,185,129,.17),transparent_48%),linear-gradient(110deg,rgba(139,92,246,.12),transparent)] px-3.5 py-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-[15px] border border-emerald-200/15 bg-emerald-300/[0.08] text-emerald-100 shadow-inner"><Users className="h-5 w-5"/></span><span className="min-w-0 flex-1"><span className="block text-[9px] font-bold uppercase tracking-[.16em] text-emerald-200/75">Topluluğa davet</span><span className="mt-1 block truncate text-sm font-extrabold text-white">Fastlynox sunucu daveti</span><span className="mt-0.5 block text-[10px] text-slate-400">Sunucuyu gör ve tek dokunuşla katıl</span></span><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.04] text-slate-300 transition group-hover:border-emerald-200/20 group-hover:bg-emerald-300/10 group-hover:text-white"><ArrowUpRight className="h-4 w-4"/></span></span><span className="flex items-center gap-1.5 border-t border-white/[0.06] px-3.5 py-2 text-[9px] font-semibold tracking-wide text-slate-500"><Hash className="h-3 w-3 text-emerald-200/70"/>DAVETİ AÇ</span></button>);
+      pieces.push(<ServerInviteLinkCard key={key} inviteCode={inviteMatch?.[1]} onOpen={onInviteClick}/>);
     } else if (userMatch) {
       const profile = maps.users?.[userMatch[1]];
       pieces.push(profile
@@ -86,5 +118,5 @@ export function FormattedMessage({ content, userMap = {}, roleMap = {}, channelM
       index += 1;
     }
   }
-  return <span className="select-text whitespace-pre-wrap break-words">{blocks}</span>;
+  return <div className="select-text min-w-0 whitespace-pre-wrap break-words">{blocks}</div>;
 }
