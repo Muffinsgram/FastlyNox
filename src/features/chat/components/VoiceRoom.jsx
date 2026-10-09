@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { LiveKitRoom, RoomAudioRenderer, VideoTrack, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
+import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { AudioPresets, DisconnectReason, Room as LiveKitClientRoom, Track, supportsAudioOutputSelection } from 'livekit-client';
 import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minimize2, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, Shield, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
@@ -12,6 +12,7 @@ import { playUiSound } from '../../../lib/uiSounds';
 import { getAppPreferences, saveAppPreferences } from '../../../lib/appPreferences';
 import { AnimatedSelect } from '../../../components/ui/AnimatedSelect';
 import { supabase } from '../../../lib/supabase';
+import { getVoicePlayback, normalizeVoiceVolume } from '../../../lib/voicePlayback';
 
 const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: false };
 
@@ -57,6 +58,14 @@ class VoiceRoomErrorBoundary extends Component {
   }
 }
 
+function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened }) {
+  const tracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio, Track.Source.Unknown], { onlySubscribed: true });
+  return <div hidden>{tracks.filter((track) => !track.participant.isLocal && track.publication.kind === Track.Kind.Audio).map((track) => {
+    const playback = getVoicePlayback({ source: track.source, participantId: track.participant.identity, volumes, shareVolumes, mutedShares, deafened });
+    return <AudioTrack key={`${track.participant.identity}:${track.publication.trackSid}`} trackRef={track} volume={playback.volume} muted={playback.muted} />;
+  })}</div>;
+}
+
 function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError, onParticipantsChange, contextMenuRequest, onContextMenuRequestHandled }) {
   const participants = useParticipants();
   const { isMicrophoneEnabled } = useLocalParticipant();
@@ -78,6 +87,8 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
   const [moderationNotice, setModerationNotice] = useState('');
   const shareStageRefs = useRef(new Map());
   const [savedVolumes, setSavedVolumes] = useState(() => getAppPreferences(currentUser?.id).voiceParticipantVolumes || {});
+  const [mutedShares, setMutedShares] = useState(() => getAppPreferences(currentUser?.id).voiceScreenShareMuted || {});
+  const [shareVolumes, setShareVolumes] = useState(() => getAppPreferences(currentUser?.id).voiceScreenShareVolumes || {});
   const participantIds = participants.map((participant) => participant.identity).filter(Boolean);
   const participantKey = participantIds.slice().sort().join(',');
   const screenShares = videoTracks.filter((track) => track.publication.source === Track.Source.ScreenShare);
@@ -186,17 +197,13 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
   }, [contextMenuRequest, participants, onContextMenuRequestHandled]);
 
   useEffect(() => {
-    participants.forEach(participant => {
-      // useParticipants() includes the LocalParticipant as its first entry.
-      // Per-participant volume is only supported by RemoteParticipant.
-      if (participant.isLocal || typeof participant.setVolume !== 'function') return;
-      participant.setVolume(Number.isFinite(Number(savedVolumes[participant.identity])) ? Number(savedVolumes[participant.identity]) : 1);
-    });
-  }, [participantKey, savedVolumes]);
-
-  useEffect(() => {
     const refreshVolumes = event => {
-      if (!event?.detail?.userId || event.detail.userId === currentUser?.id) setSavedVolumes(getAppPreferences(currentUser?.id).voiceParticipantVolumes || {});
+      if (!event?.detail?.userId || event.detail.userId === currentUser?.id) {
+        const preferences = getAppPreferences(currentUser?.id);
+        setSavedVolumes(preferences.voiceParticipantVolumes || {});
+        setMutedShares(preferences.voiceScreenShareMuted || {});
+        setShareVolumes(preferences.voiceScreenShareVolumes || {});
+      }
     };
     window.addEventListener('fastcord:preferences-updated', refreshVolumes);
     return () => window.removeEventListener('fastcord:preferences-updated', refreshVolumes);
@@ -220,13 +227,41 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
   }, [moderationDialog, moderationBusy]);
 
   const setLocalParticipantVolume = (participant, value) => {
-    if (participant?.isLocal || typeof participant?.setVolume !== 'function') return;
-    const volume = Math.max(0, Math.min(1, Number(value)));
-    participant.setVolume(volume);
+    if (!participant || participant.isLocal) return;
+    const volume = normalizeVoiceVolume(value);
     const preferences = getAppPreferences(currentUser?.id);
     const voiceParticipantVolumes = { ...(preferences.voiceParticipantVolumes || {}), [participant.identity]: volume };
     setSavedVolumes(voiceParticipantVolumes);
     saveAppPreferences(currentUser?.id, { ...preferences, voiceParticipantVolumes });
+  };
+
+  const toggleShareMute = (participant) => {
+    if (participant.isLocal) return;
+    const preferences = getAppPreferences(currentUser?.id);
+    const volume = normalizeVoiceVolume(shareVolumes[participant.identity]);
+    const wasMuted = Boolean(mutedShares[participant.identity]) || volume === 0;
+    const voiceScreenShareMuted = { ...(preferences.voiceScreenShareMuted || {}), [participant.identity]: !wasMuted };
+    const voiceScreenShareVolumes = { ...(preferences.voiceScreenShareVolumes || {}), [participant.identity]: wasMuted && volume === 0 ? 1 : volume };
+    setMutedShares(voiceScreenShareMuted);
+    setShareVolumes(voiceScreenShareVolumes);
+    saveAppPreferences(currentUser?.id, { ...preferences, voiceScreenShareMuted, voiceScreenShareVolumes });
+  };
+
+  const setShareVolume = (participant, value) => {
+    if (participant.isLocal) return;
+    const preferences = getAppPreferences(currentUser?.id);
+    const voiceScreenShareVolumes = { ...(preferences.voiceScreenShareVolumes || {}), [participant.identity]: normalizeVoiceVolume(value) };
+    const voiceScreenShareMuted = { ...(preferences.voiceScreenShareMuted || {}), [participant.identity]: false };
+    setShareVolumes(voiceScreenShareVolumes);
+    setMutedShares(voiceScreenShareMuted);
+    saveAppPreferences(currentUser?.id, { ...preferences, voiceScreenShareVolumes, voiceScreenShareMuted });
+  };
+
+  const openShareMenu = (event, participant) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    setContextMenu({ kind: 'screen', participantId: participant.identity, x: event.clientX || bounds.left, y: event.clientY || bounds.bottom });
   };
 
   const applyServerVoiceAction = async (participant, action) => {
@@ -294,6 +329,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col text-slate-100">
+      <VoicePlayback volumes={savedVolumes} shareVolumes={shareVolumes} mutedShares={mutedShares} deafened={localDeafened} />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-white">Ses odasındakiler</h2>
@@ -305,9 +341,14 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
         </div>
       </div>
       {(screenShares.length > 0 || cameraShares.length > 0) && <section aria-label="Canlı yayınlar" className="mb-5 grid gap-4">
-        {screenShares.map((track) => <article key={`screen-${track.participant.identity}`} ref={(element) => { const key = `screen:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`screen:${track.participant.identity}`} className="screen-share-card overflow-hidden rounded-[22px] border border-violet-300/20 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.32)]">
+        {screenShares.map((track) => <article key={`screen-${track.participant.identity}`} onContextMenu={(event) => openShareMenu(event, track.participant)} ref={(element) => { const key = `screen:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`screen:${track.participant.identity}`} className="screen-share-card overflow-hidden rounded-[22px] border border-violet-300/20 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.32)]">
           <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[linear-gradient(100deg,rgba(139,92,246,.12),transparent)] px-4 py-3 text-xs font-semibold text-violet-100"><span className="flex min-w-0 items-center gap-2"><MonitorUp className="h-4 w-4 shrink-0"/><span className="truncate">{track.participant.name || track.participant.identity}<span className="ml-1.5 font-normal text-slate-400">ekranını paylaşıyor</span></span></span><button type="button" onClick={() => void toggleShareFullscreen(`screen:${track.participant.identity}`)} aria-label={expandedShareId === `screen:${track.participant.identity}` ? 'Ekran paylaşımını küçült' : 'Ekran paylaşımını büyüt'} title="Büyüt / tam ekran" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-violet-200/25 hover:bg-violet-300/15"><Maximize2 className="h-4 w-4"/></button></div>
-          <div className="screen-share-stage relative aspect-video max-h-[min(68vh,760px)] bg-[#05070b]"><VideoTrack trackRef={track} className="h-full w-full object-contain"/></div>
+          <div className="screen-share-stage relative aspect-video max-h-[min(68vh,760px)] bg-[#05070b]"><VideoTrack trackRef={track} className="h-full w-full object-contain"/>
+            <button type="button" onClick={(event) => openShareMenu(event, track.participant)} aria-label="Yayın ses seçenekleri" title="Yayın ses seçenekleri · sağ tık" className="absolute bottom-3 right-3 flex items-center gap-2 rounded-xl border border-white/15 bg-[#111722]/90 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-xl hover:bg-[#202839]">
+              {track.participant.isLocal || mutedShares[track.participant.identity] || normalizeVoiceVolume(shareVolumes[track.participant.identity]) === 0 ? <VolumeX className="h-4 w-4 text-rose-200" /> : <Volume2 className="h-4 w-4 text-violet-200" />}
+              {track.participant.isLocal ? 'Önizleme sessiz' : mutedShares[track.participant.identity] || normalizeVoiceVolume(shareVolumes[track.participant.identity]) === 0 ? 'Yayın sende sessiz' : `Yayın sesi · %${Math.round(normalizeVoiceVolume(shareVolumes[track.participant.identity]) * 100)}`}
+            </button>
+          </div>
         </article>)}
         {cameraShares.map((track) => <article key={`camera-${track.participant.identity}`} ref={(element) => { const key = `camera:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`camera:${track.participant.identity}`} className="camera-stage-card overflow-hidden rounded-[22px] border border-cyan-200/15 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.3)]">
           <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[linear-gradient(100deg,rgba(34,211,238,.09),transparent)] px-4 py-3 text-xs font-semibold text-cyan-100"><span className="flex min-w-0 items-center gap-2"><Camera className="h-4 w-4 shrink-0"/><span className="truncate">{track.participant.name || track.participant.identity}<span className="ml-1.5 font-normal text-slate-400">kamerada</span></span></span><button type="button" onClick={() => void toggleShareFullscreen(`camera:${track.participant.identity}`)} aria-label="Kamerayı büyüt" title="Büyüt / tam ekran" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-cyan-200/25 hover:bg-cyan-300/10"><Maximize2 className="h-4 w-4"/></button></div>
@@ -350,8 +391,23 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
       {contextMenu && (() => {
         const participant = participants.find(item => item.identity === contextMenu.participantId);
         if (!participant) return null;
+        if (contextMenu.kind === 'screen') {
+          if (!screenShares.some((track) => track.participant.identity === participant.identity)) return null;
+          const volume = normalizeVoiceVolume(shareVolumes[participant.identity]);
+          const muted = participant.isLocal || Boolean(mutedShares[participant.identity]) || volume === 0;
+          return createPortal(<section data-voice-user-menu role="dialog" aria-label="Yayın ses seçenekleri" className="fixed z-[300] max-h-[calc(100vh-24px)] w-72 max-w-[calc(100vw-24px)] overflow-y-auto rounded-2xl border border-violet-200/15 bg-[#151a24]/[.98] p-2 shadow-[0_20px_70px_rgba(0,0,0,.65)] backdrop-blur-2xl" style={{ left: Math.max(12, Math.min(contextMenu.x, window.innerWidth - 300)), top: Math.max(12, Math.min(contextMenu.y, window.innerHeight - 270)) }}>
+            <p className="truncate px-3 pb-2 pt-1 text-[11px] font-semibold text-violet-200">{participant.name || 'Katılımcı'} · Yayın sesi</p>
+            {!participant.isLocal && <div className="mb-1 rounded-xl border border-white/[0.06] bg-black/15 p-3">
+              <div className="mb-2 flex items-center justify-between text-[11px] text-slate-300"><span>Yayın ses seviyesi</span><span className="font-semibold tabular-nums text-violet-200">{muted ? 'Sessiz' : `%${Math.round(volume * 100)}`}</span></div>
+              <input type="range" min="0" max="2" step="0.01" value={volume} aria-label={`${participant.name || 'Katılımcı'} yayın ses seviyesi`} aria-valuetext={`%${Math.round(volume * 100)}${muted ? ' · sessiz' : ''}`} onChange={(event) => setShareVolume(participant, event.target.value)} className="w-full accent-violet-400" />
+              <div className="mt-1 flex justify-between text-[9px] text-slate-500"><span>%0</span><button type="button" onClick={() => setShareVolume(participant, 1)} title="Yayın sesini varsayılana döndür" className="hover:text-violet-200">%100 · Sıfırla</button><span>%200</span></div>
+            </div>}
+            <button type="button" autoFocus disabled={participant.isLocal} onClick={() => toggleShareMute(participant)} className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-slate-100 transition hover:bg-violet-300/10 focus-visible:bg-violet-300/10 focus-visible:outline-none disabled:opacity-60">{muted ? <VolumeX className="h-4 w-4 text-rose-200" /> : <Volume2 className="h-4 w-4 text-violet-200" />}{participant.isLocal ? 'Kendi yayın önizlemen sessiz' : muted ? 'Yayın sesini kendimde aç' : 'Yayın sesini kendimde kapat'}</button>
+            <p className="px-3 pb-1 pt-2 text-[10px] leading-4 text-slate-400">{participant.isLocal ? 'Kendi yayın sesin sana tekrar çalınmaz. İzleyiciler yayının sesini duymaya devam eder.' : 'Yalnızca senin duyduğun yayın sesini değiştirir. Mikrofon sesini ve diğer izleyicileri etkilemez.'}</p>
+          </section>, document.fullscreenElement || document.body);
+        }
         const moderation = moderationByUser[participant.identity] || {};
-        const volume = Number.isFinite(Number(savedVolumes[participant.identity])) ? Number(savedVolumes[participant.identity]) : 1;
+        const volume = normalizeVoiceVolume(savedVolumes[participant.identity]);
         const left = Math.min(contextMenu.x, Math.max(12, window.innerWidth - 304));
         const top = Math.min(contextMenu.y, Math.max(12, window.innerHeight - 410));
         return createPortal(
@@ -362,8 +418,8 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
             </header>
             {!participant.isLocal && <div className="rounded-xl border border-white/[0.06] bg-black/15 p-2.5">
               <div className="mb-2 flex items-center justify-between text-[10px] font-semibold text-slate-300"><span className="flex items-center gap-1.5">{volume === 0 ? <VolumeX className="h-3.5 w-3.5 text-rose-300" /> : <Volume2 className="h-3.5 w-3.5 text-cyan-200" />} Yalnızca sende duyulan ses</span><span>{Math.round(volume * 100)}%</span></div>
-              <input type="range" min="0" max="1" step="0.01" value={volume} aria-label={`${participant.name || 'Kullanıcı'} ses seviyesi`} onChange={event => setLocalParticipantVolume(participant, event.target.value)} className="w-full accent-cyan-300" />
-              <div className="mt-1 flex justify-between text-[9px] text-slate-600"><span>Sessiz</span><span>Tam ses</span></div>
+              <input type="range" min="0" max="2" step="0.01" value={volume} aria-label={`${participant.name || 'Kullanıcı'} ses seviyesi`} aria-valuetext={`%${Math.round(volume * 100)}`} onChange={event => setLocalParticipantVolume(participant, event.target.value)} className="w-full accent-cyan-300" />
+              <div className="mt-1 flex justify-between text-[9px] text-slate-500"><span>%0</span><button type="button" onClick={() => setLocalParticipantVolume(participant, 1)} className="hover:text-cyan-200" title="Varsayılan ses seviyesine dön">%100 · Sıfırla</button><span>%200</span></div>
             </div>}
             {serverId && !participant.isLocal && (canModerateVoice.mute || canModerateVoice.deafen) && <div className="mt-2 space-y-1 border-t border-white/[0.07] pt-2">
               {canModerateVoice.mute && <button type="button" disabled={moderationBusy !== ''} onClick={() => void applyServerVoiceAction(participant, moderation.server_muted ? 'server_unmute' : 'server_mute')} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-medium text-slate-200 transition hover:bg-white/[0.06] disabled:opacity-50"><ShieldAlert className="h-4 w-4 text-rose-300" />{moderation.server_muted ? 'Sunucu susturmasını kaldır' : 'Sunucuda sustur'}{moderationBusy.endsWith('server_mute') && <RefreshCw className="ml-auto h-3 w-3 animate-spin" />}</button>}
@@ -715,7 +771,6 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
         </button>
       </div>
       {screenSourcePickerOpen && <ScreenSourcePicker sources={screenSources} settings={screenShareSettings} onSettingChange={updateScreenShareSettings} pending={pendingControl !== ''} onChoose={chooseScreenSource} onClose={() => setScreenSourcePickerOpen(false)} />}
-      <RoomAudioRenderer muted={isDeafened} />
     </div>
   );
 }
@@ -851,7 +906,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           key={`${channelId}:${attempt}`}
           video={false}
           audio={getAudioCaptureOptions(voiceAudioSettings)}
-          options={{ publishDefaults: getAudioPublishOptions(voiceAudioSettings) }}
+          options={{ publishDefaults: getAudioPublishOptions(voiceAudioSettings), webAudioMix: true }}
           connect
           token={token}
           serverUrl={liveKitUrl}

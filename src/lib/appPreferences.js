@@ -1,3 +1,5 @@
+import { normalizeVoiceVolume } from './voicePlayback.js';
+
 const preferenceKey = (userId) => `fastcord:preferences:${encodeURIComponent(userId || '')}`;
 const defaults = { doNotDisturb: false, desktopNotifications: true, notificationSound: true, soundEffects: true, uiSoundVolume: 65, pinnedDMIds: [], hiddenDMIds: [], reduceMotion: false, accentTheme: 'violet', chatDensity: 'comfortable', searchShortcut: 'ctrl+k', mutedUserIds: [], mutedServerIds: [], mutedChannelIds: [], serverMuteUntil: {}, serverNotificationModes: {}, serverFolders: [], collapsedServerFolderIds: [], featuredServerIds: [], featuredServersConfigured: false, serverFolderIds: {}, voiceAudioSettings: { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: false }, quietHoursEnabled: false, quietHoursStart: '22:00', quietHoursEnd: '08:00' };
 const accentPalettes = {
@@ -28,6 +30,12 @@ export function getAppPreferences(userId, storage = globalThis.localStorage) {
       mutedChannelIds: Array.isArray(saved.mutedChannelIds) ? saved.mutedChannelIds : [],
       pinnedDMIds: Array.isArray(saved.pinnedDMIds) ? saved.pinnedDMIds : [],
       hiddenDMIds: Array.isArray(saved.hiddenDMIds) ? saved.hiddenDMIds : [],
+      voiceParticipantVolumes: saved.voiceParticipantVolumes && typeof saved.voiceParticipantVolumes === 'object' && !Array.isArray(saved.voiceParticipantVolumes)
+        ? Object.fromEntries(Object.entries(saved.voiceParticipantVolumes).map(([id, volume]) => [id, normalizeVoiceVolume(volume)])) : {},
+      voiceScreenShareMuted: saved.voiceScreenShareMuted && typeof saved.voiceScreenShareMuted === 'object' && !Array.isArray(saved.voiceScreenShareMuted)
+        ? Object.fromEntries(Object.entries(saved.voiceScreenShareMuted).map(([id, muted]) => [id, muted === true])) : {},
+      voiceScreenShareVolumes: saved.voiceScreenShareVolumes && typeof saved.voiceScreenShareVolumes === 'object' && !Array.isArray(saved.voiceScreenShareVolumes)
+        ? Object.fromEntries(Object.entries(saved.voiceScreenShareVolumes).map(([id, volume]) => [id, normalizeVoiceVolume(volume)])) : {},
       uiSoundVolume: Number.isFinite(Number(saved.uiSoundVolume)) ? Math.min(100, Math.max(0, Number(saved.uiSoundVolume))) : defaults.uiSoundVolume,
       serverMuteUntil: saved.serverMuteUntil && typeof saved.serverMuteUntil === 'object' ? saved.serverMuteUntil : {},
       serverNotificationModes: saved.serverNotificationModes && typeof saved.serverNotificationModes === 'object' ? saved.serverNotificationModes : {},

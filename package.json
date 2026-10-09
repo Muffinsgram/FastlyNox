@@ -1,7 +1,7 @@
 {
   "name": "fastlynox-app",
   "private": true,
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "Fastlynox desktop chat and voice application",
   "author": "Muffinsgram",
   "type": "module",
