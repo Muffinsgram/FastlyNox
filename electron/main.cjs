@@ -215,7 +215,7 @@ ipcMain.handle('fastlynox:list-screen-sources', async () => {
   // Source enumeration is on the screen-share critical path; small previews and
   // no per-window icon lookup keep the picker responsive on large desktops.
   const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 144, height: 81 }, fetchWindowIcons: false });
-  return sources.map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail?.toDataURL?.() || '' }));
+  return sources.map((source) => ({ id: source.id, name: source.name, kind: source.id.startsWith('screen:') ? 'screen' : 'window', thumbnail: source.thumbnail?.toDataURL?.() || '' }));
 });
 ipcMain.handle('fastlynox:select-screen-source', (_event, sourceId, withAudio = false) => {
   selectedScreenSourceId = typeof sourceId === 'string' && sourceId.length < 256 ? sourceId : null;

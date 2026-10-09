@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { LiveKitRoom, RoomAudioRenderer, VideoTrack, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { AudioPresets, DisconnectReason, Room as LiveKitClientRoom, Track, supportsAudioOutputSelection } from 'livekit-client';
-import { AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, Shield, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
+import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minimize2, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, Shield, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
 import { generateLiveKitToken } from '../../../lib/livekit';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { fetchProfiles, getAvatarUrl } from '../../../lib/profileMedia';
@@ -556,6 +556,52 @@ function VoiceAudioSettings({ currentUserId }) {
   </div>;
 }
 
+function ScreenSourcePicker({ sources, settings, onSettingChange, pending, onChoose, onClose }) {
+  const [category, setCategory] = useState('screen');
+  const screens = sources.filter((source) => source.kind === 'screen');
+  const windows = sources.filter((source) => source.kind === 'window');
+  const visibleSources = category === 'screen' ? screens : windows;
+  const qualityOptions = [
+    { value: '720', label: 'HD · 720p' },
+    { value: '1080', label: 'Full HD · 1080p' },
+    { value: '1440', label: 'QHD · 1440p' },
+  ];
+  const frameRateOptions = [
+    { value: 15, label: '15 FPS · düşük kullanım' },
+    { value: 30, label: '30 FPS · dengeli' },
+    { value: 60, label: '60 FPS · akıcı' },
+  ];
+
+  return createPortal(<div className="fixed inset-0 z-[1500] grid place-items-center bg-[#03050a]/80 p-3 backdrop-blur-md" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section role="dialog" aria-modal="true" aria-labelledby="screen-source-title" className="w-full max-w-3xl overflow-hidden rounded-[26px] border border-white/[0.12] bg-[linear-gradient(150deg,#1a2030,#10141d)] shadow-[0_30px_100px_rgba(0,0,0,.72)] animate-in fade-in zoom-in-95 duration-150">
+      <header className="flex items-center gap-3 border-b border-white/[0.07] px-5 py-4">
+        <span className="grid h-10 w-10 place-items-center rounded-2xl bg-violet-300/10 text-violet-200"><MonitorUp className="h-5 w-5" /></span>
+        <div className="min-w-0 flex-1"><h2 id="screen-source-title" className="text-sm font-bold text-white">Paylaşımını ayarla</h2><p className="mt-0.5 text-[10px] text-slate-500">Ekran veya pencere seçip görüntü ayarlarını yap.</p></div>
+        <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-white/[0.07] hover:text-white" aria-label="Kapat"><X className="h-4 w-4" /></button>
+      </header>
+
+      <div className="border-b border-white/[0.06] px-4 pt-4">
+        <div className="flex w-fit items-center gap-1 rounded-xl border border-white/[0.07] bg-black/20 p-1" role="tablist" aria-label="Paylaşım kaynağı türü">
+          {[{ id: 'screen', label: 'Ekranlar', Icon: Monitor, count: screens.length }, { id: 'window', label: 'Pencereler', Icon: AppWindow, count: windows.length }].map(({ id, label, Icon, count }) => <button key={id} type="button" role="tab" aria-selected={category === id} onClick={() => setCategory(id)} className={`inline-flex h-9 items-center gap-2 rounded-lg px-3 text-xs font-semibold transition ${category === id ? 'bg-violet-300/15 text-violet-100 shadow-[inset_0_0_0_1px_rgba(196,181,253,.13)]' : 'text-slate-400 hover:bg-white/[0.05] hover:text-white'}`}><Icon className="h-3.5 w-3.5" />{label}<span className={`rounded-md px-1.5 py-0.5 text-[9px] ${category === id ? 'bg-violet-200/10 text-violet-100' : 'bg-white/[0.05] text-slate-500'}`}>{count}</span></button>)}
+        </div>
+        <p className="pb-3 pt-2 text-[10px] text-slate-500">{category === 'screen' ? 'Tüm monitörü paylaş.' : 'Tek bir uygulama penceresini paylaş.'}</p>
+      </div>
+
+      <div className="grid max-h-[min(42vh,410px)] grid-cols-1 gap-3 overflow-y-auto p-4 sm:grid-cols-2 lg:grid-cols-3">
+        {visibleSources.map((source) => <button key={source.id} type="button" onClick={() => void onChoose(source)} disabled={pending} className="group overflow-hidden rounded-2xl border border-white/[0.08] bg-black/15 text-left transition hover:border-violet-200/35 hover:bg-violet-300/[0.06] disabled:opacity-50"><div className="relative aspect-video overflow-hidden bg-[#090c12]">{source.thumbnail ? <img src={source.thumbnail} alt="" loading="lazy" className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]" /> : <div className="grid h-full place-items-center text-violet-200">{category === 'screen' ? <Monitor className="h-8 w-8" /> : <AppWindow className="h-8 w-8" />}</div>}<span className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-transparent" /><span className="absolute bottom-2 left-2 rounded-md border border-white/10 bg-black/55 px-1.5 py-1 text-[9px] font-semibold text-white/90">{category === 'screen' ? 'EKRAN' : 'PENCERE'}</span></div><div className="truncate px-3 py-2.5 text-xs font-semibold text-slate-200">{source.name}</div></button>)}
+        {!visibleSources.length && <div className="col-span-full flex min-h-36 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-white/[0.09] text-center"><span className="grid h-10 w-10 place-items-center rounded-xl bg-white/[0.04] text-slate-500">{category === 'screen' ? <Monitor className="h-5 w-5" /> : <AppWindow className="h-5 w-5" />}</span><p className="text-xs font-semibold text-slate-300">{category === 'screen' ? 'Paylaşılabilir ekran bulunamadı' : 'Açık uygulama penceresi bulunamadı'}</p><p className="text-[10px] text-slate-500">Diğer kaynak türünü seçebilir veya pencereyi yeniden açabilirsin.</p></div>}
+      </div>
+
+      <div className="grid gap-3 border-t border-white/[0.07] bg-black/10 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+        <label className="text-[10px] font-semibold text-slate-400">Görüntü kalitesi<AnimatedSelect ariaLabel="Ekran paylaşımı görüntü kalitesi" value={settings.quality} onValueChange={(value) => onSettingChange('quality', value)} options={qualityOptions} menuClassName="z-[1600] mt-1.5 w-full" className="mt-1.5 w-full bg-[#111722]" /></label>
+        <label className="text-[10px] font-semibold text-slate-400">Kare hızı<AnimatedSelect ariaLabel="Ekran paylaşımı kare hızı" value={settings.frameRate} onValueChange={(value) => onSettingChange('frameRate', Number(value))} options={frameRateOptions} menuClassName="z-[1600] mt-1.5 w-full" className="mt-1.5 w-full bg-[#111722]" /></label>
+        <button type="button" role="switch" aria-checked={settings.audio} onClick={() => onSettingChange('audio', !settings.audio)} className={`flex min-h-10 items-center gap-2 rounded-xl border px-3 text-left text-xs font-semibold transition ${settings.audio ? 'border-cyan-200/25 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-white/[0.035] text-slate-300'}`}><span className={`grid h-4 w-4 place-items-center rounded border ${settings.audio ? 'border-cyan-200/50 bg-cyan-300/20' : 'border-white/20'}`}>{settings.audio && <Check className="h-3 w-3" />}</span>Sistem sesini paylaş</button>
+        <p className="text-[9px] leading-4 text-slate-600 sm:col-span-3">Yüksek çözünürlük ve FPS daha fazla internet ve işlemci kullanır. Sistem sesi Windows’ta desteklenir.</p>
+      </div>
+    </section>
+  </div>, document.body);
+}
+
 function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, expanded = false, onToggleExpand }) {
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } = useLocalParticipant();
   const [isDeafened, setIsDeafened] = useState(false);
@@ -668,7 +714,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
           {!compact && <span className="text-xs font-semibold">Ayrıl</span>}
         </button>
       </div>
-      {screenSourcePickerOpen && createPortal(<div className="fixed inset-0 z-[1500] grid place-items-center bg-[#03050a]/80 p-3 backdrop-blur-md sm:p-5" onMouseDown={(event) => { if (event.target === event.currentTarget) setScreenSourcePickerOpen(false); }}><section role="dialog" aria-modal="true" aria-labelledby="screen-source-title" className="w-full max-w-3xl overflow-hidden rounded-[26px] border border-white/[0.12] bg-[linear-gradient(150deg,#1a2030,#10141d)] shadow-[0_30px_100px_rgba(0,0,0,.72)] animate-in fade-in zoom-in-95 duration-150"><header className="flex items-center gap-3 border-b border-white/[0.07] px-5 py-4"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-violet-300/10 text-violet-200"><MonitorUp className="h-5 w-5" /></span><div className="min-w-0 flex-1"><h2 id="screen-source-title" className="text-sm font-bold text-white">Paylaşımını ayarla</h2><p className="mt-0.5 text-[10px] text-slate-500">Kaynak seç, görüntü kalitesi ve kare hızını belirle.</p></div><button type="button" onClick={() => setScreenSourcePickerOpen(false)} className="grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-white/[0.07] hover:text-white" aria-label="Kapat"><X className="h-4 w-4" /></button></header><div className="grid max-h-[min(54vh,500px)] grid-cols-1 gap-3 overflow-y-auto p-4 sm:grid-cols-2 lg:grid-cols-3">{screenSources.map((source) => <button key={source.id} type="button" onClick={() => void chooseScreenSource(source)} disabled={pendingControl !== ''} className="group overflow-hidden rounded-2xl border border-white/[0.08] bg-black/15 text-left transition hover:border-violet-200/35 hover:bg-violet-300/[0.06] disabled:opacity-50"><div className="relative aspect-video overflow-hidden bg-[#090c12]">{source.thumbnail ? <img src={source.thumbnail} alt="" loading="lazy" className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]" /> : <div className="grid h-full place-items-center text-violet-200"><MonitorUp className="h-8 w-8" /></div>}<span className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-70" /></div><div className="truncate px-3 py-2.5 text-xs font-semibold text-slate-200">{source.name}</div></button>)}</div><div className="grid gap-3 border-t border-white/[0.07] bg-black/10 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"><label className="text-[10px] font-semibold text-slate-400">Görüntü kalitesi<select value={screenShareSettings.quality} onChange={(event) => updateScreenShareSettings('quality', event.target.value)} className="mt-1.5 block h-10 w-full rounded-xl border border-white/10 bg-[#111722] px-3 text-xs text-white outline-none focus:border-violet-300/40"><option value="720">HD · 720p</option><option value="1080">Full HD · 1080p</option><option value="1440">QHD · 1440p</option></select></label><label className="text-[10px] font-semibold text-slate-400">Kare hızı<select value={screenShareSettings.frameRate} onChange={(event) => updateScreenShareSettings('frameRate', Number(event.target.value))} className="mt-1.5 block h-10 w-full rounded-xl border border-white/10 bg-[#111722] px-3 text-xs text-white outline-none focus:border-violet-300/40"><option value="15">15 FPS · düşük kullanım</option><option value="30">30 FPS · dengeli</option><option value="60">60 FPS · akıcı</option></select></label><button type="button" role="switch" aria-checked={screenShareSettings.audio} onClick={() => updateScreenShareSettings('audio', !screenShareSettings.audio)} className={`flex min-h-10 items-center gap-2 rounded-xl border px-3 text-left text-xs font-semibold transition ${screenShareSettings.audio ? 'border-cyan-200/25 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-white/[0.035] text-slate-300'}`}><span className={`grid h-4 w-4 place-items-center rounded border ${screenShareSettings.audio ? 'border-cyan-200/50 bg-cyan-300/20' : 'border-white/20'}`}>{screenShareSettings.audio && <Check className="h-3 w-3" />}</span>Sistem sesini paylaş</button><p className="text-[9px] leading-4 text-slate-600 sm:col-span-3">Yüksek çözünürlük ve FPS daha fazla internet ve işlemci kullanır. Sistem sesi Windows’ta desteklenir.</p></div></section></div>, document.body)}
+      {screenSourcePickerOpen && <ScreenSourcePicker sources={screenSources} settings={screenShareSettings} onSettingChange={updateScreenShareSettings} pending={pendingControl !== ''} onChoose={chooseScreenSource} onClose={() => setScreenSourcePickerOpen(false)} />}
       <RoomAudioRenderer muted={isDeafened} />
     </div>
   );

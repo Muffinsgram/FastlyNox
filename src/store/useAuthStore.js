@@ -19,6 +19,27 @@ const profileForSession = async (session, fetchProfile) => {
   };
 };
 
+const fallbackUserForSession = (session) => session ? ({
+  id: session.user.id,
+  email: session.user.email,
+  username: session.user.user_metadata?.username || session.user.email?.split('@')[0] || 'User',
+  avatar_url: null,
+  banner_url: null,
+  bio: '',
+}) : null;
+
+const publishSession = (session, sequence, get, set) => {
+  const previousUser = get().user;
+  const user = previousUser?.id === session?.user?.id ? previousUser : fallbackUserForSession(session);
+  // Supabase keeps the session in local storage. Render the app shell from that
+  // cached session first, then hydrate the profile without flashing AuthScreen.
+  set({ session, user, isInitialized: true });
+  if (!session) return;
+  void profileForSession(session, get().fetchProfile).then((profile) => {
+    if (sequence === authEventSequence && get().session?.user?.id === session.user.id) set({ session, user: profile, isInitialized: true });
+  });
+};
+
 export const useAuthStore = create((set, get) => ({
   session: null,
   user: null, // This will now hold data from 'profiles' table
@@ -48,19 +69,14 @@ export const useAuthStore = create((set, get) => ({
         const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
           const sequence = ++authEventSequence;
           // Do not await Supabase queries inside its auth callback; that can deadlock its auth lock.
-          setTimeout(async () => {
-            const nextUser = await profileForSession(nextSession, get().fetchProfile);
-            if (sequence === authEventSequence) set({ session: nextSession, user: nextUser });
-          }, 0);
+          setTimeout(() => publishSession(nextSession, sequence, get, set), 0);
         });
         authSubscription = data.subscription;
       }
 
       const sequence = authEventSequence;
       const { data: { session } } = await supabase.auth.getSession();
-      const user = await profileForSession(session, get().fetchProfile);
-      if (sequence === authEventSequence) set({ session, user });
-      set({ isInitialized: true });
+      if (sequence === authEventSequence) publishSession(session, sequence, get, set);
     })().catch((error) => {
       initializationPromise = null;
       console.error('Could not initialize authentication:', error);

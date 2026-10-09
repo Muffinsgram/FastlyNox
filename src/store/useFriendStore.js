@@ -19,7 +19,7 @@ export const useFriendStore = create((set, get) => ({
     if (!user) return;
     const generation = get().friendRequestGeneration + 1;
     set({ friendRequestGeneration: generation });
-    set({ isLoading: true });
+    if (!get().friendships.length) set({ isLoading: true });
 
     // Fetch friendships where user is requester or addressee
     const { data, error } = await supabase
@@ -39,6 +39,29 @@ export const useFriendStore = create((set, get) => ({
     }
   },
 
+  subscribeToFriendships: (userId) => {
+    if (!userId) return () => {};
+    let refreshTimer;
+    let subscribedOnce = false;
+    const refresh = () => {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => { void get().fetchFriendships(); }, 100);
+    };
+    const channel = supabase.channel(`friendships:${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships', filter: `requester_id=eq.${userId}` }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships', filter: `addressee_id=eq.${userId}` }, refresh)
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          if (subscribedOnce) refresh();
+          subscribedOnce = true;
+        }
+      });
+    return () => {
+      clearTimeout(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
+  },
+
   sendFriendRequest: async (username) => {
     const user = useAuthStore.getState().user;
     if (!user) return { success: false, error: 'Not authenticated' };
@@ -46,24 +69,36 @@ export const useFriendStore = create((set, get) => ({
     // Find the target user by username
     const { data: targetUser, error: searchError } = await supabase
       .from('profiles')
-      .select('id')
+      .select('id, username, avatar_url, status_text, status_expires_at')
       .eq('username', username)
       .single();
 
     if (searchError || !targetUser) return { success: false, error: 'Kullanıcı bulunamadı.' };
     if (targetUser.id === user.id) return { success: false, error: 'Kendinize arkadaşlık isteği gönderemezsiniz.' };
 
-    // Insert friendship
+    const optimisticId = `optimistic-${Date.now()}`;
+    const optimisticRequest = {
+      id: optimisticId,
+      requester_id: user.id,
+      addressee_id: targetUser.id,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+      requester: { id: user.id, username: user.username, avatar_url: user.avatar_url },
+      addressee: targetUser,
+    };
+    set((state) => ({ friendships: [optimisticRequest, ...state.friendships] }));
+
     const { error: insertError } = await supabase
       .from('friendships')
       .insert([{ requester_id: user.id, addressee_id: targetUser.id, status: 'pending' }]);
 
     if (insertError) {
+      set((state) => ({ friendships: state.friendships.filter((friendship) => friendship.id !== optimisticId) }));
       if (insertError.code === '23505') return { success: false, error: 'Bu kullanıcıya zaten istek gönderdiniz.' };
       return { success: false, error: 'İstek gönderilemedi.' };
     }
 
-    get().fetchFriendships();
+    void get().fetchFriendships();
     return { success: true };
   },
 
