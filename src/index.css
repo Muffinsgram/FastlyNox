@@ -381,7 +381,9 @@ html.electron-desktop .macos-shell {
 .screen-share-card:fullscreen .screen-share-stage,
 .camera-stage-card:fullscreen .screen-share-stage {
   min-height: 0;
-  flex: 1;
+  max-height: none;
+  width: 100%;
+  flex: 1 1 0;
   aspect-ratio: auto;
 }
 
@@ -390,4 +392,25 @@ html.electron-desktop .macos-shell {
   max-width: 100vw;
   max-height: 100vh;
   object-fit: contain;
+}
+
+.screen-share-card:fullscreen > :first-child,
+.camera-stage-card:fullscreen > :first-child {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  background: linear-gradient(#080b13e6, #080b1380);
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.screen-share-card:fullscreen > :first-child:hover,
+.screen-share-card:fullscreen > :first-child:focus-within,
+.camera-stage-card:fullscreen > :first-child:hover,
+.camera-stage-card:fullscreen > :first-child:focus-within { opacity: 1; }
+.screen-share-card:fullscreen .screen-share-stage video,
+.camera-stage-card:fullscreen .screen-share-stage video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
 }

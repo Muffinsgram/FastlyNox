@@ -203,7 +203,7 @@ function PreferenceRow({ icon, title, description, checked, onChange }) {
 
 function VoiceSettingsPanel({ value, onChange }) {
   const [devices, setDevices] = useState({ audioinput: [], audiooutput: [] });
-  const settings = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: false, ...value };
+  const settings = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'rnnoise', autoGainControl: true, voiceIsolation: false, ...value };
 
   useEffect(() => {
     let active = true;
@@ -231,9 +231,10 @@ function VoiceSettingsPanel({ value, onChange }) {
       <label><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400"><Mic className="mr-1 inline h-3 w-3" />Mikrofon</span><AnimatedSelect ariaLabel="Varsayılan mikrofon" value={settings.inputDeviceId} onValueChange={deviceId => update('inputDeviceId', deviceId)} options={makeOptions('audioinput')} className="w-full" /></label>
       <label><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400"><Headphones className="mr-1 inline h-3 w-3" />Ses çıkışı</span><AnimatedSelect ariaLabel="Varsayılan hoparlör" value={settings.outputDeviceId} onValueChange={deviceId => update('outputDeviceId', deviceId)} options={makeOptions('audiooutput')} className="w-full" /></label>
     </div>
+    <label className="mt-3 block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor} onValueChange={value => update('noiseProcessor', value)} options={[{ value: 'rnnoise', label: 'RNNoise · gelişmiş gürültü engelleme' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} className="w-full" /></label>
     <div className="mt-3 grid gap-2 sm:grid-cols-2">
-      {[["echoCancellation", 'Yankı engelleme', 'Hoparlör yankısını azalt'], ["noiseSuppression", 'Gürültü engelleme', 'Arka plan sesini azalt'], ["autoGainControl", 'Ses seviyesini dengele', 'Mikrofon seviyesini otomatik ayarla'], ["voiceIsolation", 'Güçlü ses yalıtımı', 'Tarayıcı desteğine bağlı']].map(([key, title, description]) => <PreferenceRow key={key} icon={<AudioLines className="h-4 w-4" />} title={title} description={description} checked={Boolean(settings[key])} onChange={checked => update(key, checked)} />)}
+      {[["echoCancellation", 'Yankı engelleme', 'Hoparlör yankısını azalt'], ["noiseSuppression", 'Gürültü engelleme', 'Arka plan sesini azalt'], ["autoGainControl", 'Ses seviyesini dengele', 'Mikrofon seviyesini otomatik ayarla']].map(([key, title, description]) => <PreferenceRow key={key} icon={<AudioLines className="h-4 w-4" />} title={title} description={description} checked={Boolean(settings[key])} onChange={checked => update(key, checked)} />)}
     </div>
-    <p className="mt-3 text-[10px] leading-4 text-slate-500">Gürültü filtreleri tarayıcı ve işletim sisteminin medya desteğine bağlıdır. Açık ses odasında tercihler mikrofon ayarlarına uygulanır.</p>
+    <p className="mt-3 text-[10px] leading-4 text-slate-500">RNNoise cihazında çalışarak klavye, fan ve ortam gürültüsünü azaltır. Açık ses odasında tercihler anında uygulanır. Müzik için gürültü engellemeyi kapatabilirsin.</p>
   </section>;
 }

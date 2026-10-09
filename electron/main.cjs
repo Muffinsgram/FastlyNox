@@ -72,6 +72,7 @@ function createWindow() {
     icon: path.join(__dirname, 'app-icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
+      backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,

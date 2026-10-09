@@ -1,3 +1,4 @@
+import { getClipboardImage } from '../../../lib/clipboardImage';
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { Hash, Info, Plus, Loader2, Pencil, Trash2, Send, X, Reply, Forward, BarChart3, CalendarClock, MessageSquareText, ImagePlus, Copy, UserRound } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
@@ -300,19 +301,16 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention, o
     }
   };
 
-  const handleFileUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const selectImageFile = (file) => {
+    if (!file || isUploading || isSending) return;
     const extensionByType = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
     const fileExtension = extensionByType[file.type];
     if (!fileExtension || file.size > maxUploadBytes) {
       setUploadError(`PNG, JPEG, WebP veya GIF görseli seç; dosya ${(maxUploadBytes / 1024 / 1024).toFixed(0)} MB sınırını aşmamalı.`);
-      e.target.value = '';
       return;
     }
     if (!user?.id) {
-      setUploadError('Sign in again before uploading.');
-      e.target.value = '';
+      setUploadError('Görsel yüklemek için yeniden giriş yap.');
       return;
     }
 
@@ -320,7 +318,18 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention, o
     if (mediaPreviewUrl) URL.revokeObjectURL(mediaPreviewUrl);
     setMediaPreviewUrl(URL.createObjectURL(file));
     setSelectedFile(file);
-    e.target.value = '';
+  };
+
+  const handleFileUpload = (event) => {
+    selectImageFile(event.target.files?.[0]);
+    event.target.value = '';
+  };
+
+  const handleImagePaste = (event) => {
+    const file = getClipboardImage(event.clipboardData);
+    if (!file) return;
+    event.preventDefault();
+    selectImageFile(file);
   };
 
   if (!activeChannelId) return null;
@@ -483,6 +492,7 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention, o
                         value={input}
                         onChange={(event) => { const value = event.target.value; setDraft(activeChannelId, value); setIsTypingNow(Boolean(value.trim())); window.clearTimeout(typingTimerRef.current); if (value.trim()) typingTimerRef.current = window.setTimeout(() => setIsTypingNow(false), 1400); }}
                         onKeyDown={handleSend}
+                        onPaste={handleImagePaste}
                         onScroll={(event) => { if (inputPreviewRef.current) inputPreviewRef.current.scrollTop = event.currentTarget.scrollTop; }}
                         disabled={isUploading || isSending}
                         className="relative z-10 block max-h-36 min-h-9 w-full resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm leading-5 text-transparent caret-slate-100 outline-none selection:bg-violet-300/25 selection:text-transparent [-webkit-text-fill-color:transparent] disabled:opacity-60"

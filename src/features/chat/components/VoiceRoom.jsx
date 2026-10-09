@@ -14,7 +14,10 @@ import { AnimatedSelect } from '../../../components/ui/AnimatedSelect';
 import { supabase } from '../../../lib/supabase';
 import { getVoicePlayback, normalizeVoiceVolume } from '../../../lib/voicePlayback';
 
-const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: false };
+import { getScreenShareCaptureOptions, getScreenSharePublishOptions, supportsOwnAudioExclusion } from '../../../lib/screenCapture';
+import { syncNoiseProcessor } from '../../../lib/microphoneNoiseProcessor';
+
+const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'rnnoise', autoGainControl: true, voiceIsolation: false };
 
 function getAudioCaptureOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
   return {
@@ -22,17 +25,12 @@ function getAudioCaptureOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
     echoCancellation: settings.echoCancellation,
     noiseSuppression: settings.noiseSuppression,
     autoGainControl: settings.autoGainControl,
-    voiceIsolation: settings.voiceIsolation,
+    voiceIsolation: settings.noiseSuppression && settings.noiseProcessor !== 'standard' ? false : settings.voiceIsolation,
   };
 }
 
 function getAudioPublishOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
   return { audioPreset: settings.audioQuality === 'high' ? AudioPresets.musicHighQuality : AudioPresets.speech };
-}
-
-function getScreenShareCaptureOptions(settings) {
-  const dimensions = settings.quality === '720' ? [1280, 720] : settings.quality === '1440' ? [2560, 1440] : [1920, 1080];
-  return { video: true, audio: Boolean(settings.audio), systemAudio: settings.audio ? 'include' : 'exclude', resolution: { width: dimensions[0], height: dimensions[1], frameRate: Number(settings.frameRate) || 30 }, contentHint: Number(settings.frameRate) >= 45 ? 'motion' : 'detail' };
 }
 
 class VoiceRoomErrorBoundary extends Component {
@@ -343,7 +341,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
       {(screenShares.length > 0 || cameraShares.length > 0) && <section aria-label="Canlı yayınlar" className="mb-5 grid gap-4">
         {screenShares.map((track) => <article key={`screen-${track.participant.identity}`} onContextMenu={(event) => openShareMenu(event, track.participant)} ref={(element) => { const key = `screen:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`screen:${track.participant.identity}`} className="screen-share-card overflow-hidden rounded-[22px] border border-violet-300/20 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.32)]">
           <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[linear-gradient(100deg,rgba(139,92,246,.12),transparent)] px-4 py-3 text-xs font-semibold text-violet-100"><span className="flex min-w-0 items-center gap-2"><MonitorUp className="h-4 w-4 shrink-0"/><span className="truncate">{track.participant.name || track.participant.identity}<span className="ml-1.5 font-normal text-slate-400">ekranını paylaşıyor</span></span></span><button type="button" onClick={() => void toggleShareFullscreen(`screen:${track.participant.identity}`)} aria-label={expandedShareId === `screen:${track.participant.identity}` ? 'Ekran paylaşımını küçült' : 'Ekran paylaşımını büyüt'} title="Büyüt / tam ekran" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-violet-200/25 hover:bg-violet-300/15"><Maximize2 className="h-4 w-4"/></button></div>
-          <div className="screen-share-stage relative aspect-video max-h-[min(68vh,760px)] bg-[#05070b]"><VideoTrack trackRef={track} className="h-full w-full object-contain"/>
+          <div onDoubleClick={(event) => { if (!event.target.closest('button')) void toggleShareFullscreen(`screen:${track.participant.identity}`); }} className="screen-share-stage relative aspect-video max-h-[min(68vh,760px)] bg-[#05070b]"><VideoTrack trackRef={track} className="h-full w-full object-contain"/>
             <button type="button" onClick={(event) => openShareMenu(event, track.participant)} aria-label="Yayın ses seçenekleri" title="Yayın ses seçenekleri · sağ tık" className="absolute bottom-3 right-3 flex items-center gap-2 rounded-xl border border-white/15 bg-[#111722]/90 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-xl hover:bg-[#202839]">
               {track.participant.isLocal || mutedShares[track.participant.identity] || normalizeVoiceVolume(shareVolumes[track.participant.identity]) === 0 ? <VolumeX className="h-4 w-4 text-rose-200" /> : <Volume2 className="h-4 w-4 text-violet-200" />}
               {track.participant.isLocal ? 'Önizleme sessiz' : mutedShares[track.participant.identity] || normalizeVoiceVolume(shareVolumes[track.participant.identity]) === 0 ? 'Yayın sende sessiz' : `Yayın sesi · %${Math.round(normalizeVoiceVolume(shareVolumes[track.participant.identity]) * 100)}`}
@@ -352,7 +350,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
         </article>)}
         {cameraShares.map((track) => <article key={`camera-${track.participant.identity}`} ref={(element) => { const key = `camera:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`camera:${track.participant.identity}`} className="camera-stage-card overflow-hidden rounded-[22px] border border-cyan-200/15 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.3)]">
           <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[linear-gradient(100deg,rgba(34,211,238,.09),transparent)] px-4 py-3 text-xs font-semibold text-cyan-100"><span className="flex min-w-0 items-center gap-2"><Camera className="h-4 w-4 shrink-0"/><span className="truncate">{track.participant.name || track.participant.identity}<span className="ml-1.5 font-normal text-slate-400">kamerada</span></span></span><button type="button" onClick={() => void toggleShareFullscreen(`camera:${track.participant.identity}`)} aria-label="Kamerayı büyüt" title="Büyüt / tam ekran" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-cyan-200/25 hover:bg-cyan-300/10"><Maximize2 className="h-4 w-4"/></button></div>
-          <div className="screen-share-stage relative aspect-video max-h-[min(58vh,640px)] bg-[#05070b]"><VideoTrack trackRef={track} className="h-full w-full object-contain"/></div>
+          <div onDoubleClick={() => void toggleShareFullscreen(`camera:${track.participant.identity}`)} className="screen-share-stage relative aspect-video max-h-[min(58vh,640px)] bg-[#05070b]"><VideoTrack trackRef={track} className="h-full w-full object-contain"/></div>
         </article>)}
       </section>}
       {shareFullscreenError && <p role="alert" className="mb-3 text-center text-xs text-rose-300">{shareFullscreenError}</p>}
@@ -453,7 +451,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
 
 function VoiceAudioSettings({ currentUserId }) {
   const room = useRoomContext();
-  const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
+  const { localParticipant, isMicrophoneEnabled, microphoneTrack } = useLocalParticipant();
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(currentUserId).voiceAudioSettings || {}) }));
   const settingsRef = useRef(settings);
@@ -461,6 +459,17 @@ function VoiceAudioSettings({ currentUserId }) {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
   const connectionState = useConnectionState();
+  const localMicrophoneTrack = microphoneTrack?.track;
+  useEffect(() => {
+    if (!localMicrophoneTrack || connectionState !== 'connected') return;
+    void syncNoiseProcessor(localMicrophoneTrack, { noiseSuppression: settings.noiseSuppression, noiseProcessor: settings.noiseProcessor }).catch(() => setMessage('Gelişmiş filtre uygulanamadı; standart filtre kullanılacak.'));
+  }, [localMicrophoneTrack, connectionState, settings.noiseSuppression, settings.noiseProcessor]);
+
+  useEffect(() => {
+    const notify = () => setMessage('Gelişmiş filtre açılamadı; standart gürültü engelleme kullanılıyor.');
+    window.addEventListener('fastlynox:noise-fallback', notify);
+    return () => window.removeEventListener('fastlynox:noise-fallback', notify);
+  }, []);
 
   const refreshDevices = async () => {
     try {
@@ -514,14 +523,15 @@ function VoiceAudioSettings({ currentUserId }) {
       settingsRef.current = next;
       setSettings(next);
       const microphoneTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-      if (isMicrophoneEnabled && microphoneTrack?.restartTrack) {
+      if (microphoneTrack?.restartTrack) {
         const apply = async () => {
           if (previous.audioQuality !== next.audioQuality) {
             await localParticipant.unpublishTrack(microphoneTrack, false);
             try { await localParticipant.publishTrack(microphoneTrack, getAudioPublishOptions(next)); }
             catch (error) { await localParticipant.publishTrack(microphoneTrack, getAudioPublishOptions(previous)); throw error; }
           }
-          await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
+          const captureKeys = ['inputDeviceId', 'echoCancellation', 'noiseSuppression', 'noiseProcessor', 'autoGainControl', 'voiceIsolation'];
+          if (captureKeys.some(key => previous[key] !== next[key])) await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
         };
         apply().catch((error) => setMessage(error instanceof Error ? error.message : 'Mikrofon ayarı uygulanamadı.'));
       }
@@ -540,7 +550,9 @@ function VoiceAudioSettings({ currentUserId }) {
     setBusy(key);
     try {
       const microphoneTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-      if (isMicrophoneEnabled && microphoneTrack?.restartTrack) await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
+      if (microphoneTrack?.restartTrack) {
+        await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
+      }
       persist(next);
       setMessage(isMicrophoneEnabled ? 'Mikrofon ayarı uygulandı.' : 'Mikrofonu açtığında ayar uygulanacak.');
     } catch (error) {
@@ -602,18 +614,24 @@ function VoiceAudioSettings({ currentUserId }) {
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Giden ses kalitesi</span><AnimatedSelect ariaLabel="Mikrofon yayın kalitesi" value={settings.audioQuality} onValueChange={value => void updateAudioQuality(value)} options={[{ value: 'speech', label: 'Konuşma · düşük gecikme' }, { value: 'high', label: 'Yüksek kalite · daha çok internet' }]} disabled={busy !== ''} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Mikrofon girişi</span><AnimatedSelect ariaLabel="Mikrofon girişi" value={settings.inputDeviceId} onValueChange={value => void changeDevice('audioinput', value)} options={inputOptions} disabled={busy !== ''} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hoparlör / kulaklık</span><AnimatedSelect ariaLabel="Hoparlör veya kulaklık çıkışı" value={settings.outputDeviceId} onValueChange={value => void changeDevice('audiooutput', value)} options={outputOptions} disabled={busy !== '' || !supportsAudioOutputSelection()} className="w-full" /></label>
+        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor || 'rnnoise'} onValueChange={value => void updateCaptureSetting('noiseProcessor', value)} options={[{ value: 'rnnoise', label: 'RNNoise · gelişmiş gürültü engelleme' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} disabled={busy !== ''} className="w-full" /></label>
         <div className="border-t border-white/[0.07] pt-2">
-          {[["echoCancellation", 'Yankı engelleme', 'Hoparlörden mikrofona dönen sesi azaltır.'], ["noiseSuppression", 'Gürültü engelleme', 'Fan ve ortam gürültüsünü azaltır.'], ["autoGainControl", 'Otomatik mikrofon seviyesi', 'Konuşma sesini dengeler.'], ["voiceIsolation", 'Güçlü ses yalıtımı', 'Tarayıcı destekliyorsa daha agresif filtre uygular.']].map(([key, label, description]) => <div key={key} className="flex items-center justify-between gap-3 rounded-xl px-2 py-2 transition hover:bg-white/[0.04]"><span><span className="block text-xs font-medium text-slate-200">{label}</span><span className="mt-0.5 block text-[9px] leading-4 text-slate-500">{description}</span></span><button type="button" role="switch" aria-checked={settings[key]} aria-label={label} disabled={busy !== ''} onClick={() => void updateCaptureSetting(key, !settings[key])} className={`relative h-6 w-11 shrink-0 rounded-full border p-[3px] transition ${settings[key] ? 'border-cyan-200/40 bg-cyan-400/50' : 'border-white/10 bg-slate-800'} disabled:opacity-50`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${settings[key] ? 'translate-x-5' : ''}`} /></button></div>)}
+          {[["echoCancellation", 'Yankı engelleme', 'Hoparlörden mikrofona dönen sesi azaltır.'], ["noiseSuppression", 'Gürültü engelleme', 'Fan ve ortam gürültüsünü azaltır.'], ["autoGainControl", 'Otomatik mikrofon seviyesi', 'Konuşma sesini dengeler.']].map(([key, label, description]) => <div key={key} className="flex items-center justify-between gap-3 rounded-xl px-2 py-2 transition hover:bg-white/[0.04]"><span><span className="block text-xs font-medium text-slate-200">{label}</span><span className="mt-0.5 block text-[9px] leading-4 text-slate-500">{description}</span></span><button type="button" role="switch" aria-checked={settings[key]} aria-label={label} disabled={busy !== ''} onClick={() => void updateCaptureSetting(key, !settings[key])} className={`relative h-6 w-11 shrink-0 rounded-full border p-[3px] transition ${settings[key] ? 'border-cyan-200/40 bg-cyan-400/50' : 'border-white/10 bg-slate-800'} disabled:opacity-50`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${settings[key] ? 'translate-x-5' : ''}`} /></button></div>)}
         </div>
       </div>
       {message && <p role="status" className={`mt-3 rounded-xl border px-3 py-2 text-[10px] leading-4 ${message.includes('uygulanamadı') || message.includes('değiştirilemedi') || message.includes('desteklemiyor') || message.includes('bulunamadı') ? 'border-rose-300/15 bg-rose-400/[0.05] text-rose-200' : 'border-emerald-300/10 bg-emerald-400/[0.05] text-emerald-200'}`}>{message}</p>}
-      <p className="mt-3 text-[9px] leading-4 text-slate-600">Gürültü engelleme tarayıcı ve işletim sisteminin medya desteğine bağlıdır; desteklenmeyen filtreler sessizce yok sayılabilir.</p>
+      <p className="mt-3 text-[9px] leading-4 text-slate-600">RNNoise cihazında çalışır; klavye, fan ve ortam gürültüsünü azaltır. Müzik paylaşırken filtreyi kapatabilirsin.</p>
     </section>}
   </div>;
 }
 
 function ScreenSourcePicker({ sources, settings, onSettingChange, pending, onChoose, onClose }) {
   const [category, setCategory] = useState('screen');
+  useEffect(() => {
+    const escape = event => { if (event.key === 'Escape' && !pending) { event.stopPropagation(); onClose(); } };
+    window.addEventListener('keydown', escape, true);
+    return () => window.removeEventListener('keydown', escape, true);
+  }, [onClose, pending]);
   const screens = sources.filter((source) => source.kind === 'screen');
   const windows = sources.filter((source) => source.kind === 'window');
   const visibleSources = category === 'screen' ? screens : windows;
@@ -649,10 +667,10 @@ function ScreenSourcePicker({ sources, settings, onSettingChange, pending, onCho
       </div>
 
       <div className="grid gap-3 border-t border-white/[0.07] bg-black/10 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
-        <label className="text-[10px] font-semibold text-slate-400">Görüntü kalitesi<AnimatedSelect ariaLabel="Ekran paylaşımı görüntü kalitesi" value={settings.quality} onValueChange={(value) => onSettingChange('quality', value)} options={qualityOptions} menuClassName="z-[1600] mt-1.5 w-full" className="mt-1.5 w-full bg-[#111722]" /></label>
-        <label className="text-[10px] font-semibold text-slate-400">Kare hızı<AnimatedSelect ariaLabel="Ekran paylaşımı kare hızı" value={settings.frameRate} onValueChange={(value) => onSettingChange('frameRate', Number(value))} options={frameRateOptions} menuClassName="z-[1600] mt-1.5 w-full" className="mt-1.5 w-full bg-[#111722]" /></label>
-        <button type="button" role="switch" aria-checked={settings.audio} onClick={() => onSettingChange('audio', !settings.audio)} className={`flex min-h-10 items-center gap-2 rounded-xl border px-3 text-left text-xs font-semibold transition ${settings.audio ? 'border-cyan-200/25 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-white/[0.035] text-slate-300'}`}><span className={`grid h-4 w-4 place-items-center rounded border ${settings.audio ? 'border-cyan-200/50 bg-cyan-300/20' : 'border-white/20'}`}>{settings.audio && <Check className="h-3 w-3" />}</span>Sistem sesini paylaş</button>
-        <p className="text-[9px] leading-4 text-slate-600 sm:col-span-3">Yüksek çözünürlük ve FPS daha fazla internet ve işlemci kullanır. Sistem sesi Windows’ta desteklenir.</p>
+        <label className="text-[10px] font-semibold text-slate-400">Görüntü kalitesi<AnimatedSelect ariaLabel="Ekran paylaşımı görüntü kalitesi" value={settings.quality} onValueChange={(value) => onSettingChange('quality', value)} disabled={pending} options={qualityOptions} menuClassName="z-[1600] mt-1.5 w-full" className="mt-1.5 w-full bg-[#111722]" /></label>
+        <label className="text-[10px] font-semibold text-slate-400">Kare hızı<AnimatedSelect ariaLabel="Ekran paylaşımı kare hızı" value={settings.frameRate} onValueChange={(value) => onSettingChange('frameRate', Number(value))} disabled={pending} options={frameRateOptions} menuClassName="z-[1600] mt-1.5 w-full" className="mt-1.5 w-full bg-[#111722]" /></label>
+        <button type="button" role="switch" aria-checked={settings.audio} disabled={pending || !supportsOwnAudioExclusion()} onClick={() => onSettingChange('audio', !settings.audio)} className={`flex min-h-10 items-center gap-2 rounded-xl border px-3 text-left text-xs font-semibold transition ${settings.audio ? 'border-cyan-200/25 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-white/[0.035] text-slate-300'}`}><span className={`grid h-4 w-4 place-items-center rounded border ${settings.audio ? 'border-cyan-200/50 bg-cyan-300/20' : 'border-white/20'}`}>{settings.audio && <Check className="h-3 w-3" />}</span>Sistem sesini paylaş</button>
+        <p className="text-[9px] leading-4 text-slate-600 sm:col-span-3">Yüksek çözünürlük ve FPS daha fazla internet ve işlemci kullanır. Windows uygulamasında Fastlynox konuşmaları yayının sesinden hariç tutulur. Sistem sesi, seçilen pencere dışındaki uygulamaları da içerebilir. {!supportsOwnAudioExclusion() && 'Bu ortamda görüşme sesini hariç tutma desteklenmediği için sistem sesi kapalıdır.'}</p>
       </div>
     </section>
   </div>, document.body);
@@ -693,7 +711,10 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
       return;
     }
     if (!window.fastlynoxDesktop?.listScreenSources) {
-      await toggle('screen', () => localParticipant.setScreenShareEnabled(true, getScreenShareCaptureOptions(screenShareSettings)));
+      await toggle('screen', async () => {
+        await localParticipant.setScreenShareEnabled(true, getScreenShareCaptureOptions(screenShareSettings), getScreenSharePublishOptions(screenShareSettings));
+        if (screenShareSettings.audio && !supportsOwnAudioExclusion()) setControlError('Bu ortam görüşme sesini yayından ayıramıyor. Yankıyı önlemek için yayın sessiz başlatıldı.');
+      });
       return;
     }
     setPendingControl('screen');
@@ -717,8 +738,9 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     try {
       const selected = await window.fastlynoxDesktop.selectScreenSource(source.id, screenShareSettings.audio);
       if (!selected) throw new Error('Ekran kaynağı seçilemedi. Yeniden dene.');
-      await localParticipant.setScreenShareEnabled(true, getScreenShareCaptureOptions(screenShareSettings));
+      await localParticipant.setScreenShareEnabled(true, getScreenShareCaptureOptions(screenShareSettings), getScreenSharePublishOptions(screenShareSettings));
       setScreenSourcePickerOpen(false);
+      if (screenShareSettings.audio && !supportsOwnAudioExclusion()) setControlError('Bu ortam görüşme sesini yayından ayıramıyor. Yankıyı önlemek için yayın sessiz başlatıldı.');
     } catch (error) {
       setControlError(error instanceof Error ? error.message : 'Ekran paylaşımı başlatılamadı.');
     } finally {
