@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="80" y1="70" x2="1115" y2="630" gradientUnits="userSpaceOnUse"><stop stop-color="#1B2040"/><stop offset=".55" stop-color="#101522"/><stop offset="1" stop-color="#090C12"/></linearGradient>
+    <linearGradient id="accent" x1="180" y1="180" x2="1010" y2="470" gradientUnits="userSpaceOnUse"><stop stop-color="#8E9AFF"/><stop offset="1" stop-color="#8D6AFF"/></linearGradient>
+  </defs>
+  <rect width="1200" height="630" rx="48" fill="url(#bg)"/>
+  <circle cx="1000" cy="120" r="260" fill="#786AFF" fill-opacity=".12"/><circle cx="190" cy="600" r="300" fill="#43D6C2" fill-opacity=".07"/>
+  <rect x="92" y="112" width="84" height="84" rx="25" fill="url(#accent)"/>
+  <path d="M119 137h30v27h-30z" stroke="white" stroke-width="5" stroke-linejoin="round"/><path d="M126 171h16" stroke="white" stroke-width="5" stroke-linecap="round"/>
+  <text x="205" y="171" fill="#F5F6FF" font-family="Inter,Arial,sans-serif" font-size="48" font-weight="750" letter-spacing="-2">Fastlynox</text>
+  <text x="92" y="338" fill="#F7F8FC" font-family="Inter,Arial,sans-serif" font-size="72" font-weight="760" letter-spacing="-3">Topluluğuna bağlan.</text>
+  <text x="96" y="405" fill="#ABB4CC" font-family="Inter,Arial,sans-serif" font-size="29" font-weight="450">Sohbet, ses odaları ve arkadaşların tek bir yerde.</text>
+  <rect x="92" y="474" width="260" height="58" rx="18" fill="#FFFFFF" fill-opacity=".08" stroke="#FFFFFF" stroke-opacity=".13"/>
+  <circle cx="123" cy="503" r="7" fill="#58E0B1"/><text x="145" y="512" fill="#E6E9F4" font-family="Inter,Arial,sans-serif" font-size="20" font-weight="600">Ücretsiz katıl</text>
+</svg>

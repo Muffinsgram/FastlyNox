@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/invite/:code", "destination": "/api/invite?code=:code" },
+    { "source": "/sitemap.xml", "destination": "/api/sitemap" },
+    { "source": "/robots.txt", "destination": "/api/robots" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

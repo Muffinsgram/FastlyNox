@@ -1,0 +1,84 @@
+{
+  "name": "fastlynox-app",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Fastlynox desktop chat and voice application",
+  "author": "Muffinsgram",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "desktop:dev": "electron .",
+    "build": "vite build",
+    "dist:win": "npm run build && electron-builder --win nsis --x64",
+    "release:win": "npm run build && electron-builder --win nsis --x64 --publish always",
+    "lint": "oxlint",
+    "test": "node --test",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "autoprefixer": "^10.6.1",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "oxlint": "^1.81.0",
+    "postcss": "^8.5.29",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.0"
+  },
+  "dependencies": {
+    "@livekit/components-react": "^2.9.24",
+    "@livekit/components-styles": "^1.2.0",
+    "@supabase/supabase-js": "^2.117.3",
+    "@tailwindcss/vite": "^4.3.3",
+    "clsx": "^2.1.1",
+    "electron-updater": "^6.8.9",
+    "jose": "^6.2.12",
+    "livekit-client": "^2.22.3",
+    "lucide-react": "^1.52.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.7.0",
+    "tailwindcss-animate": "^1.0.7",
+    "zustand": "^5.0.15"
+  },
+  "build": {
+    "appId": "com.muffinsgram.fastlynox",
+    "productName": "Fastlynox",
+    "directories": {
+      "output": "artifacts/windows"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Muffinsgram",
+      "repo": "FastlyNox",
+      "releaseType": "release"
+    }
+  }
+}
