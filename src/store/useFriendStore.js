@@ -138,8 +138,8 @@ export const useFriendStore = create((set, get) => ({
       .from('dm_channels')
       .select(`
         *,
-        user1:user1_id(id, username, avatar_url, status_text, status_expires_at),
-        user2:user2_id(id, username, avatar_url, status_text, status_expires_at)
+        user1:user1_id(id, public_id, username, avatar_url, status_text, status_expires_at),
+        user2:user2_id(id, public_id, username, avatar_url, status_text, status_expires_at)
       `)
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
       .order('created_at', { ascending: false });
@@ -171,8 +171,8 @@ export const useFriendStore = create((set, get) => ({
       }])
       .select(`
         *,
-        user1:user1_id(id, username, avatar_url, status_text, status_expires_at),
-        user2:user2_id(id, username, avatar_url, status_text, status_expires_at)
+        user1:user1_id(id, public_id, username, avatar_url, status_text, status_expires_at),
+        user2:user2_id(id, public_id, username, avatar_url, status_text, status_expires_at)
       `)
       .single();
 

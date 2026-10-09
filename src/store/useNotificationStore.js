@@ -179,10 +179,10 @@ export const useNotificationStore = create((set, get) => ({
         const preferences = getAppPreferences(user.id);
         const doNotDisturb = shouldSuppressNotification(newNotif, preferences, { presenceIsDnd: usePresenceStore.getState().status === 'dnd' });
         const countServerActivity = !isNotificationLocationMuted(newNotif, preferences);
-        if (!doNotDisturb && preferences.desktopNotifications && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-          new Notification(newNotif.title, {
-            body: newNotif.body,
-          });
+        const isAppFocused = typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus();
+        if (!doNotDisturb && preferences.desktopNotifications && !isAppFocused && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          try { new Notification(newNotif.title, { body: newNotif.body }); }
+          catch { /* Keep in-app notification delivery working if the OS blocks a desktop popup. */ }
         }
 
         if (!doNotDisturb && preferences.notificationSound) playNotificationSound();

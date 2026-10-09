@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Users, MessageSquare, Check, X, UserPlus, Plus, Megaphone, Clock3, Rss, Bookmark } from 'lucide-react';
+import { Users, MessageSquare, Check, X, UserPlus, Plus, Megaphone, Clock3, Rss, Bookmark, Copy, Pin, PinOff, Trash2 } from 'lucide-react';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { useFriendStore } from '../../../store/useFriendStore';
 import { DMChatArea } from '../../chat/components/DMChatArea';
@@ -10,6 +10,8 @@ import { SocialFeed } from './SocialFeed';
 import { SavedMessagesPanel } from './SavedMessagesPanel';
 import { usePresenceStore } from '../../../store/usePresenceStore';
 import { getAppPreferences } from '../../../lib/appPreferences';
+import { saveAppPreferences } from '../../../lib/appPreferences';
+import { ActionContextMenu } from '../../../components/layout/ActionContextMenu';
 
 const visiblePresence = (profile, statuses, visibility) => {
   if (profile?.id && visibility?.[profile.id] === false) return null;
@@ -29,6 +31,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
   const [addUsername, setAddUsername] = useState('');
   const [addStatus, setAddStatus] = useState(null);
   const [activeDM, setActiveDM] = useState(null);
+  const [dmContextMenu, setDmContextMenu] = useState(null);
   const presenceStatuses = usePresenceStore((state) => state.statuses);
   const presenceVisibility = usePresenceStore((state) => state.visibility);
   const [showGettingStarted, setShowGettingStarted] = useState(() => {
@@ -59,9 +62,34 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
     const dm = await getOrCreateDM(otherUserId);
     if (dm) {
       const otherUser = dm.user1_id === user.id ? dm.user2 : dm.user1;
+      const preferences = getAppPreferences(user?.id);
+      if (preferences.hiddenDMIds.includes(dm.id)) saveAppPreferences(user.id, { ...preferences, hiddenDMIds: preferences.hiddenDMIds.filter((id) => id !== dm.id) });
       setActiveDM({ id: dm.id, user: otherUser });
     }
   };
+
+  const appPreferences = getAppPreferences(user?.id);
+  const hiddenDMIds = appPreferences.hiddenDMIds || [];
+  const pinnedDMIds = appPreferences.pinnedDMIds || [];
+  const visibleDMs = dmChannels.filter((dm) => !hiddenDMIds.includes(dm.id));
+  const pinnedDMs = visibleDMs.filter((dm) => pinnedDMIds.includes(dm.id));
+  const unpinnedDMs = visibleDMs.filter((dm) => !pinnedDMIds.includes(dm.id));
+  const togglePinDM = (channelId) => {
+    const preferences = getAppPreferences(user?.id);
+    const pinned = preferences.pinnedDMIds || [];
+    saveAppPreferences(user?.id, { ...preferences, pinnedDMIds: pinned.includes(channelId) ? pinned.filter((id) => id !== channelId) : [channelId, ...pinned] });
+  };
+  const hideDM = (channelId) => {
+    const preferences = getAppPreferences(user?.id);
+    if (!preferences.hiddenDMIds.includes(channelId)) saveAppPreferences(user?.id, { ...preferences, hiddenDMIds: [...preferences.hiddenDMIds, channelId] });
+    if (activeDM?.id === channelId) setActiveDM(null);
+  };
+  const dmMenuItems = dmContextMenu ? [
+    { id: 'pin-dm', label: pinnedDMIds.includes(dmContextMenu.dm.id) ? 'Sabitlemeyi kaldır' : 'DM’yi sabitle', icon: pinnedDMIds.includes(dmContextMenu.dm.id) ? PinOff : Pin, onSelect: () => togglePinDM(dmContextMenu.dm.id) },
+    { id: 'copy-user-id', label: 'Kullanıcı ID’sini kopyala', icon: Copy, onSelect: () => { const id = dmContextMenu.otherUser?.public_id ?? dmContextMenu.otherUser?.id; if (id != null) void navigator.clipboard.writeText(String(id)); } },
+    { separator: true },
+    { id: 'hide-dm', label: 'DM listesinden kaldır', icon: Trash2, danger: true, onSelect: () => hideDM(dmContextMenu.dm.id) },
+  ] : [];
 
   const handleAddFriend = async (e) => {
     e.preventDefault();
@@ -113,19 +141,25 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
               </h3>
            </div>
            
-           {dmChannels.map(dm => {
+           {pinnedDMs.length > 0 && <p className="mb-1 mt-2 px-3 text-[9px] font-bold uppercase tracking-[.15em] text-slate-600">Sabitlenenler</p>}
+           {pinnedDMs.map(dm => {
              const otherUser = dm.user1_id === user.id ? dm.user2 : dm.user1;
              const isActive = activeDM?.id === dm.id;
              return (
-               <button 
-                 key={dm.id} 
-                 onClick={() => setActiveDM({ id: dm.id, user: otherUser })}
-                 className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg group transition-all ${isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
-               >
-                 <img src={getAvatarUrl(otherUser?.avatar_url, otherUser?.username)} className="w-8 h-8 rounded-full bg-slate-800 object-cover shrink-0" alt="avatar" />
-                 <span className="font-medium text-sm truncate">{otherUser?.username}</span>
-               </button>
+               <div key={dm.id} onContextMenu={(event) => { event.preventDefault(); setDmContextMenu({ x: event.clientX, y: event.clientY, dm, otherUser }); }}>
+                 <button type="button" onClick={() => setActiveDM({ id: dm.id, user: otherUser })} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg group transition-all ${isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}>
+                   <img src={getAvatarUrl(otherUser?.avatar_url, otherUser?.username)} className="w-8 h-8 rounded-full bg-slate-800 object-cover shrink-0" alt="avatar" />
+                   <span className="font-medium text-sm truncate">{otherUser?.username}</span>
+                   {pinnedDMIds.includes(dm.id) && <Pin className="ml-auto h-3 w-3 shrink-0 text-violet-300/70" aria-label="Sabitlenmiş" />}
+                 </button>
+               </div>
              );
+           })}
+           {unpinnedDMs.length > 0 && pinnedDMs.length > 0 && <p className="mb-1 mt-3 border-t border-white/[0.06] px-3 pt-3 text-[9px] font-bold uppercase tracking-[.15em] text-slate-600">Özel mesajlar</p>}
+           {unpinnedDMs.map(dm => {
+             const otherUser = dm.user1_id === user.id ? dm.user2 : dm.user1;
+             const isActive = activeDM?.id === dm.id;
+             return <div key={dm.id} onContextMenu={(event) => { event.preventDefault(); setDmContextMenu({ x: event.clientX, y: event.clientY, dm, otherUser }); }}><button type="button" onClick={() => setActiveDM({ id: dm.id, user: otherUser })} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg group transition-all ${isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}><img src={getAvatarUrl(otherUser?.avatar_url, otherUser?.username)} className="w-8 h-8 rounded-full bg-slate-800 object-cover shrink-0" alt="avatar" /><span className="font-medium text-sm truncate">{otherUser?.username}</span></button></div>;
            })}
         </div>
       </div>
@@ -288,6 +322,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
           </>
         )}
       </div>
+      <ActionContextMenu position={dmContextMenu} items={dmMenuItems} onClose={() => setDmContextMenu(null)} label="Özel mesaj işlemleri" />
     </div>
   );
 }

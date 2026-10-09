@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AudioLines, Bell, Headphones, Mic, Pencil, ShieldCheck, UserRound, X, Accessibility, Volume2, Crown, Settings2, Palette, MessageSquareText, LockKeyhole } from 'lucide-react';
+import { AudioLines, Bell, Headphones, Mic, Pencil, ShieldCheck, UserRound, X, Accessibility, Volume2, Crown, Settings2, Palette, MessageSquareText, LockKeyhole, Play } from 'lucide-react';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { supabase } from '../../../lib/supabase';
 import { getAvatarUrl, getBannerUrl, removeProfileImage } from '../../../lib/profileMedia';
@@ -13,6 +13,7 @@ import { AnimatedSelect } from '../../../components/ui/AnimatedSelect';
 import { ServerNotificationSettings } from './ServerNotificationSettings';
 import { useNotificationStore } from '../../../store/useNotificationStore';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { playUiSound } from '../../../lib/uiSounds';
 
 export function UserSettingsModal({ onClose }) {
   const { user, session, signOut, refreshProfile } = useAuthStore();
@@ -37,7 +38,19 @@ export function UserSettingsModal({ onClose }) {
   const [profileMessage, setProfileMessage] = useState('');
   const [accountMessage, setAccountMessage] = useState('');
   const [preferences, setPreferences] = useState(() => getAppPreferences(user?.id));
+  const [notificationPermission, setNotificationPermission] = useState(() => typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
   const refreshNotificationCounts = useNotificationStore((state) => state.fetchNotifications);
+
+  const enableDesktopNotifications = async () => {
+    if (typeof Notification === 'undefined') { setNotificationPermission('unsupported'); return; }
+    try { setNotificationPermission(await Notification.requestPermission()); }
+    catch { setNotificationPermission(Notification.permission); }
+  };
+  const sendTestDesktopNotification = () => {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    try { new Notification('Fastlynox', { body: 'Masaüstü bildirimleri hazır.' }); }
+    catch { /* Native notifications may be blocked by the operating system. */ }
+  };
 
   const updatePreference = (name, value) => {
     const next = { ...preferences, [name]: value };
@@ -96,12 +109,13 @@ export function UserSettingsModal({ onClose }) {
     ['profile', 'Profil', <UserRound key="profile-icon" className="h-4 w-4" />],
     ['account', 'Güvenlik', <ShieldCheck key="security-icon" className="h-4 w-4" />],
     ['preferences', 'Tercihler', <Accessibility key="preferences-icon" className="h-4 w-4" />],
+    ['sound', 'Ses', <AudioLines key="sound-icon" className="h-4 w-4" />],
     ['privacy', 'Gizlilik', <LockKeyhole key="privacy-icon" className="h-4 w-4" />],
     ['plus', 'Fastlynox Plus', <Crown key="plus-icon" className="h-4 w-4" />],
     ...(isPlatformStaff ? [['admin', 'Yönetim', <Settings2 key="admin-icon" className="h-4 w-4" />]] : []),
   ];
-  const tabTitle = { profile: 'Profilini kişiselleştir', account: 'Hesap güvenliği', preferences: 'Bildirim ve görünüm', privacy: 'Gizlilik ve güvenlik', plus: 'Fastlynox Plus', admin: 'Platform yönetimi' }[activeTab];
-  const tabDescription = { profile: 'Profil fotoğrafını, banner’ını ve kendini nasıl tanıttığını düzenle.', account: 'E-posta adresini ve parolanı yönet.', preferences: 'Bildirim yoğunluğunu ve animasyonları kendine göre ayarla.', privacy: 'DM izinlerini, görünürlüğünü ve engellediğin hesapları yönet.', plus: 'Planını, özelliklerini ve yükleme sınırlarını görüntüle.', admin: 'Kullanıcıları, rozetleri, planları ve yükleme sınırlarını yönet.' }[activeTab];
+  const tabTitle = { profile: 'Profilini kişiselleştir', account: 'Hesap güvenliği', preferences: 'Bildirim ve görünüm', sound: 'Ses ayarları', privacy: 'Gizlilik ve güvenlik', plus: 'Fastlynox Plus', admin: 'Platform yönetimi' }[activeTab];
+  const tabDescription = { profile: 'Profil fotoğrafını, banner’ını ve kendini nasıl tanıttığını düzenle.', account: 'E-posta adresini ve parolanı yönet.', preferences: 'Bildirim yoğunluğunu ve animasyonları kendine göre ayarla.', sound: 'Mikrofonunu, ses çıkışını ve uygulama seslerini yönet.', privacy: 'DM izinlerini, görünürlüğünü ve engellediğin hesapları yönet.', plus: 'Planını, özelliklerini ve yükleme sınırlarını görüntüle.', admin: 'Kullanıcıları, rozetleri, planları ve yükleme sınırlarını yönet.' }[activeTab];
 
   return (
     <div className="fixed inset-0 z-[200] flex animate-in fade-in duration-200 bg-[#070a10]/80 p-3 backdrop-blur-xl sm:p-6" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -151,12 +165,22 @@ export function UserSettingsModal({ onClose }) {
               <label className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><span><span className="block text-sm font-semibold text-white">Hızlı arama kısayolu</span><span className="mt-1 block text-xs text-slate-400">Sunucu, kanal, DM ve mesaj aramasını her ekrandan aç.</span></span><AnimatedSelect ariaLabel="Hızlı arama kısayolu" value={preferences.searchShortcut || 'ctrl+k'} onValueChange={(value) => updatePreference('searchShortcut', value)} options={[{ value: 'ctrl+k', label: 'Ctrl + K' }, { value: 'ctrl+shift+k', label: 'Ctrl + Shift + K' }, { value: 'alt+k', label: 'Alt + K' }]} className="min-w-44" /></label>
               <PreferenceRow icon={<Bell className="h-4 w-4" />} title="Rahatsız etmeyin" description="Masaüstü bildirimi ve açılır uyarıları sessize alır. Okunmamış rozetleri yine birikir." checked={preferences.doNotDisturb} onChange={(value) => updatePreference('doNotDisturb', value)} />
               <PreferenceRow icon={<Bell className="h-4 w-4" />} title="Masaüstü bildirimleri" description="Yeni bildirimleri uygulama arka plandayken göster." checked={preferences.desktopNotifications} onChange={(value) => updatePreference('desktopNotifications', value)} />
+              {preferences.desktopNotifications && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><div><p className="text-sm font-semibold text-white">Masaüstü izni</p><p className="mt-1 text-xs text-slate-400">Durum: {notificationPermission === 'granted' ? 'İzin verildi' : notificationPermission === 'denied' ? 'Engellendi · işletim sistemi ayarlarından aç' : notificationPermission === 'unsupported' ? 'Bu ortam bildirimleri desteklemiyor' : 'Henüz izin istenmedi'}. Rahatsız Etme ve sessiz saatler bildirimleri bastırır.</p></div>{notificationPermission === 'granted' ? <button type="button" onClick={sendTestDesktopNotification} className="rounded-xl border border-violet-200/15 bg-violet-300/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-300/15">Test bildirimi</button> : notificationPermission !== 'unsupported' && <button type="button" onClick={() => void enableDesktopNotifications()} className="rounded-xl border border-violet-200/15 bg-violet-300/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-300/15">İzin iste</button>}</div>}
               <PreferenceRow icon={<Volume2 className="h-4 w-4" />} title="Bildirim sesi" description="Bildirim geldiğinde kısa, hafif bir ses çal." checked={preferences.notificationSound} onChange={(value) => updatePreference('notificationSound', value)} />
               <ServerNotificationSettings preferences={preferences} onChange={updatePreference} />
-              <VoiceSettingsPanel value={preferences.voiceAudioSettings || {}} onChange={(value) => updatePreference('voiceAudioSettings', value)} />
-              <PreferenceRow icon={<Volume2 className="h-4 w-4" />} title="Arayüz ses efektleri" description="Ses odasına girme, ayrılma, geri dönme ve arama durumlarında kısa sesler çal." checked={preferences.soundEffects} onChange={(value) => updatePreference('soundEffects', value)} />
               <PreferenceRow icon={<Accessibility className="h-4 w-4" />} title="Hareketi azalt" description="Arayüz geçişlerini ve dikkat dağıtan animasyonları azalt." checked={preferences.reduceMotion} onChange={(value) => updatePreference('reduceMotion', value)} />
               <p className="px-1 pt-2 text-xs text-slate-500">Bu tercihler bu cihaz ve tarayıcıda saklanır.</p>
+            </section>
+          ) : activeTab === 'sound' ? (
+            <section className="max-w-2xl space-y-3">
+              <VoiceSettingsPanel value={preferences.voiceAudioSettings || {}} onChange={(value) => updatePreference('voiceAudioSettings', value)} />
+              <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
+                <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-cyan-300/[0.08] text-cyan-100"><Volume2 className="h-4 w-4" /></span><span><span className="block text-sm font-semibold text-white">Arayüz ses efektleri</span><span className="mt-1 block text-xs text-slate-400">Odaya girme/çıkma, arama ve ses tahtası efektlerinin cihazındaki seviyesi.</span></span></div>
+                <label className="mt-4 block"><span className="mb-2 flex justify-between text-xs text-slate-300"><span>Ses seviyesi</span><span>{preferences.uiSoundVolume ?? 65}%</span></span><input aria-label="Arayüz ses efekti seviyesi" type="range" min="0" max="100" step="1" value={preferences.uiSoundVolume ?? 65} onChange={(event) => updatePreference('uiSoundVolume', Number(event.target.value))} className="w-full accent-violet-400" /></label>
+                <div className="mt-3 flex items-center justify-between gap-3"><p className="text-xs text-slate-500">Varsayılan seviye yükseltildi. Sürgü 0’a gelirse efekt sesi kapanır.</p><button type="button" onClick={() => playUiSound('join', user?.id)} disabled={!preferences.soundEffects || !(preferences.uiSoundVolume ?? 65)} className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/[0.08] disabled:opacity-40"><Play className="h-3.5 w-3.5" />Dene</button></div>
+              </div>
+              <PreferenceRow icon={<Volume2 className="h-4 w-4" />} title="Arayüz ses efektleri" description="Ses odasına girme, ayrılma, geri dönme ve arama seslerini etkinleştir." checked={preferences.soundEffects} onChange={(value) => updatePreference('soundEffects', value)} />
+              <p className="px-1 pt-2 text-xs text-slate-500">Ses ve cihaz tercihleri bu cihazda saklanır.</p>
             </section>
           ) : activeTab === 'plus' ? (
             <FastlynoxPlusPanel userId={user?.id} />

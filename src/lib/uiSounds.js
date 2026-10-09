@@ -17,7 +17,8 @@ const soundNotes = {
 };
 
 export function playUiSound(name, userId) {
-  if (typeof window === 'undefined' || !getAppPreferences(userId).soundEffects) return;
+  const preferences = getAppPreferences(userId);
+  if (typeof window === 'undefined' || !preferences.soundEffects || preferences.uiSoundVolume <= 0) return;
   const notes = soundNotes[name];
   if (!notes) return;
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -36,7 +37,7 @@ export function playUiSound(name, userId) {
         oscillator.type = 'sine';
         oscillator.frequency.setValueAtTime(frequency, start);
         gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.exponentialRampToValueAtTime(0.035, start + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.11 * (preferences.uiSoundVolume / 100), start + 0.012);
         gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
         oscillator.connect(gain);
         gain.connect(context.destination);

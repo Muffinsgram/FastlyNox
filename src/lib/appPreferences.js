@@ -1,5 +1,5 @@
 const preferenceKey = (userId) => `fastcord:preferences:${encodeURIComponent(userId || '')}`;
-const defaults = { doNotDisturb: false, desktopNotifications: true, notificationSound: true, soundEffects: true, reduceMotion: false, accentTheme: 'violet', chatDensity: 'comfortable', searchShortcut: 'ctrl+k', mutedUserIds: [], mutedServerIds: [], mutedChannelIds: [], serverMuteUntil: {}, serverNotificationModes: {}, serverFolders: [], collapsedServerFolderIds: [], featuredServerIds: [], featuredServersConfigured: false, serverFolderIds: {}, voiceAudioSettings: { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: false }, quietHoursEnabled: false, quietHoursStart: '22:00', quietHoursEnd: '08:00' };
+const defaults = { doNotDisturb: false, desktopNotifications: true, notificationSound: true, soundEffects: true, uiSoundVolume: 65, pinnedDMIds: [], hiddenDMIds: [], reduceMotion: false, accentTheme: 'violet', chatDensity: 'comfortable', searchShortcut: 'ctrl+k', mutedUserIds: [], mutedServerIds: [], mutedChannelIds: [], serverMuteUntil: {}, serverNotificationModes: {}, serverFolders: [], collapsedServerFolderIds: [], featuredServerIds: [], featuredServersConfigured: false, serverFolderIds: {}, voiceAudioSettings: { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, autoGainControl: true, voiceIsolation: false }, quietHoursEnabled: false, quietHoursStart: '22:00', quietHoursEnd: '08:00' };
 const accentPalettes = {
   violet: ['#e0e7ff', '#dbe2ff', '#becaff', '#9baaff', '#7185ff', '#5e71e8', '#4d5bd4', '#3730a3', '#312e81'],
   cyan: ['#ecfeff', '#cffafe', '#a5f3fc', '#67e8f9', '#06b6d4', '#0891b2', '#0e7490', '#155e75', '#164e63'],
@@ -26,6 +26,9 @@ export function getAppPreferences(userId, storage = globalThis.localStorage) {
       mutedUserIds: Array.isArray(saved.mutedUserIds) ? saved.mutedUserIds : [],
       mutedServerIds: Array.isArray(saved.mutedServerIds) ? saved.mutedServerIds : [],
       mutedChannelIds: Array.isArray(saved.mutedChannelIds) ? saved.mutedChannelIds : [],
+      pinnedDMIds: Array.isArray(saved.pinnedDMIds) ? saved.pinnedDMIds : [],
+      hiddenDMIds: Array.isArray(saved.hiddenDMIds) ? saved.hiddenDMIds : [],
+      uiSoundVolume: Number.isFinite(Number(saved.uiSoundVolume)) ? Math.min(100, Math.max(0, Number(saved.uiSoundVolume))) : defaults.uiSoundVolume,
       serverMuteUntil: saved.serverMuteUntil && typeof saved.serverMuteUntil === 'object' ? saved.serverMuteUntil : {},
       serverNotificationModes: saved.serverNotificationModes && typeof saved.serverNotificationModes === 'object' ? saved.serverNotificationModes : {},
       serverFolders: Array.isArray(saved.serverFolders) ? saved.serverFolders : [],
