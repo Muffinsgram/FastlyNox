@@ -44,7 +44,7 @@ jobs:
           }
 
       - name: Build and publish installer
-        run: npm run release:win
+        run: npm run dist:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FASTLYNOX_BUILD_OUTPUT: ${{ runner.temp }}\Fastlynox\windows-build
@@ -62,6 +62,7 @@ jobs:
           files: |
             ${{ runner.temp }}\Fastlynox\windows-build\Fastlynox-Setup-*.exe
             ${{ runner.temp }}\Fastlynox\windows-build\latest.yml
+            ${{ runner.temp }}\Fastlynox\windows-build\Fastlynox-Setup-*.exe.blockmap
           fail_on_unmatched_files: true
           overwrite_files: true
         env:
