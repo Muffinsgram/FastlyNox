@@ -88,6 +88,9 @@ function installLiveKitTokenRoute(server, env) {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
+    // Vercel serves assets from the site root; Electron loads index.html via
+    // file://, so its packaged build needs paths relative to that HTML file.
+    base: process.env.ELECTRON_BUILD === 'true' ? './' : '/',
     plugins: [react(), tailwindcss(), livekitTokenPlugin(env)],
   }
 })
