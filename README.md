@@ -23,7 +23,7 @@ The Windows desktop build uses Electron and checks the public GitHub Releases pa
 
 For local desktop development, start Vite with `npm run dev`, then start Electron in a second terminal with `npm run desktop:dev`. Build a Windows installer locally with `npm run dist:win`; the installer is written to `artifacts/windows/`.
 
-To publish an update, push the source to GitHub, create and push a semantic-version tag such as `v1.0.1`, then let the **Build and publish Windows release** GitHub Action finish. The action builds a Windows NSIS installer and publishes the installer plus updater metadata to GitHub Releases. Keep releases public and do not edit or delete the generated `latest.yml`, `.exe`, or `.blockmap` assets.
+To publish an update, add the Actions repository secrets `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_PUBLIC_APP_URL`, `VITE_LIVEKIT_URL`, and `VITE_LIVEKIT_API_KEY` in GitHub Settings → Secrets and variables → Actions. `VITE_GIPHY_API_KEY` is optional. Then push a semantic-version tag such as `v1.0.1` and let the **Build and publish Windows release** GitHub Action finish. The action builds a Windows NSIS installer and publishes the installer plus updater metadata to GitHub Releases. Keep releases public and do not edit or delete the generated `latest.yml`, `.exe`, or `.blockmap` assets. Never add `LIVEKIT_API_SECRET` to the desktop build secrets; it belongs only in the Supabase Edge Function environment.
 
 The app currently targets Windows x64. Windows may show a SmartScreen warning because the installer is not code-signed; automatic update delivery works without signing, but a code-signing certificate improves publisher trust.
 
