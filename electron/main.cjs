@@ -10,6 +10,7 @@ let quitting = false;
 let startupPending = false;
 let startupTimeout;
 let selectedScreenSourceId = null;
+let selectedScreenShareAudio = false;
 let lastUpdateStatus = { state: 'idle' };
 
 function publishUpdateStatus(status) {
@@ -204,11 +205,14 @@ ipcMain.handle('fastlynox:install-update', () => {
   return true;
 });
 ipcMain.handle('fastlynox:list-screen-sources', async () => {
-  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 240, height: 150 }, fetchWindowIcons: true });
-  return sources.map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail?.toDataURL?.() || '', appIcon: source.appIcon?.toDataURL?.() || '' }));
+  // Source enumeration is on the screen-share critical path; small previews and
+  // no per-window icon lookup keep the picker responsive on large desktops.
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 144, height: 81 }, fetchWindowIcons: false });
+  return sources.map((source) => ({ id: source.id, name: source.name, thumbnail: source.thumbnail?.toDataURL?.() || '' }));
 });
-ipcMain.handle('fastlynox:select-screen-source', (_event, sourceId) => {
+ipcMain.handle('fastlynox:select-screen-source', (_event, sourceId, withAudio = false) => {
   selectedScreenSourceId = typeof sourceId === 'string' && sourceId.length < 256 ? sourceId : null;
+  selectedScreenShareAudio = Boolean(withAudio);
   return Boolean(selectedScreenSourceId);
 });
 ipcMain.on('fastlynox:renderer-ready', (event) => {
@@ -226,14 +230,16 @@ app.whenReady().then(() => {
   const initialDeepLink = process.argv.find((argument) => argument.startsWith('fastlynox://'));
   const initialInviteCode = String(initialDeepLink || '').match(/^fastlynox:\/\/invite\/([a-z0-9_-]{3,32})\/?$/iu)?.[1];
   if (initialInviteCode) app.pendingInviteCode = initialInviteCode;
-  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
     const requestedId = selectedScreenSourceId;
+    const includeAudio = selectedScreenShareAudio && Boolean(request.audioRequested);
     selectedScreenSourceId = null;
+    selectedScreenShareAudio = false;
     if (!requestedId) { callback(null); return; }
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 1, height: 1 } });
       const source = sources.find((candidate) => candidate.id === requestedId);
-      callback(source ? { video: source } : null);
+      callback(source ? { video: source, ...(includeAudio ? { audio: 'loopback' } : {}) } : null);
     } catch {
       callback(null);
     }

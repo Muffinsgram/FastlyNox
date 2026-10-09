@@ -361,7 +361,8 @@ html.electron-desktop .macos-shell {
   .macos-server-dock { left: 50%; transform: translateX(-50%); }
   .voice-dock-space .macos-message-composer { padding-bottom: 82px !important; }
 }
-.screen-share-card:fullscreen {
+.screen-share-card:fullscreen,
+.camera-stage-card:fullscreen {
   display: flex;
   width: 100vw;
   height: 100vh;
@@ -371,13 +372,15 @@ html.electron-desktop .macos-shell {
   background: #05070b;
 }
 
-.screen-share-card:fullscreen .screen-share-stage {
+.screen-share-card:fullscreen .screen-share-stage,
+.camera-stage-card:fullscreen .screen-share-stage {
   min-height: 0;
   flex: 1;
   aspect-ratio: auto;
 }
 
-.screen-share-card:fullscreen .screen-share-stage video {
+.screen-share-card:fullscreen .screen-share-stage video,
+.camera-stage-card:fullscreen .screen-share-stage video {
   max-width: 100vw;
   max-height: 100vh;
   object-fit: contain;

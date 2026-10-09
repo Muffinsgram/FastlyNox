@@ -18,7 +18,7 @@ contextBridge.exposeInMainWorld('fastlynoxDesktop', {
   checkForUpdates: () => ipcRenderer.invoke('fastlynox:check-update'),
   installUpdate: () => ipcRenderer.invoke('fastlynox:install-update'),
   listScreenSources: () => ipcRenderer.invoke('fastlynox:list-screen-sources'),
-  selectScreenSource: (sourceId) => ipcRenderer.invoke('fastlynox:select-screen-source', sourceId),
+  selectScreenSource: (sourceId, withAudio = false) => ipcRenderer.invoke('fastlynox:select-screen-source', sourceId, Boolean(withAudio)),
   onDeepLink: (callback) => {
     const listener = (_event, data) => callback(data);
     ipcRenderer.on('fastlynox:deep-link', listener);

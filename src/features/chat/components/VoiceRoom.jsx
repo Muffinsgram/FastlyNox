@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { LiveKitRoom, RoomAudioRenderer, VideoTrack, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { AudioPresets, DisconnectReason, Room as LiveKitClientRoom, Track, supportsAudioOutputSelection } from 'livekit-client';
-import { AudioLines, Ban, Camera, CameraOff, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, Shield, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
+import { AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minimize2, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, Shield, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
 import { generateLiveKitToken } from '../../../lib/livekit';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { fetchProfiles, getAvatarUrl } from '../../../lib/profileMedia';
@@ -27,6 +27,11 @@ function getAudioCaptureOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
 
 function getAudioPublishOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
   return { audioPreset: settings.audioQuality === 'high' ? AudioPresets.musicHighQuality : AudioPresets.speech };
+}
+
+function getScreenShareCaptureOptions(settings) {
+  const dimensions = settings.quality === '720' ? [1280, 720] : settings.quality === '1440' ? [2560, 1440] : [1920, 1080];
+  return { video: true, audio: Boolean(settings.audio), systemAudio: settings.audio ? 'include' : 'exclude', resolution: { width: dimensions[0], height: dimensions[1], frameRate: Number(settings.frameRate) || 30 }, contentHint: Number(settings.frameRate) >= 45 ? 'motion' : 'detail' };
 }
 
 class VoiceRoomErrorBoundary extends Component {
@@ -76,6 +81,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
   const participantIds = participants.map((participant) => participant.identity).filter(Boolean);
   const participantKey = participantIds.slice().sort().join(',');
   const screenShares = videoTracks.filter((track) => track.publication.source === Track.Source.ScreenShare);
+  const cameraShares = videoTracks.filter((track) => track.publication.source === Track.Source.Camera);
 
   const voiceStateRef = useRef({ microphoneEnabled: false, deafened: false });
   const presenceWarningShown = useRef(false);
@@ -113,7 +119,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
   const rosterKey = participants.map((participant) => `${participant.identity}:${participant.isMicrophoneEnabled ? 1 : 0}:${speakingIds.has(participant.identity) ? 1 : 0}:${moderationByUser[participant.identity]?.server_muted ? 1 : 0}:${moderationByUser[participant.identity]?.server_deafened ? 1 : 0}`).sort().join('|');
 
   useEffect(() => {
-    const syncFullscreenState = () => setExpandedShareId(document.fullscreenElement?.dataset.screenShare || null);
+    const syncFullscreenState = () => setExpandedShareId(document.fullscreenElement?.dataset.mediaStage || null);
     document.addEventListener('fullscreenchange', syncFullscreenState);
     return () => document.removeEventListener('fullscreenchange', syncFullscreenState);
   }, []);
@@ -298,35 +304,26 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
         {connectionState === 'connected' ? 'Bağlandı' : connectionState === 'reconnecting' ? 'Yeniden bağlanıyor…' : 'Bağlantı kuruluyor…'}
         </div>
       </div>
-      {screenShares.length > 0 && (
-        <section aria-label="Ekran paylaşımı" className="mb-5 grid gap-3 lg:grid-cols-2">
-          {screenShares.map((track) => (
-            <article key={track.participant.identity} ref={(element) => { if (element) shareStageRefs.current.set(track.participant.identity, element); else shareStageRefs.current.delete(track.participant.identity); }} data-screen-share={track.participant.identity} className="screen-share-card overflow-hidden rounded-2xl border border-violet-300/20 bg-[#111723] shadow-[0_18px_60px_rgba(0,0,0,.25)]">
-              <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] px-4 py-2.5 text-xs font-semibold text-violet-200">
-                <span className="flex min-w-0 items-center gap-2"><MonitorUp className="h-4 w-4 shrink-0" /> <span className="truncate">{track.participant.name || track.participant.identity} ekranını paylaşıyor</span></span>
-                <button type="button" onClick={() => void toggleShareFullscreen(track.participant.identity)} aria-label={expandedShareId === track.participant.identity ? 'Ekran paylaşımını küçült' : 'Ekran paylaşımını büyüt'} title={expandedShareId === track.participant.identity ? 'Küçült (Esc)' : 'Tam ekran görüntüle'} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/10 bg-white/[0.05] text-slate-300 transition hover:bg-violet-400/15 hover:text-white">
-                  {expandedShareId === track.participant.identity ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                </button>
-              </div>
-              <div className="screen-share-stage relative aspect-video bg-black">
-                <VideoTrack trackRef={track} className="h-full w-full object-contain" />
-              </div>
-            </article>
-          ))}
-        </section>
-      )}
+      {(screenShares.length > 0 || cameraShares.length > 0) && <section aria-label="Canlı yayınlar" className="mb-5 grid gap-4">
+        {screenShares.map((track) => <article key={`screen-${track.participant.identity}`} ref={(element) => { const key = `screen:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`screen:${track.participant.identity}`} className="screen-share-card overflow-hidden rounded-[22px] border border-violet-300/20 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.32)]">
+          <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[linear-gradient(100deg,rgba(139,92,246,.12),transparent)] px-4 py-3 text-xs font-semibold text-violet-100"><span className="flex min-w-0 items-center gap-2"><MonitorUp className="h-4 w-4 shrink-0"/><span className="truncate">{track.participant.name || track.participant.identity}<span className="ml-1.5 font-normal text-slate-400">ekranını paylaşıyor</span></span></span><button type="button" onClick={() => void toggleShareFullscreen(`screen:${track.participant.identity}`)} aria-label={expandedShareId === `screen:${track.participant.identity}` ? 'Ekran paylaşımını küçült' : 'Ekran paylaşımını büyüt'} title="Büyüt / tam ekran" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-violet-200/25 hover:bg-violet-300/15"><Maximize2 className="h-4 w-4"/></button></div>
+          <div className="screen-share-stage relative aspect-video max-h-[min(68vh,760px)] bg-[#05070b]"><VideoTrack trackRef={track} className="h-full w-full object-contain"/></div>
+        </article>)}
+        {cameraShares.map((track) => <article key={`camera-${track.participant.identity}`} ref={(element) => { const key = `camera:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`camera:${track.participant.identity}`} className="camera-stage-card overflow-hidden rounded-[22px] border border-cyan-200/15 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.3)]">
+          <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[linear-gradient(100deg,rgba(34,211,238,.09),transparent)] px-4 py-3 text-xs font-semibold text-cyan-100"><span className="flex min-w-0 items-center gap-2"><Camera className="h-4 w-4 shrink-0"/><span className="truncate">{track.participant.name || track.participant.identity}<span className="ml-1.5 font-normal text-slate-400">kamerada</span></span></span><button type="button" onClick={() => void toggleShareFullscreen(`camera:${track.participant.identity}`)} aria-label="Kamerayı büyüt" title="Büyüt / tam ekran" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-cyan-200/25 hover:bg-cyan-300/10"><Maximize2 className="h-4 w-4"/></button></div>
+          <div className="screen-share-stage relative aspect-video max-h-[min(58vh,640px)] bg-[#05070b]"><VideoTrack trackRef={track} className="h-full w-full object-contain"/></div>
+        </article>)}
+      </section>}
       {shareFullscreenError && <p role="alert" className="mb-3 text-center text-xs text-rose-300">{shareFullscreenError}</p>}
 
       {participants.length > 0 ? (
         <ul aria-label="Ses katılımcıları" className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-3">
           {participants.map((participant) => {
             const profile = participant.identity === currentUser?.id ? currentUser : profileById.get(participant.identity);
-            const cameraTrack = videoTracks.find((track) => track.participant.identity === participant.identity && track.publication.source === Track.Source.Camera);
             const speaking = speakingIds.has(participant.identity);
             return (
-              <li key={participant.identity} onContextMenu={event => { event.preventDefault(); if (!participant.isLocal) setContextMenu({ x: event.clientX, y: event.clientY, participantId: participant.identity }); }} className={`macos-surface relative overflow-hidden rounded-[22px] border bg-[#111722]/85 transition-all ${speaking && !moderationByUser[participant.identity]?.server_muted ? 'border-emerald-300/70 shadow-[0_0_0_1px_rgba(52,211,153,.16),0_0_32px_rgba(16,185,129,.12)]' : 'border-white/[0.08]'} ${cameraTrack ? 'min-h-56' : 'min-h-36'}`}>
-                {cameraTrack && <div className="absolute inset-0 bg-black"><VideoTrack trackRef={cameraTrack} className="h-full w-full object-cover" /></div>}
-                <div className={`relative flex h-full min-h-36 flex-col items-center justify-center gap-3 p-5 ${cameraTrack ? 'bg-gradient-to-t from-black/80 via-black/10 to-black/15' : 'bg-[radial-gradient(ellipse_at_top,rgba(139,92,246,.08),transparent_65%)]'}`}>
+              <li key={participant.identity} onContextMenu={event => { event.preventDefault(); if (!participant.isLocal) setContextMenu({ x: event.clientX, y: event.clientY, participantId: participant.identity }); }} className={`macos-surface relative min-h-36 overflow-hidden rounded-[22px] border bg-[#111722]/85 transition-all ${speaking && !moderationByUser[participant.identity]?.server_muted ? 'border-emerald-300/70 shadow-[0_0_0_1px_rgba(52,211,153,.16),0_0_32px_rgba(16,185,129,.12)]' : 'border-white/[0.08]'}`}>
+                <div className="relative flex h-full min-h-36 flex-col items-center justify-center gap-3 bg-[radial-gradient(ellipse_at_top,rgba(139,92,246,.08),transparent_65%)] p-5">
                   <div className={`relative rounded-full p-1 transition-all ${speaking ? 'bg-emerald-400 shadow-[0_0_0_5px_rgba(52,211,153,.13),0_0_26px_rgba(52,211,153,.48)]' : 'bg-white/10'}`}>
                     <img src={getAvatarUrl(profile?.avatar_url, profile?.username || participant.name || participant.identity)} alt={`${profile?.username || participant.name || 'Katılımcı'} profil fotoğrafı`} className="h-[4.5rem] w-[4.5rem] rounded-full border-2 border-[#111722] object-cover" />
                   </div>
@@ -570,6 +567,14 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const [screenSourcePickerOpen, setScreenSourcePickerOpen] = useState(false);
   const currentUserId = useAuthStore((state) => state.user?.id);
   const voiceAudioSettings = getAppPreferences(currentUserId).voiceAudioSettings || DEFAULT_VOICE_AUDIO_SETTINGS;
+  const [screenShareSettings, setScreenShareSettings] = useState(() => ({ quality: '1080', frameRate: 30, audio: false, ...(getAppPreferences(currentUserId).screenShareSettings || {}) }));
+
+  const updateScreenShareSettings = (key, value) => {
+    const next = { ...screenShareSettings, [key]: value };
+    setScreenShareSettings(next);
+    const preferences = getAppPreferences(currentUserId);
+    saveAppPreferences(currentUserId, { ...preferences, screenShareSettings: next });
+  };
 
   const toggle = async (control, action) => {
     if (pendingControl) return;
@@ -586,7 +591,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
       return;
     }
     if (!window.fastlynoxDesktop?.listScreenSources) {
-      await toggle('screen', () => localParticipant.setScreenShareEnabled(true));
+      await toggle('screen', () => localParticipant.setScreenShareEnabled(true, getScreenShareCaptureOptions(screenShareSettings)));
       return;
     }
     setPendingControl('screen');
@@ -608,9 +613,9 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     setPendingControl('screen');
     setControlError('');
     try {
-      const selected = await window.fastlynoxDesktop.selectScreenSource(source.id);
+      const selected = await window.fastlynoxDesktop.selectScreenSource(source.id, screenShareSettings.audio);
       if (!selected) throw new Error('Ekran kaynağı seçilemedi. Yeniden dene.');
-      await localParticipant.setScreenShareEnabled(true);
+      await localParticipant.setScreenShareEnabled(true, getScreenShareCaptureOptions(screenShareSettings));
       setScreenSourcePickerOpen(false);
     } catch (error) {
       setControlError(error instanceof Error ? error.message : 'Ekran paylaşımı başlatılamadı.');
@@ -663,7 +668,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
           {!compact && <span className="text-xs font-semibold">Ayrıl</span>}
         </button>
       </div>
-      {screenSourcePickerOpen && <div className="fixed inset-0 z-[1500] grid place-items-center bg-[#03050a]/80 p-4 backdrop-blur-md" onMouseDown={(event) => { if (event.target === event.currentTarget) setScreenSourcePickerOpen(false); }}><section role="dialog" aria-modal="true" aria-labelledby="screen-source-title" className="w-full max-w-2xl overflow-hidden rounded-[24px] border border-white/[0.12] bg-[linear-gradient(150deg,#1a2030,#10141d)] shadow-[0_30px_100px_rgba(0,0,0,.72)]"><header className="flex items-center gap-3 border-b border-white/[0.07] px-5 py-4"><span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-300/10 text-violet-200"><MonitorUp className="h-4 w-4" /></span><div className="min-w-0 flex-1"><h2 id="screen-source-title" className="text-sm font-bold text-white">Paylaşılacak ekranı seç</h2><p className="mt-0.5 text-[10px] text-slate-500">Tüm ekranı veya tek bir uygulama penceresini paylaş.</p></div><button type="button" onClick={() => setScreenSourcePickerOpen(false)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-white/[0.07] hover:text-white" aria-label="Kapat"><X className="h-4 w-4" /></button></header><div className="grid max-h-[min(62vh,540px)] grid-cols-1 gap-3 overflow-y-auto p-4 sm:grid-cols-2">{screenSources.map((source) => <button key={source.id} type="button" onClick={() => void chooseScreenSource(source)} disabled={pendingControl !== ''} className="group overflow-hidden rounded-2xl border border-white/[0.08] bg-black/15 text-left transition hover:border-violet-200/35 hover:bg-violet-300/[0.06] disabled:opacity-50"><div className="relative aspect-video overflow-hidden bg-[#090c12]">{source.thumbnail ? <img src={source.thumbnail} alt="" className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]" /> : <div className="grid h-full place-items-center text-violet-200"><MonitorUp className="h-8 w-8" /></div>}<span className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-70" />{source.appIcon && <img src={source.appIcon} alt="" className="absolute bottom-2 left-2 h-5 w-5 rounded object-cover" />}</div><div className="truncate px-3 py-2.5 text-xs font-semibold text-slate-200">{source.name}</div></button>)}</div><footer className="flex items-center justify-between border-t border-white/[0.07] px-5 py-3"><span className="text-[10px] text-slate-500">Paylaşım istediğin zaman ses panelinden durdurulabilir.</span><button type="button" onClick={() => setScreenSourcePickerOpen(false)} className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-400 transition hover:bg-white/[0.06] hover:text-white">Vazgeç</button></footer></section></div>}
+      {screenSourcePickerOpen && createPortal(<div className="fixed inset-0 z-[1500] grid place-items-center bg-[#03050a]/80 p-3 backdrop-blur-md sm:p-5" onMouseDown={(event) => { if (event.target === event.currentTarget) setScreenSourcePickerOpen(false); }}><section role="dialog" aria-modal="true" aria-labelledby="screen-source-title" className="w-full max-w-3xl overflow-hidden rounded-[26px] border border-white/[0.12] bg-[linear-gradient(150deg,#1a2030,#10141d)] shadow-[0_30px_100px_rgba(0,0,0,.72)] animate-in fade-in zoom-in-95 duration-150"><header className="flex items-center gap-3 border-b border-white/[0.07] px-5 py-4"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-violet-300/10 text-violet-200"><MonitorUp className="h-5 w-5" /></span><div className="min-w-0 flex-1"><h2 id="screen-source-title" className="text-sm font-bold text-white">Paylaşımını ayarla</h2><p className="mt-0.5 text-[10px] text-slate-500">Kaynak seç, görüntü kalitesi ve kare hızını belirle.</p></div><button type="button" onClick={() => setScreenSourcePickerOpen(false)} className="grid h-9 w-9 place-items-center rounded-xl text-slate-400 hover:bg-white/[0.07] hover:text-white" aria-label="Kapat"><X className="h-4 w-4" /></button></header><div className="grid max-h-[min(54vh,500px)] grid-cols-1 gap-3 overflow-y-auto p-4 sm:grid-cols-2 lg:grid-cols-3">{screenSources.map((source) => <button key={source.id} type="button" onClick={() => void chooseScreenSource(source)} disabled={pendingControl !== ''} className="group overflow-hidden rounded-2xl border border-white/[0.08] bg-black/15 text-left transition hover:border-violet-200/35 hover:bg-violet-300/[0.06] disabled:opacity-50"><div className="relative aspect-video overflow-hidden bg-[#090c12]">{source.thumbnail ? <img src={source.thumbnail} alt="" loading="lazy" className="h-full w-full object-cover transition duration-200 group-hover:scale-[1.02]" /> : <div className="grid h-full place-items-center text-violet-200"><MonitorUp className="h-8 w-8" /></div>}<span className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-70" /></div><div className="truncate px-3 py-2.5 text-xs font-semibold text-slate-200">{source.name}</div></button>)}</div><div className="grid gap-3 border-t border-white/[0.07] bg-black/10 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end"><label className="text-[10px] font-semibold text-slate-400">Görüntü kalitesi<select value={screenShareSettings.quality} onChange={(event) => updateScreenShareSettings('quality', event.target.value)} className="mt-1.5 block h-10 w-full rounded-xl border border-white/10 bg-[#111722] px-3 text-xs text-white outline-none focus:border-violet-300/40"><option value="720">HD · 720p</option><option value="1080">Full HD · 1080p</option><option value="1440">QHD · 1440p</option></select></label><label className="text-[10px] font-semibold text-slate-400">Kare hızı<select value={screenShareSettings.frameRate} onChange={(event) => updateScreenShareSettings('frameRate', Number(event.target.value))} className="mt-1.5 block h-10 w-full rounded-xl border border-white/10 bg-[#111722] px-3 text-xs text-white outline-none focus:border-violet-300/40"><option value="15">15 FPS · düşük kullanım</option><option value="30">30 FPS · dengeli</option><option value="60">60 FPS · akıcı</option></select></label><button type="button" role="switch" aria-checked={screenShareSettings.audio} onClick={() => updateScreenShareSettings('audio', !screenShareSettings.audio)} className={`flex min-h-10 items-center gap-2 rounded-xl border px-3 text-left text-xs font-semibold transition ${screenShareSettings.audio ? 'border-cyan-200/25 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-white/[0.035] text-slate-300'}`}><span className={`grid h-4 w-4 place-items-center rounded border ${screenShareSettings.audio ? 'border-cyan-200/50 bg-cyan-300/20' : 'border-white/20'}`}>{screenShareSettings.audio && <Check className="h-3 w-3" />}</span>Sistem sesini paylaş</button><p className="text-[9px] leading-4 text-slate-600 sm:col-span-3">Yüksek çözünürlük ve FPS daha fazla internet ve işlemci kullanır. Sistem sesi Windows’ta desteklenir.</p></div></section></div>, document.body)}
       <RoomAudioRenderer muted={isDeafened} />
     </div>
   );

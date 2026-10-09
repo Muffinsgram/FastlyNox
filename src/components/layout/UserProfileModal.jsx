@@ -140,8 +140,10 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
 
   const copyIdentity = async (shareProfile = false) => {
     if (!profile.public_id) { setIdentityNotice('Sayısal kimlik için migration_public_numeric_ids.sql dosyasını Supabase’te çalıştır.'); return; }
-    const configuredBase = import.meta.env.VITE_PUBLIC_APP_URL;
-    const base = (configuredBase || window.location.origin).replace(/\/$/u, '');
+    // Build secrets/env values occasionally get pasted with a trailing newline;
+    // normalize the public origin before producing a shareable profile URL.
+    const configuredBase = String(import.meta.env.VITE_PUBLIC_APP_URL || '').trim();
+    const base = (configuredBase || window.location.origin).replace(/\/+$/u, '');
     const value = shareProfile ? `${base}/user/${profile.public_id}` : String(profile.public_id);
     try {
       await navigator.clipboard.writeText(value);
