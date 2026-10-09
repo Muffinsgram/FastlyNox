@@ -47,9 +47,22 @@ jobs:
         run: npm run release:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FASTLYNOX_BUILD_OUTPUT: ${{ runner.temp }}\Fastlynox\windows-build
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_PUBLIC_APP_URL: ${{ secrets.VITE_PUBLIC_APP_URL }}
           VITE_LIVEKIT_URL: ${{ secrets.VITE_LIVEKIT_URL }}
           VITE_LIVEKIT_API_KEY: ${{ secrets.VITE_LIVEKIT_API_KEY }}
           VITE_GIPHY_API_KEY: ${{ secrets.VITE_GIPHY_API_KEY }}
+
+      - name: Attach installer and updater metadata
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            ${{ runner.temp }}\Fastlynox\windows-build\Fastlynox-Setup-*.exe
+            ${{ runner.temp }}\Fastlynox\windows-build\latest.yml
+          fail_on_unmatched_files: true
+          overwrite_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -3,7 +3,7 @@ const { spawnSync } = require('node:child_process');
 
 const cliPath = path.join(process.cwd(), 'node_modules', 'electron-builder', 'cli.js');
 const viteCliPath = path.join(process.cwd(), 'node_modules', 'vite', 'bin', 'vite.js');
-const outputPath = path.join(process.env.LOCALAPPDATA || require('node:os').tmpdir(), 'Fastlynox', 'windows-build');
+const outputPath = process.env.FASTLYNOX_BUILD_OUTPUT || path.join(process.env.LOCALAPPDATA || require('node:os').tmpdir(), 'Fastlynox', 'windows-build');
 const buildEnv = { ...process.env, ELECTRON_BUILD: 'true' };
 const viteBuild = spawnSync(process.execPath, [viteCliPath, 'build'], { stdio: 'inherit', env: buildEnv, windowsHide: true });
 if (viteBuild.error) {
