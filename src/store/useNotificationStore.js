@@ -36,34 +36,56 @@ function playNotificationSound() {
 export const useNotificationStore = create((set, get) => ({
   notifications: [],
   unreadCount: 0,
+  dmUnreadCounts: {},
+  activeDMChannelId: null,
   serverUnreadCounts: {},
   channelUnreadCounts: {},
   activeSubscription: null,
+  activeSubscriptionCleanup: null,
   activeToasts: [], // For in-app UI toasts
   requestGeneration: 0,
+  fetchRequestId: 0,
+  notificationEventVersion: 0,
 
   reset: () => {
     get().unsubscribe();
-    set((state) => ({ notifications: [], unreadCount: 0, serverUnreadCounts: {}, channelUnreadCounts: {}, activeToasts: [], requestGeneration: state.requestGeneration + 1 }));
+    set((state) => ({ notifications: [], unreadCount: 0, dmUnreadCounts: {}, activeDMChannelId: null, serverUnreadCounts: {}, channelUnreadCounts: {}, activeToasts: [], requestGeneration: state.requestGeneration + 1 }));
   },
 
   fetchNotifications: async () => {
     const user = useAuthStore.getState().user;
     if (!user) return;
     const generation = get().requestGeneration;
+    const fetchRequestId = get().fetchRequestId + 1;
+    const eventVersion = get().notificationEventVersion;
+    const startedAt = Date.now();
+    set({ fetchRequestId });
 
-    const [{ data, error }, { data: serverRows }] = await Promise.all([
+    const [{ data, error }, { data: unreadRows, error: unreadError }] = await Promise.all([
       supabase.from('notifications').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(30),
-      supabase.from('notifications').select('server_id, channel_id').eq('user_id', user.id).eq('is_read', false).not('server_id', 'is', null),
+      supabase.from('notifications').select('server_id, channel_id, dm_channel_id').eq('user_id', user.id).eq('is_read', false),
     ]);
 
-    if (generation !== get().requestGeneration) return;
+    if (generation !== get().requestGeneration || fetchRequestId !== get().fetchRequestId) return;
+    if (eventVersion !== get().notificationEventVersion) {
+      window.setTimeout(() => void get().fetchNotifications(), 120);
+      return;
+    }
+    if (error) console.error('Bildirimler yüklenemedi:', error.message);
+    if (unreadError) console.warn('Okunmamış bildirim sayaçları tam eşitlenemedi; migration_realtime_sync_reliability.sql uygulanmış mı kontrol et:', unreadError.message);
     if (!error && data) {
       const preferences = getAppPreferences(user.id);
-      const visibleServerRows = (serverRows || []).filter((row) => !isNotificationLocationMuted(row, preferences));
+      const liveNotifications = get().notifications.filter((notification) => Date.parse(notification.created_at) >= startedAt && !notification.is_read);
+      const unreadById = new Map((unreadError ? data.filter((notification) => !notification.is_read) : (unreadRows || [])).map((notification) => [notification.id, notification]));
+      liveNotifications.forEach((notification) => unreadById.set(notification.id, notification));
+      const allUnreadRows = [...unreadById.values()];
+      const notificationsById = new Map(data.map((notification) => [notification.id, notification]));
+      get().notifications.filter((notification) => Date.parse(notification.created_at) >= startedAt).forEach((notification) => notificationsById.set(notification.id, notification));
+      const visibleServerRows = allUnreadRows.filter((row) => row.server_id && !isNotificationLocationMuted(row, preferences));
       set({ 
-        notifications: data,
-        unreadCount: data.filter(n => !n.is_read).length,
+        notifications: [...notificationsById.values()].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 30),
+        unreadCount: allUnreadRows.length,
+        dmUnreadCounts: allUnreadRows.reduce((counts, row) => { if (row.dm_channel_id) counts[row.dm_channel_id] = (counts[row.dm_channel_id] || 0) + 1; return counts; }, {}),
         serverUnreadCounts: visibleServerRows.reduce((counts, row) => {
           if (row.server_id) counts[row.server_id] = (counts[row.server_id] || 0) + 1;
           return counts;
@@ -77,10 +99,12 @@ export const useNotificationStore = create((set, get) => ({
   },
 
   markAsRead: async (notificationId) => {
+    const userId = useAuthStore.getState().user?.id;
     const { error } = await supabase
       .from('notifications')
       .update({ is_read: true })
-      .eq('id', notificationId);
+      .eq('id', notificationId)
+      .eq('user_id', userId);
 
     if (!error) {
       const notification = get().notifications.find((item) => item.id === notificationId);
@@ -89,6 +113,7 @@ export const useNotificationStore = create((set, get) => ({
       set(state => ({
         notifications: state.notifications.map(n => n.id === notificationId ? { ...n, is_read: true } : n),
         unreadCount: Math.max(0, state.unreadCount - (wasUnread ? 1 : 0)),
+        dmUnreadCounts: wasUnread && notification?.dm_channel_id ? { ...state.dmUnreadCounts, [notification.dm_channel_id]: Math.max(0, (state.dmUnreadCounts[notification.dm_channel_id] || 0) - 1) } : state.dmUnreadCounts,
         serverUnreadCounts: {
           ...state.serverUnreadCounts,
           ...(countsOnServer && notification?.server_id ? {
@@ -102,17 +127,18 @@ export const useNotificationStore = create((set, get) => ({
           } : {}),
         },
       }));
-    }
+    } else console.error('Bildirim okundu olarak işaretlenemedi:', error.message);
   },
 
   markAllAsRead: async () => {
     const user = useAuthStore.getState().user;
     if (!user?.id) return;
     const { error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
-    if (error) return;
+    if (error) { console.error('Bildirimler okundu olarak işaretlenemedi:', error.message); return; }
     set((state) => ({
       notifications: state.notifications.map((notification) => ({ ...notification, is_read: true })),
       unreadCount: 0,
+      dmUnreadCounts: {},
       serverUnreadCounts: {},
       channelUnreadCounts: {},
     }));
@@ -121,16 +147,17 @@ export const useNotificationStore = create((set, get) => ({
   markServerNotificationsRead: async (serverId) => {
     const user = useAuthStore.getState().user;
     if (!user?.id || !serverId) return;
-    const { error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('server_id', serverId).eq('is_read', false);
-    if (error) return;
+    const { data, error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('server_id', serverId).eq('is_read', false).select('id, channel_id');
+    if (error) { console.error('Sunucu bildirimleri okundu olarak işaretlenemedi:', error.message); return; }
     set((state) => {
-      const serverNotifications = state.notifications.filter((notification) => notification.server_id === serverId && !notification.is_read);
-      const newlyRead = serverNotifications.length;
+      const readIds = new Set((data || []).map((notification) => notification.id));
+      const channelReadCounts = (data || []).reduce((counts, notification) => { if (notification.channel_id) counts[notification.channel_id] = (counts[notification.channel_id] || 0) + 1; return counts; }, {});
+      const newlyRead = (data || []).length;
       return {
-        notifications: state.notifications.map((notification) => notification.server_id === serverId ? { ...notification, is_read: true } : notification),
+        notifications: state.notifications.map((notification) => readIds.has(notification.id) ? { ...notification, is_read: true } : notification),
         unreadCount: Math.max(0, state.unreadCount - newlyRead),
         serverUnreadCounts: { ...state.serverUnreadCounts, [serverId]: 0 },
-        channelUnreadCounts: Object.fromEntries(Object.entries(state.channelUnreadCounts).filter(([channelId]) => !state.notifications.some((notification) => notification.channel_id === channelId && notification.server_id === serverId))),
+        channelUnreadCounts: Object.fromEntries(Object.entries(state.channelUnreadCounts).map(([channelId, count]) => [channelId, Math.max(0, count - (channelReadCounts[channelId] || 0))])),
       };
     });
   },
@@ -138,17 +165,17 @@ export const useNotificationStore = create((set, get) => ({
   markChannelNotificationsRead: async (channelId) => {
     const user = useAuthStore.getState().user;
     if (!user?.id || !channelId) return;
-    const { error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('channel_id', channelId).eq('is_read', false);
-    if (error) return;
+    const { data, error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('channel_id', channelId).eq('is_read', false).select('id, server_id');
+    if (error) { console.error('Kanal bildirimleri okundu olarak işaretlenemedi:', error.message); return; }
     set((state) => {
       const preferences = getAppPreferences(user.id);
-      const channelNotifications = state.notifications.filter((notification) => notification.channel_id === channelId && !notification.is_read);
-      const newlyRead = channelNotifications.length;
-      const countableRead = channelNotifications.filter((notification) => !isNotificationLocationMuted(notification, preferences)).length;
-      const serverId = state.notifications.find((notification) => notification.channel_id === channelId)?.server_id;
+      const readIds = new Set((data || []).map((notification) => notification.id));
+      const newlyRead = (data || []).length;
+      const countableRead = (data || []).filter((notification) => !isNotificationLocationMuted(notification, preferences)).length;
+      const serverId = data?.find((notification) => notification.server_id)?.server_id;
       const remainingServerCount = serverId ? Math.max(0, (state.serverUnreadCounts[serverId] || 0) - countableRead) : 0;
       return {
-        notifications: state.notifications.map((notification) => notification.channel_id === channelId ? { ...notification, is_read: true } : notification),
+        notifications: state.notifications.map((notification) => readIds.has(notification.id) ? { ...notification, is_read: true } : notification),
         unreadCount: Math.max(0, state.unreadCount - newlyRead),
         channelUnreadCounts: { ...state.channelUnreadCounts, [channelId]: 0 },
         serverUnreadCounts: serverId ? { ...state.serverUnreadCounts, [serverId]: remainingServerCount } : state.serverUnreadCounts,
@@ -156,14 +183,32 @@ export const useNotificationStore = create((set, get) => ({
     });
   },
 
+  markDMNotificationsRead: async (dmChannelId) => {
+    const user = useAuthStore.getState().user;
+    if (!user?.id || !dmChannelId) return;
+    const { data, error } = await supabase.from('notifications').update({ is_read: true })
+      .eq('user_id', user.id).eq('dm_channel_id', dmChannelId).eq('is_read', false).select('id');
+    if (error) { console.error('DM okunma durumu kaydedilemedi:', error.message); return; }
+    const readIds = new Set((data || []).map((row) => row.id));
+    set((state) => ({
+      notifications: state.notifications.map((notification) => readIds.has(notification.id) ? { ...notification, is_read: true } : notification),
+      unreadCount: Math.max(0, state.unreadCount - (data || []).length),
+      dmUnreadCounts: { ...state.dmUnreadCounts, [dmChannelId]: 0 },
+    }));
+  },
+
+  setActiveDMChannel: (dmChannelId) => set({ activeDMChannelId: dmChannelId || null }),
+
   subscribeToNotifications: () => {
     const user = useAuthStore.getState().user;
     if (!user) return;
 
-    const { activeSubscription } = get();
-    if (activeSubscription) supabase.removeChannel(activeSubscription);
+    const { activeSubscription, activeSubscriptionCleanup } = get();
+    activeSubscriptionCleanup?.();
+    if (activeSubscription) void supabase.removeChannel(activeSubscription);
 
     let subscribedOnce = false;
+    let readRefreshTimer;
     const subscription = supabase
       .channel(`public:notifications:user_id=eq.${user.id}`)
       .on('postgres_changes', { 
@@ -174,9 +219,11 @@ export const useNotificationStore = create((set, get) => ({
       }, (payload) => {
         const newNotif = payload.new;
         if (get().notifications.some((notification) => notification.id === newNotif.id)) return;
+        set((state) => ({ notificationEventVersion: state.notificationEventVersion + 1 }));
         
         // Show desktop notification if granted
         const preferences = getAppPreferences(user.id);
+        const isOpenDM = Boolean(newNotif.dm_channel_id && get().activeDMChannelId === newNotif.dm_channel_id && document.visibilityState === 'visible' && document.hasFocus());
         const doNotDisturb = shouldSuppressNotification(newNotif, preferences, { presenceIsDnd: usePresenceStore.getState().status === 'dnd' });
         const countServerActivity = !isNotificationLocationMuted(newNotif, preferences);
         const isAppFocused = typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus();
@@ -185,27 +232,43 @@ export const useNotificationStore = create((set, get) => ({
           catch { /* Keep in-app notification delivery working if the OS blocks a desktop popup. */ }
         }
 
-        if (!doNotDisturb && preferences.notificationSound) playNotificationSound();
+        if (!doNotDisturb && !isOpenDM && preferences.notificationSound) playNotificationSound();
+
+        if (isOpenDM) void supabase.from('notifications').update({ is_read: true }).eq('id', newNotif.id).eq('user_id', user.id);
+        const notification = isOpenDM ? { ...newNotif, is_read: true } : newNotif;
 
         // Play a soft notification sound (if you had a sound file, you'd do new Audio('/ping.mp3').play())
 
         // Add to state and queue an in-app toast
         set(state => ({
-          notifications: [newNotif, ...state.notifications].slice(0, 30),
-          unreadCount: state.unreadCount + 1,
+          notifications: [notification, ...state.notifications].slice(0, 30),
+          unreadCount: state.unreadCount + (isOpenDM ? 0 : 1),
+          dmUnreadCounts: notification.dm_channel_id && !isOpenDM ? { ...state.dmUnreadCounts, [notification.dm_channel_id]: (state.dmUnreadCounts[notification.dm_channel_id] || 0) + 1 } : state.dmUnreadCounts,
           serverUnreadCounts: countServerActivity && newNotif.server_id ? { ...state.serverUnreadCounts, [newNotif.server_id]: (state.serverUnreadCounts[newNotif.server_id] || 0) + 1 } : state.serverUnreadCounts,
           channelUnreadCounts: countServerActivity && newNotif.channel_id ? { ...state.channelUnreadCounts, [newNotif.channel_id]: (state.channelUnreadCounts[newNotif.channel_id] || 0) + 1 } : state.channelUnreadCounts,
-          activeToasts: doNotDisturb ? state.activeToasts : [...state.activeToasts, newNotif].slice(-3),
+          activeToasts: doNotDisturb || isOpenDM ? state.activeToasts : [...state.activeToasts, notification].slice(-3),
         }));
 
         // Remove toast after 4 seconds
         clearTimeout(toastTimers.get(newNotif.id));
-        if (!doNotDisturb) toastTimers.set(newNotif.id, setTimeout(() => {
+        if (!doNotDisturb && !isOpenDM) toastTimers.set(newNotif.id, setTimeout(() => {
           toastTimers.delete(newNotif.id);
           set(state => ({
             activeToasts: state.activeToasts.filter(t => t.id !== newNotif.id)
           }));
         }, 4000));
+      })
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'notifications',
+        filter: `user_id=eq.${user.id}`,
+      }, () => {
+        // Read state can change in another window. Re-fetch the authoritative
+        // unread set so badges remain correct even for old notifications that
+        // are not in the latest 30 rows held in memory.
+        clearTimeout(readRefreshTimer);
+        readRefreshTimer = setTimeout(() => void get().fetchNotifications(), 120);
       })
       .subscribe((status) => {
         if (status !== 'SUBSCRIBED') return;
@@ -215,7 +278,14 @@ export const useNotificationStore = create((set, get) => ({
         subscribedOnce = true;
       });
 
-    set({ activeSubscription: subscription });
+    const refreshWhenConnected = () => { if (document.visibilityState === 'visible') void get().fetchNotifications(); };
+    window.addEventListener('online', refreshWhenConnected);
+    document.addEventListener('visibilitychange', refreshWhenConnected);
+    set({ activeSubscription: subscription, activeSubscriptionCleanup: () => {
+      clearTimeout(readRefreshTimer);
+      window.removeEventListener('online', refreshWhenConnected);
+      document.removeEventListener('visibilitychange', refreshWhenConnected);
+    } });
   },
 
   removeToast: (id) => {
@@ -227,11 +297,10 @@ export const useNotificationStore = create((set, get) => ({
   },
 
   unsubscribe: () => {
-    const { activeSubscription } = get();
-    if (activeSubscription) {
-      supabase.removeChannel(activeSubscription);
-      set({ activeSubscription: null });
-    }
+    const { activeSubscription, activeSubscriptionCleanup } = get();
+    activeSubscriptionCleanup?.();
+    if (activeSubscription) void supabase.removeChannel(activeSubscription);
+    set({ activeSubscription: null, activeSubscriptionCleanup: null });
     toastTimers.forEach(clearTimeout);
     toastTimers.clear();
     set({ activeToasts: [] });

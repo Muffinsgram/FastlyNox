@@ -8,6 +8,10 @@ export const useFriendStore = create((set, get) => ({
   isLoading: false,
   friendRequestGeneration: 0,
   dmRequestGeneration: 0,
+  friendshipEventVersion: 0,
+  dmActivityVersion: 0,
+  activeDMActivitySubscription: null,
+  dmActivityCleanup: null,
   reset: () => set((state) => ({
     friendships: [], dmChannels: [], isLoading: false,
     friendRequestGeneration: state.friendRequestGeneration + 1,
@@ -17,6 +21,7 @@ export const useFriendStore = create((set, get) => ({
   fetchFriendships: async () => {
     const user = useAuthStore.getState().user;
     if (!user) return;
+    const eventVersion = get().friendshipEventVersion;
     const generation = get().friendRequestGeneration + 1;
     set({ friendRequestGeneration: generation });
     if (!get().friendships.length) set({ isLoading: true });
@@ -32,9 +37,14 @@ export const useFriendStore = create((set, get) => ({
       .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`);
 
     if (generation !== get().friendRequestGeneration) return;
+    if (eventVersion !== get().friendshipEventVersion) {
+      window.setTimeout(() => void get().fetchFriendships(), 120);
+      return;
+    }
     if (!error && data) {
       set({ friendships: data, isLoading: false });
     } else {
+      console.error('Arkadaşlıklar yüklenemedi:', error?.message || 'Bilinmeyen veritabanı hatası');
       set({ isLoading: false });
     }
   },
@@ -42,18 +52,22 @@ export const useFriendStore = create((set, get) => ({
   subscribeToFriendships: (userId) => {
     if (!userId) return () => {};
     let refreshTimer;
-    let subscribedOnce = false;
     const refresh = () => {
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => { void get().fetchFriendships(); }, 100);
     };
+    const onFriendshipEvent = () => {
+      set((state) => ({ friendshipEventVersion: state.friendshipEventVersion + 1 }));
+      refresh();
+    };
     const channel = supabase.channel(`friendships:${userId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships', filter: `requester_id=eq.${userId}` }, refresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships', filter: `addressee_id=eq.${userId}` }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships', filter: `requester_id=eq.${userId}` }, onFriendshipEvent)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships', filter: `addressee_id=eq.${userId}` }, onFriendshipEvent)
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          if (subscribedOnce) refresh();
-          subscribedOnce = true;
+          refresh();
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('Arkadaşlık senkronu yeniden bağlanıyor:', status);
         }
       });
     const handleOnline = () => refresh();
@@ -84,6 +98,15 @@ export const useFriendStore = create((set, get) => ({
     if (searchError || !targetUser) return { success: false, error: 'Kullanıcı bulunamadı.' };
     if (targetUser.id === user.id) return { success: false, error: 'Kendinize arkadaşlık isteği gönderemezsiniz.' };
 
+    const { data: existing, error: friendshipLookupError } = await supabase.from('friendships')
+      .select('id, requester_id, addressee_id, status')
+      .or(`and(requester_id.eq.${user.id},addressee_id.eq.${targetUser.id}),and(requester_id.eq.${targetUser.id},addressee_id.eq.${user.id})`)
+      .limit(1)
+      .maybeSingle();
+    if (friendshipLookupError) return { success: false, error: 'Mevcut arkadaşlık durumu doğrulanamadı. Tekrar dene.' };
+    if (existing?.status === 'accepted') return { success: false, error: 'Bu kullanıcı zaten arkadaş listende.' };
+    if (existing?.status === 'pending') return { success: false, error: existing.requester_id === user.id ? 'Bu kullanıcıya zaten istek gönderdin.' : 'Bu kullanıcıdan bekleyen bir isteğin var; Bekleyenler sekmesinden kabul edebilirsin.' };
+
     const optimisticId = `optimistic-${Date.now()}`;
     const optimisticRequest = {
       id: optimisticId,
@@ -103,7 +126,8 @@ export const useFriendStore = create((set, get) => ({
     if (insertError) {
       set((state) => ({ friendships: state.friendships.filter((friendship) => friendship.id !== optimisticId) }));
       if (insertError.code === '23505') return { success: false, error: 'Bu kullanıcıya zaten istek gönderdiniz.' };
-      return { success: false, error: 'İstek gönderilemedi.' };
+      console.error('Arkadaşlık isteği gönderilemedi:', insertError.message);
+      return { success: false, error: insertError.message || 'İstek gönderilemedi.' };
     }
 
     void get().fetchFriendships();
@@ -111,26 +135,38 @@ export const useFriendStore = create((set, get) => ({
   },
 
   acceptFriendRequest: async (friendshipId) => {
-    const { error } = await supabase
-      .from('friendships')
-      .update({ status: 'accepted' })
-      .eq('id', friendshipId);
-      
-    if (!error) get().fetchFriendships();
+    const previous = get().friendships.find((item) => item.id === friendshipId);
+    if (!previous || previous.status !== 'pending' || previous.addressee_id !== useAuthStore.getState().user?.id) return { success: false, error: 'Bu arkadaşlık isteği artık kabul edilebilir durumda değil.' };
+    set((state) => ({ friendships: state.friendships.map((item) => item.id === friendshipId ? { ...item, status: 'accepted' } : item) }));
+    const { data, error } = await supabase.from('friendships').update({ status: 'accepted' }).eq('id', friendshipId).eq('status', 'pending').select('*').maybeSingle();
+    if (error || !data) {
+      set((state) => ({ friendships: state.friendships.map((item) => item.id === friendshipId ? previous : item) }));
+      console.error('Arkadaşlık isteği kabul edilemedi:', error?.message || 'İstek zaten değişmiş.');
+      void get().fetchFriendships();
+      return { success: false, error: error?.message || 'İstek zaten değişmiş.' };
+    }
+    set((state) => ({ friendships: state.friendships.map((item) => item.id === friendshipId ? { ...item, ...data, requester: item.requester, addressee: item.addressee } : item) }));
+    return { success: true };
   },
 
   removeFriend: async (friendshipId) => {
-    const { error } = await supabase
-      .from('friendships')
-      .delete()
-      .eq('id', friendshipId);
-      
-    if (!error) get().fetchFriendships();
+    const previous = get().friendships.find((item) => item.id === friendshipId);
+    if (!previous) return { success: false, error: 'Arkadaşlık kaydı bulunamadı.' };
+    set((state) => ({ friendships: state.friendships.filter((item) => item.id !== friendshipId) }));
+    const { data, error } = await supabase.from('friendships').delete().eq('id', friendshipId).select('id').maybeSingle();
+    if (error || !data) {
+      set((state) => ({ friendships: [previous, ...state.friendships.filter((item) => item.id !== friendshipId)] }));
+      if (error) console.error('Arkadaşlık kaydı kaldırılamadı:', error.message);
+      void get().fetchFriendships();
+      return { success: false, error: error?.message || 'Arkadaşlık kaydı zaten kaldırılmış.' };
+    }
+    return { success: true };
   },
 
   fetchDMs: async () => {
     const user = useAuthStore.getState().user;
     if (!user) return;
+    const eventVersion = get().dmActivityVersion;
     const generation = get().dmRequestGeneration + 1;
     set({ dmRequestGeneration: generation });
     
@@ -145,9 +181,78 @@ export const useFriendStore = create((set, get) => ({
       .order('created_at', { ascending: false });
 
     if (generation !== get().dmRequestGeneration) return;
-    if (!error && data) {
-      set({ dmChannels: data });
+    if (eventVersion !== get().dmActivityVersion) {
+      window.setTimeout(() => void get().fetchDMs(), 150);
+      return;
     }
+    if (error || !data) { console.error('DM listesi eşitlenemedi:', error?.message || 'Bilinmeyen veritabanı hatası'); return; }
+    const channelIds = data.map((channel) => channel.id);
+    let latestByChannel = {};
+    if (channelIds.length) {
+      const { data: recentMessages, error: messagesError } = await supabase.from('dm_messages')
+        .select('id, dm_channel_id, user_id, content, image_url, created_at')
+        .in('dm_channel_id', channelIds)
+        .order('created_at', { ascending: false })
+        .limit(Math.min(1000, Math.max(channelIds.length * 3, 100)));
+      if (messagesError) console.warn('DM son mesaj önizlemeleri eşitlenemedi:', messagesError.message);
+      for (const message of recentMessages || []) if (!latestByChannel[message.dm_channel_id]) latestByChannel[message.dm_channel_id] = message;
+    }
+    if (generation !== get().dmRequestGeneration) return;
+    if (eventVersion !== get().dmActivityVersion) {
+      window.setTimeout(() => void get().fetchDMs(), 150);
+      return;
+    }
+    set({ dmChannels: data.map((channel) => ({ ...channel, last_message: latestByChannel[channel.id] || null }))
+      .sort((left, right) => Date.parse(right.last_message?.created_at || right.created_at) - Date.parse(left.last_message?.created_at || left.created_at)) });
+  },
+
+  subscribeToDMActivity: (userId) => {
+    if (!userId) return () => {};
+    get().dmActivityCleanup?.();
+    if (get().activeDMActivitySubscription) void supabase.removeChannel(get().activeDMActivitySubscription);
+    let refreshTimer;
+    let subscription;
+    const refresh = () => {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => { void get().fetchDMs(); }, 120);
+    };
+    subscription = supabase.channel(`dm-activity:${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'dm_channels' }, () => {
+        set((state) => ({ dmActivityVersion: state.dmActivityVersion + 1 }));
+        refresh();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'dm_messages' }, (payload) => {
+        set((state) => ({ dmActivityVersion: state.dmActivityVersion + 1 }));
+        const message = payload.new;
+        const channelId = message?.dm_channel_id || payload.old?.dm_channel_id;
+        if (!channelId) return refresh();
+        if (payload.eventType !== 'INSERT') return refresh();
+        set((state) => {
+          const currentChannel = state.dmChannels.find((channel) => channel.id === channelId);
+          if (!currentChannel) return state;
+          if (Date.parse(currentChannel.last_message?.created_at || '') >= Date.parse(message.created_at || '')) return state;
+          return { dmChannels: state.dmChannels.map((channel) => channel.id === channelId ? { ...channel, last_message: message } : channel).sort((left, right) => new Date(right.last_message?.created_at || right.created_at) - new Date(left.last_message?.created_at || left.created_at)) };
+        });
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          refresh();
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('DM aktivite kanalı bağlantı sorunu:', status);
+        }
+      });
+    const refreshOnReconnect = () => refresh();
+    const refreshOnVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('online', refreshOnReconnect);
+    document.addEventListener('visibilitychange', refreshOnVisibility);
+    const cleanup = () => {
+      clearTimeout(refreshTimer);
+      window.removeEventListener('online', refreshOnReconnect);
+      document.removeEventListener('visibilitychange', refreshOnVisibility);
+      void supabase.removeChannel(subscription);
+    };
+    set({ activeDMActivitySubscription: subscription, dmActivityCleanup: cleanup });
+    return cleanup;
   },
 
   getOrCreateDM: async (otherUserId) => {

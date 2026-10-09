@@ -12,6 +12,7 @@ import { usePresenceStore } from '../../../store/usePresenceStore';
 import { getAppPreferences } from '../../../lib/appPreferences';
 import { saveAppPreferences } from '../../../lib/appPreferences';
 import { ActionContextMenu } from '../../../components/layout/ActionContextMenu';
+import { useNotificationStore } from '../../../store/useNotificationStore';
 
 const visiblePresence = (profile, statuses, visibility) => {
   if (profile?.id && visibility?.[profile.id] === false) return null;
@@ -21,27 +22,36 @@ const visiblePresence = (profile, statuses, visibility) => {
 };
 const presenceLabel = (status) => status === 'idle' ? 'Boşta' : status === 'dnd' ? 'Rahatsız etmeyin' : status === 'online' ? 'Çevrim içi' : 'Çevrim dışı';
 const presenceDot = (status) => status === 'idle' ? 'bg-amber-300' : status === 'dnd' ? 'bg-rose-400' : status === 'online' ? 'bg-emerald-400' : 'bg-slate-600';
+const formatDMTime = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const today = new Date();
+  return date.toDateString() === today.toDateString()
+    ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
+};
+const dmPreview = (message) => message?.content?.trim() || (message?.image_url ? '🖼️ Fotoğraf' : '');
 
 export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onStartCall, incomingCallInvite, onAcceptCall, onDeclineCall, onInviteClick, navigationRequest }) {
   const { user } = useAuthStore();
   const searchShortcut = getAppPreferences(user?.id).searchShortcut || 'ctrl+k';
   const searchShortcutLabel = searchShortcut === 'alt+k' ? 'Alt K' : searchShortcut === 'ctrl+shift+k' ? 'Ctrl ⇧ K' : 'Ctrl K';
-  const { friendships, dmChannels, fetchFriendships, fetchDMs, sendFriendRequest, acceptFriendRequest, removeFriend, getOrCreateDM } = useFriendStore();
+  const { friendships, dmChannels, sendFriendRequest, acceptFriendRequest, removeFriend, getOrCreateDM } = useFriendStore();
   const [activeTab, setActiveTab] = useState('all');
   const [addUsername, setAddUsername] = useState('');
   const [addStatus, setAddStatus] = useState(null);
+  const [friendActionError, setFriendActionError] = useState('');
   const [activeDM, setActiveDM] = useState(null);
   const [dmContextMenu, setDmContextMenu] = useState(null);
   const presenceStatuses = usePresenceStore((state) => state.statuses);
   const presenceVisibility = usePresenceStore((state) => state.visibility);
+  const dmUnreadCounts = useNotificationStore((state) => state.dmUnreadCounts);
+  const markDMNotificationsRead = useNotificationStore((state) => state.markDMNotificationsRead);
+  const setActiveDMChannel = useNotificationStore((state) => state.setActiveDMChannel);
   const [showGettingStarted, setShowGettingStarted] = useState(() => {
     try { return !localStorage.getItem(`fastcord:onboarding:${user?.id || 'guest'}`); } catch { return false; }
   });
-
-  useEffect(() => {
-    fetchFriendships();
-    fetchDMs();
-  }, [fetchFriendships, fetchDMs]);
 
   useEffect(() => {
     if (!navigationRequest?.tab) return;
@@ -57,6 +67,12 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
     setActiveDM({ id: dm.id, user: otherUser });
     onPendingDMHandled();
   }, [pendingDMId, dmChannels, user?.id, onPendingDMHandled]);
+
+  useEffect(() => {
+    setActiveDMChannel(activeDM?.id || null);
+    if (activeDM?.id) void markDMNotificationsRead(activeDM.id);
+    return () => setActiveDMChannel(null);
+  }, [activeDM?.id, markDMNotificationsRead, setActiveDMChannel]);
 
   const openDM = async (otherUserId) => {
     const dm = await getOrCreateDM(otherUserId);
@@ -145,11 +161,13 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
            {pinnedDMs.map(dm => {
              const otherUser = dm.user1_id === user.id ? dm.user2 : dm.user1;
              const isActive = activeDM?.id === dm.id;
+             const unreadCount = dmUnreadCounts[dm.id] || 0;
              return (
                <div key={dm.id} onContextMenu={(event) => { event.preventDefault(); setDmContextMenu({ x: event.clientX, y: event.clientY, dm, otherUser }); }}>
                  <button type="button" onClick={() => setActiveDM({ id: dm.id, user: otherUser })} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg group transition-all ${isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}>
                    <img src={getAvatarUrl(otherUser?.avatar_url, otherUser?.username)} className="w-8 h-8 rounded-full bg-slate-800 object-cover shrink-0" alt="avatar" />
-                   <span className="font-medium text-sm truncate">{otherUser?.username}</span>
+                   <span className="min-w-0 flex-1 truncate text-left"><span className="block truncate text-sm font-medium">{otherUser?.username}</span>{dm.last_message && <span className="mt-0.5 flex min-w-0 items-center gap-2 text-[10px] text-slate-500"><span className="min-w-0 flex-1 truncate">{dmPreview(dm.last_message)}</span><time className="shrink-0 text-[9px] text-slate-600">{formatDMTime(dm.last_message.created_at)}</time></span>}</span>
+                   {unreadCount > 0 && <span className="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-violet-400 px-1 text-[9px] font-bold text-slate-950">{unreadCount > 9 ? '9+' : unreadCount}</span>}
                    {pinnedDMIds.includes(dm.id) && <Pin className="ml-auto h-3 w-3 shrink-0 text-violet-300/70" aria-label="Sabitlenmiş" />}
                  </button>
                </div>
@@ -159,7 +177,8 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
            {unpinnedDMs.map(dm => {
              const otherUser = dm.user1_id === user.id ? dm.user2 : dm.user1;
              const isActive = activeDM?.id === dm.id;
-             return <div key={dm.id} onContextMenu={(event) => { event.preventDefault(); setDmContextMenu({ x: event.clientX, y: event.clientY, dm, otherUser }); }}><button type="button" onClick={() => setActiveDM({ id: dm.id, user: otherUser })} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg group transition-all ${isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}><img src={getAvatarUrl(otherUser?.avatar_url, otherUser?.username)} className="w-8 h-8 rounded-full bg-slate-800 object-cover shrink-0" alt="avatar" /><span className="font-medium text-sm truncate">{otherUser?.username}</span></button></div>;
+             const unreadCount = dmUnreadCounts[dm.id] || 0;
+             return <div key={dm.id} onContextMenu={(event) => { event.preventDefault(); setDmContextMenu({ x: event.clientX, y: event.clientY, dm, otherUser }); }}><button type="button" onClick={() => setActiveDM({ id: dm.id, user: otherUser })} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg group transition-all ${isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}><img src={getAvatarUrl(otherUser?.avatar_url, otherUser?.username)} className="w-8 h-8 rounded-full bg-slate-800 object-cover shrink-0" alt="avatar" /><span className="min-w-0 flex-1 truncate text-left"><span className="block truncate text-sm font-medium">{otherUser?.username}</span>{dm.last_message && <span className="mt-0.5 flex min-w-0 items-center gap-2 text-[10px] text-slate-500"><span className="min-w-0 flex-1 truncate">{dmPreview(dm.last_message)}</span><time className="shrink-0 text-[9px] text-slate-600">{formatDMTime(dm.last_message.created_at)}</time></span>}</span>{unreadCount > 0 && <span className="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-violet-400 px-1 text-[9px] font-bold text-slate-950">{unreadCount > 9 ? '9+' : unreadCount}</span>}</button></div>;
            })}
         </div>
       </div>
@@ -232,6 +251,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
                 {activeTab === 'pending' && (
                   <div className="animate-in fade-in duration-300">
                       <h2 className="text-slate-400 text-xs font-black tracking-widest mb-6">BEKLEYEN İSTEKLER — {pendingRequests.length}</h2>
+                      {friendActionError && <p role="alert" className="mb-3 rounded-xl border border-rose-300/15 bg-rose-300/[0.06] px-3 py-2 text-xs text-rose-200">{friendActionError}</p>}
                       {pendingRequests.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-64 text-slate-500">
                            <div className="w-24 h-24 bg-white/5 rounded-full flex items-center justify-center mb-6 shadow-inner">
@@ -257,11 +277,11 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
                                  </div>
                                  <div className="flex items-center gap-2 pr-2">
                                     {isIncoming && (
-                                      <button onClick={() => acceptFriendRequest(req.id)} className="w-9 h-9 rounded-full bg-black/40 border border-white/5 flex items-center justify-center text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/10 hover:shadow-[0_0_15px_rgba(16,185,129,0.2)] transition-all">
+                                      <button onClick={async () => { const result = await acceptFriendRequest(req.id); setFriendActionError(result?.success ? '' : result?.error || 'İstek kabul edilemedi.'); }} className="w-9 h-9 rounded-full bg-black/40 border border-white/5 flex items-center justify-center text-slate-400 hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/10 hover:shadow-[0_0_15px_rgba(16,185,129,0.2)] transition-all">
                                          <Check className="w-4 h-4" />
                                       </button>
                                     )}
-                                    <button onClick={() => removeFriend(req.id)} className="w-9 h-9 rounded-full bg-black/40 border border-white/5 flex items-center justify-center text-slate-400 hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 hover:shadow-[0_0_15px_rgba(244,63,94,0.2)] transition-all">
+                                      <button onClick={async () => { const result = await removeFriend(req.id); setFriendActionError(result?.success ? '' : result?.error || 'İstek kaldırılamadı.'); }} className="w-9 h-9 rounded-full bg-black/40 border border-white/5 flex items-center justify-center text-slate-400 hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 hover:shadow-[0_0_15px_rgba(244,63,94,0.2)] transition-all">
                                        <X className="w-4 h-4" />
                                     </button>
                                  </div>
@@ -306,7 +326,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
                                     <button onClick={(e) => { e.stopPropagation(); openDM(otherProfile.id); }} className="w-9 h-9 rounded-full bg-black/40 border border-white/5 flex items-center justify-center text-slate-400 hover:text-violet-400 hover:border-violet-500/30 hover:bg-violet-500/10 hover:shadow-[0_0_15px_rgba(139,92,246,0.2)] transition-all">
                                        <MessageSquare className="w-4 h-4" />
                                     </button>
-                                    <button onClick={(e) => { e.stopPropagation(); removeFriend(friend.id); }} className="w-9 h-9 rounded-full bg-black/40 border border-white/5 flex items-center justify-center text-slate-400 hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 hover:shadow-[0_0_15px_rgba(244,63,94,0.2)] transition-all">
+                                    <button onClick={async (e) => { e.stopPropagation(); const result = await removeFriend(friend.id); setFriendActionError(result?.success ? '' : result?.error || 'Arkadaş kaldırılamadı.'); }} className="w-9 h-9 rounded-full bg-black/40 border border-white/5 flex items-center justify-center text-slate-400 hover:text-rose-400 hover:border-rose-500/30 hover:bg-rose-500/10 hover:shadow-[0_0_15px_rgba(244,63,94,0.2)] transition-all">
                                        <X className="w-4 h-4" />
                                     </button>
                                  </div>

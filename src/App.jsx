@@ -46,6 +46,7 @@ export default function App() {
   const resetDMMessages = useDMChatStore((state) => state.reset);
   const resetFriendData = useFriendStore((state) => state.reset);
   const subscribeToFriendships = useFriendStore((state) => state.subscribeToFriendships);
+  const subscribeToDMActivity = useFriendStore((state) => state.subscribeToDMActivity);
   const resetNotifications = useNotificationStore((state) => state.reset);
   const markChannelNotificationsRead = useNotificationStore((state) => state.markChannelNotificationsRead);
   const markNotificationRead = useNotificationStore((state) => state.markAsRead);
@@ -430,6 +431,11 @@ export default function App() {
     if (!session?.user?.id) return undefined;
     return subscribeToFriendships(session.user.id);
   }, [session?.user?.id, subscribeToFriendships]);
+
+  useEffect(() => {
+    if (!session?.user?.id) return undefined;
+    return subscribeToDMActivity(session.user.id);
+  }, [session?.user?.id, subscribeToDMActivity]);
 
   useEffect(() => {
     if (!isInitialized || !sharedInviteCode) return;

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from './useAuthStore';
-import { mergeMessage, replaceOptimisticMessage } from '../lib/messageList';
+import { mergeFetchedMessages, mergeMessage, replaceOptimisticMessage } from '../lib/messageList';
 import { appendReaction, attachReactions, MESSAGE_REACTIONS, removeReaction } from '../lib/messageReactions';
 import { writeDraft } from '../lib/draftStorage';
 
@@ -10,12 +10,18 @@ export const useChatStore = create((set, get) => ({
   drafts: {},
   isLoading: false,
   requestGeneration: 0,
+  fetchRequests: {},
+  messageEventVersions: {},
   activeSubscription: null,
+  activeSubscriptionCleanup: null,
+  subscriptionToken: 0,
 
   fetchMessages: async (channelId) => {
     if (!channelId) return;
     const generation = get().requestGeneration;
-    set({ isLoading: true });
+    const eventVersion = get().messageEventVersions[channelId] || 0;
+    const requestId = (get().fetchRequests[channelId] || 0) + 1;
+    set((state) => ({ isLoading: true, fetchRequests: { ...state.fetchRequests, [channelId]: requestId } }));
     
     const { data, error } = await supabase
       .from('messages')
@@ -24,72 +30,103 @@ export const useChatStore = create((set, get) => ({
       .order('created_at', { ascending: false })
       .limit(100);
 
-    if (generation !== get().requestGeneration) return;
+    if (generation !== get().requestGeneration || get().fetchRequests[channelId] !== requestId) return;
     if (!error && data) {
       const messageIds = data.map((message) => message.id);
-      const { data: reactions } = messageIds.length
+      const { data: reactions, error: reactionError } = messageIds.length
         ? await supabase.from('message_reactions').select('id, message_id, channel_id, user_id, emoji').eq('channel_id', channelId).in('message_id', messageIds)
         : { data: [] };
-      if (generation !== get().requestGeneration) return;
-      set((state) => ({ messages: { ...state.messages, [channelId]: attachReactions(data.reverse(), reactions || []) }, isLoading: false }));
+      if (generation !== get().requestGeneration || get().fetchRequests[channelId] !== requestId) return;
+      if ((get().messageEventVersions[channelId] || 0) !== eventVersion) {
+        window.setTimeout(() => {
+          if (generation === get().requestGeneration) void get().fetchMessages(channelId);
+        }, 150);
+        return;
+      }
+      if (reactionError) console.warn('Kanal tepkileri eşitlenemedi:', reactionError.message);
+      const fetched = attachReactions(data.reverse(), reactions || []);
+      set((state) => ({ messages: { ...state.messages, [channelId]: mergeFetchedMessages(state.messages[channelId] || [], fetched) }, isLoading: false }));
     } else {
+      console.error('Kanal mesajları yüklenemedi:', error?.message || 'Bilinmeyen veritabanı hatası');
       set({ isLoading: false });
     }
   },
 
+  bumpMessageEvent: (channelId) => set((state) => ({ messageEventVersions: { ...state.messageEventVersions, [channelId]: (state.messageEventVersions[channelId] || 0) + 1 } })),
+
   subscribeToChannel: (channelId) => {
     if (!channelId) return;
     const generation = get().requestGeneration;
+    const subscriptionToken = get().subscriptionToken + 1;
+    set({ subscriptionToken });
     
-    const { activeSubscription } = get();
-    if (activeSubscription) supabase.removeChannel(activeSubscription);
+    const { activeSubscription, activeSubscriptionCleanup } = get();
+    activeSubscriptionCleanup?.();
+    if (activeSubscription) void supabase.removeChannel(activeSubscription);
 
-    const subscription = supabase
-      .channel(`public:messages:${channelId}`)
+    let subscription;
+    let subscribedOnce = false;
+    const isCurrent = () => get().subscriptionToken === subscriptionToken && generation === get().requestGeneration;
+    subscription = supabase.channel(`public:messages:${channelId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${channelId}` }, async (payload) => {
-        if (generation !== get().requestGeneration) return;
+        if (!isCurrent()) return;
+        get().bumpMessageEvent(channelId);
         const newMsg = payload.new;
         const stateMessages = get().messages[channelId] || [];
         if (stateMessages.find(m => m.id === newMsg.id)) return;
         const { data: profile } = await supabase.from('profiles').select('id, username, avatar_url').eq('id', newMsg.user_id).single();
-        if (generation !== get().requestGeneration) return;
+        if (!isCurrent()) return;
         set((state) => ({ messages: { ...state.messages, [channelId]: mergeMessage(state.messages[channelId] || [], { ...newMsg, profiles: profile }) } }));
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `channel_id=eq.${channelId}` }, (payload) => {
-        if (generation !== get().requestGeneration) return;
+        if (!isCurrent()) return;
+        get().bumpMessageEvent(channelId);
         set((state) => {
           const msgs = state.messages[channelId] || [];
           return { messages: { ...state.messages, [channelId]: msgs.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m) } };
         });
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages', filter: `channel_id=eq.${channelId}` }, (payload) => {
-        if (generation !== get().requestGeneration) return;
+        if (!isCurrent()) return;
+        get().bumpMessageEvent(channelId);
         set((state) => {
           const msgs = state.messages[channelId] || [];
           return { messages: { ...state.messages, [channelId]: msgs.filter(m => m.id !== payload.old.id) } };
         });
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions', filter: `channel_id=eq.${channelId}` }, (payload) => {
-        if (generation !== get().requestGeneration) return;
+        if (!isCurrent()) return;
         set((state) => ({ messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id, messages.map((message) => message.id === payload.new.message_id ? appendReaction(message, payload.new) : message)])) }));
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_reactions', filter: `channel_id=eq.${channelId}` }, (payload) => {
-        if (generation !== get().requestGeneration) return;
+        if (!isCurrent()) return;
         set((state) => ({ messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id, messages.map((message) => message.id === payload.old.message_id ? removeReaction(message, payload.old) : message)])) }));
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status !== 'SUBSCRIBED' || !isCurrent()) return;
+        if (subscribedOnce) void get().fetchMessages(channelId);
+        subscribedOnce = true;
+      });
 
-    set({ activeSubscription: subscription });
+    const refreshWhenConnected = () => { if (isCurrent() && document.visibilityState === 'visible') void get().fetchMessages(channelId); };
+    window.addEventListener('online', refreshWhenConnected);
+    document.addEventListener('visibilitychange', refreshWhenConnected);
+    set({ activeSubscription: subscription, activeSubscriptionCleanup: () => {
+      window.removeEventListener('online', refreshWhenConnected);
+      document.removeEventListener('visibilitychange', refreshWhenConnected);
+    } });
   },
 
   unsubscribe: () => {
-    const { activeSubscription } = get();
-    if (activeSubscription) { supabase.removeChannel(activeSubscription); set({ activeSubscription: null }); }
+    const { activeSubscription, activeSubscriptionCleanup } = get();
+    activeSubscriptionCleanup?.();
+    if (activeSubscription) void supabase.removeChannel(activeSubscription);
+    set((state) => ({ activeSubscription: null, activeSubscriptionCleanup: null, subscriptionToken: state.subscriptionToken + 1 }));
   },
 
   reset: () => {
     get().unsubscribe();
-    set((state) => ({ messages: {}, drafts: {}, isLoading: false, requestGeneration: state.requestGeneration + 1 }));
+    set((state) => ({ messages: {}, drafts: {}, fetchRequests: {}, messageEventVersions: {}, isLoading: false, requestGeneration: state.requestGeneration + 1 }));
   },
 
   setDraft: (channelId, draft) => {
@@ -165,11 +202,15 @@ export const useChatStore = create((set, get) => ({
       const { data, error } = await supabase.from('messages').insert([insertData]).select(`*, profiles:user_id ( id, username, avatar_url )`).single();
       set((state) => {
         const msgs = state.messages[channelId] || [];
-        if (error) return { messages: { ...state.messages, [channelId]: msgs.filter(m => m.id !== tempId) } };
+        if (error) {
+          console.error('Kanal mesajı gönderilemedi:', error.message);
+          return { messages: { ...state.messages, [channelId]: msgs.filter(m => m.id !== tempId) } };
+        }
         return { messages: { ...state.messages, [channelId]: replaceOptimisticMessage(msgs, tempId, data) } };
       });
       return error ? { success: false, error: error.message } : { success: true };
     } catch (error) {
+      console.error('Kanal mesajı gönderimi başarısız:', error);
       set((state) => ({ messages: { ...state.messages, [channelId]: (state.messages[channelId] || []).filter((message) => message.id !== tempId) } }));
       return { success: false, error: error instanceof Error ? error.message : 'Message could not be sent.' };
     }

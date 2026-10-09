@@ -175,6 +175,7 @@ export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser,
     if (command.handled) { content = command.content; setCommandNotice(''); }
     setMessageError('');
     let imagePath = null;
+    let uploadCompleted = false;
     try {
       if (selectedFile) {
         setIsUploading(true);
@@ -182,6 +183,7 @@ export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser,
         const extension = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' }[selectedFile.type];
         imagePath = `${user.id}/${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}.${extension}`;
         await uploadStorageFile('attachments', imagePath, selectedFile, setUploadProgress);
+        uploadCompleted = true;
       }
       setIsSending(true);
       const result = await sendMessage(channelId, content, imagePath, replyTo);
@@ -194,7 +196,9 @@ export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser,
       setReplyTo(null);
       setIsTypingNow(false);
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'Medya gönderilemedi. Tekrar dene.');
+      const message = error instanceof Error ? error.message : 'Mesaj gönderilemedi. Tekrar dene.';
+      if (imagePath && !uploadCompleted) setUploadError(message);
+      else setMessageError(message);
     } finally {
       setIsUploading(false);
       setIsSending(false);

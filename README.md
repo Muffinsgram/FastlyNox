@@ -6,8 +6,9 @@ Fastlynox is a React/Vite communication app. Supabase provides authentication, P
 
 1. Copy `.env.example` to `.env` and fill in the Supabase and LiveKit values.
 2. Apply `rls-security-policies.sql`, `migration_server_creation.sql`, `migration_edit_delete.sql`, `migration_message_reactions.sql`, `migration_message_replies.sql`, `migration_profile_customization.sql`, `migration_channel_order.sql`, `migration_global_announcements.sql`, then `migration_chat_mentions_notifications.sql` to the Supabase project. The server creation migration installs the atomic server creation and owner-only deletion RPCs; profile customization also adds banner framing controls. The chat notification migration installs mention delivery and unread server badges; only server owners and admins can broadcast `@everyone`.
-3. Install dependencies with `npm install`.
-4. Start the app with `npm run dev`.
+3. Apply `migration_friendships_realtime.sql`, `migration_user_presence.sql`, and `migration_realtime_sync_reliability.sql` in the Supabase SQL Editor after the base schema. The last migration adds per-window presence sessions, DM unread notifications, and the realtime publication/replica-identity settings used for reconnect recovery. It preserves existing rows; if it reports duplicate legacy friendship pairs, reconcile those rows before rerunning so the uniqueness guarantee can be installed.
+4. Install dependencies with `npm install`.
+5. Start the app with `npm run dev`.
 
 ## Deploying the web app to Vercel
 
