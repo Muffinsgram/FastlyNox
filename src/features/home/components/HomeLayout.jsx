@@ -20,7 +20,7 @@ const visiblePresence = (profile, statuses, visibility) => {
 const presenceLabel = (status) => status === 'idle' ? 'Boşta' : status === 'dnd' ? 'Rahatsız etmeyin' : status === 'online' ? 'Çevrim içi' : 'Çevrim dışı';
 const presenceDot = (status) => status === 'idle' ? 'bg-amber-300' : status === 'dnd' ? 'bg-rose-400' : status === 'online' ? 'bg-emerald-400' : 'bg-slate-600';
 
-export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onStartCall, incomingCallInvite, onAcceptCall, onDeclineCall, onInviteClick }) {
+export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onStartCall, incomingCallInvite, onAcceptCall, onDeclineCall, onInviteClick, navigationRequest }) {
   const { user } = useAuthStore();
   const searchShortcut = getAppPreferences(user?.id).searchShortcut || 'ctrl+k';
   const searchShortcutLabel = searchShortcut === 'alt+k' ? 'Alt K' : searchShortcut === 'ctrl+shift+k' ? 'Ctrl ⇧ K' : 'Ctrl K';
@@ -39,6 +39,12 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
     fetchFriendships();
     fetchDMs();
   }, [fetchFriendships, fetchDMs]);
+
+  useEffect(() => {
+    if (!navigationRequest?.tab) return;
+    setActiveDM(null);
+    setActiveTab(navigationRequest.tab);
+  }, [navigationRequest?.id, navigationRequest?.tab]);
 
   useEffect(() => {
     if (!pendingDMId) return;
@@ -163,12 +169,13 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
                      <h2 className="text-white font-black tracking-tight mb-2 text-lg">ARKADAŞ EKLE</h2>
                      <p className="text-slate-400 text-sm mb-6">Fastlynox kullanıcı adlarını kullanarak arkadaşlarını ekleyebilirsin. Yeni insanlarla tanışma vakti!</p>
                      <form onSubmit={handleAddFriend} className={`flex items-center bg-[#0A0D14] rounded-xl px-4 py-3 border-2 transition-all duration-200 shadow-lg ${addStatus?.success === false ? 'border-rose-500/50 shadow-[0_0_20px_rgba(244,63,94,0.1)]' : addStatus?.success === true ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.1)]' : 'border-white/5 focus-within:border-violet-500/50 focus-within:shadow-[0_0_20px_rgba(139,92,246,0.1)]'}`}>
-                        <input 
+                        <input
+                          aria-label="Arkadaş eklenecek kullanıcı adı"
                           type="text" 
                           value={addUsername}
                           onChange={(e) => setAddUsername(e.target.value)}
                           placeholder="Kullanıcı adı girerek arkadaş ekle..." 
-                          className="flex-1 bg-transparent border-none focus:outline-none text-white text-sm placeholder-slate-500 font-medium" 
+                          className="friend-add-input min-w-0 flex-1 border-0 bg-transparent text-white text-sm placeholder-slate-500 font-medium focus:outline-none focus-visible:outline-none focus-visible:ring-0"
                         />
                         <button disabled={!addUsername.trim() || addStatus?.loading} className="bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white text-sm font-bold px-6 py-2 rounded-lg transition-all shadow-[0_0_15px_rgba(139,92,246,0.4)] disabled:shadow-none ml-4">
                             İstek Gönder

@@ -163,6 +163,7 @@ export const useNotificationStore = create((set, get) => ({
     const { activeSubscription } = get();
     if (activeSubscription) supabase.removeChannel(activeSubscription);
 
+    let subscribedOnce = false;
     const subscription = supabase
       .channel(`public:notifications:user_id=eq.${user.id}`)
       .on('postgres_changes', { 
@@ -206,7 +207,13 @@ export const useNotificationStore = create((set, get) => ({
           }));
         }, 4000));
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status !== 'SUBSCRIBED') return;
+        // Recover any notifications created while the realtime connection was
+        // unavailable without doing a periodic full-table poll.
+        if (subscribedOnce) void get().fetchNotifications();
+        subscribedOnce = true;
+      });
 
     set({ activeSubscription: subscription });
   },

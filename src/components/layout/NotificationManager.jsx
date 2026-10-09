@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Bell, MessageSquare, X } from 'lucide-react';
+import { Bell, MessageSquare, UserCheck, UserPlus, X } from 'lucide-react';
 import { useNotificationStore } from '../../store/useNotificationStore';
 import { useAuthStore } from '../../store/useAuthStore';
 
@@ -13,8 +13,16 @@ export function NotificationManager({ onOpenNotification }) {
       fetchNotifications();
       subscribeToNotifications();
     }
+    const refreshWhenOnline = () => { if (userId) void fetchNotifications(); };
+    const refreshWhenVisible = () => {
+      if (userId && document.visibilityState === 'visible') void fetchNotifications();
+    };
+    window.addEventListener('online', refreshWhenOnline);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
     
     return () => {
+      window.removeEventListener('online', refreshWhenOnline);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
       unsubscribe();
     };
   }, [userId, fetchNotifications, subscribeToNotifications, unsubscribe]);
@@ -23,8 +31,8 @@ export function NotificationManager({ onOpenNotification }) {
     <div className="fixed bottom-6 right-6 z-[100] flex flex-col gap-3 pointer-events-none">
       {activeToasts.map((toast) => (
         <div key={toast.id} role="button" tabIndex={0} onClick={() => { onOpenNotification?.(toast); removeToast(toast.id); }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpenNotification?.(toast); removeToast(toast.id); } }} className="pointer-events-auto w-80 cursor-pointer bg-[#11151E]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl p-4 flex gap-4 animate-in slide-in-from-right-8 fade-in duration-300 hover:border-violet-300/25 focus:outline-none focus:ring-2 focus:ring-violet-300/50">
-           <div className="w-10 h-10 rounded-full bg-violet-500/20 flex items-center justify-center shrink-0">
-             {toast.type === 'dm_message' ? <MessageSquare className="w-5 h-5 text-violet-400" /> : <Bell className="w-5 h-5 text-violet-400" />}
+           <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${toast.type.startsWith('friend_') ? 'bg-emerald-500/15' : 'bg-violet-500/20'}`}>
+             {toast.type === 'dm_message' ? <MessageSquare className="w-5 h-5 text-violet-300" /> : toast.type === 'friend_request' ? <UserPlus className="w-5 h-5 text-emerald-300" /> : toast.type === 'friend_accepted' ? <UserCheck className="w-5 h-5 text-emerald-300" /> : <Bell className="w-5 h-5 text-violet-400" />}
            </div>
            <div className="flex-1 flex flex-col min-w-0">
               <div className="flex items-start justify-between gap-2">

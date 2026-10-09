@@ -42,6 +42,12 @@ body {
   outline-offset: 2px;
 }
 
+/* The friend form already draws a keyboard focus state on its rounded shell. */
+.friend-add-input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
 select {
   appearance: none;
   padding-right: 2.25rem !important;

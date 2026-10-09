@@ -56,8 +56,16 @@ export const useFriendStore = create((set, get) => ({
           subscribedOnce = true;
         }
       });
+    const handleOnline = () => refresh();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       clearTimeout(refreshTimer);
+      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibility);
       void supabase.removeChannel(channel);
     };
   },

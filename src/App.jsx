@@ -94,6 +94,7 @@ export default function App() {
   const [managementContext, setManagementContext] = useState(null);
   const [showCreateServer, setShowCreateServer] = useState(false);
   const [pendingDMId, setPendingDMId] = useState(null);
+  const [homeNavigationRequest, setHomeNavigationRequest] = useState(null);
   const [draggedChannelId, setDraggedChannelId] = useState(null);
   const [dropTargetChannelId, setDropTargetChannelId] = useState(null);
   const [draggedCategoryId, setDraggedCategoryId] = useState(null);
@@ -615,6 +616,10 @@ export default function App() {
             } else if (notification.dm_channel_id) {
               setLayout('home');
               setPendingDMId(notification.dm_channel_id);
+            } else if (notification.type === 'friend_request' || notification.type === 'friend_accepted') {
+              setLayout('home');
+              setPendingDMId(null);
+              setHomeNavigationRequest({ tab: notification.type === 'friend_request' ? 'pending' : 'all', id: notification.id || Date.now() });
             }
           }} />}
           <button type="button" aria-label="Küçült" title="Küçült" onClick={() => void handleWindowControl('minimize')} className="windows-caption-button grid h-full w-11 place-items-center text-slate-400 transition hover:bg-white/10 hover:text-white"><Minus className="h-4 w-4" /></button>
@@ -633,7 +638,7 @@ export default function App() {
         {/* LAYOUT: HOME */}
         {layout === 'home' && (
           <div className="flex-1 min-h-0 flex relative animate-in fade-in duration-200">
-             <HomeLayout onOpenSearch={() => setShowGlobalSearch(true)} pendingDMId={pendingDMId} onPendingDMHandled={() => setPendingDMId(null)} onStartCall={handleStartDMCall} incomingCallInvite={incomingCallInvite} onAcceptCall={handleCallInviteAccepted} onDeclineCall={handleCallInviteDeclined} onInviteClick={setInviteDialogCode} />
+             <HomeLayout onOpenSearch={() => setShowGlobalSearch(true)} pendingDMId={pendingDMId} onPendingDMHandled={() => setPendingDMId(null)} onStartCall={handleStartDMCall} incomingCallInvite={incomingCallInvite} onAcceptCall={handleCallInviteAccepted} onDeclineCall={handleCallInviteDeclined} onInviteClick={setInviteDialogCode} navigationRequest={homeNavigationRequest} />
           </div>
         )}
 
@@ -763,6 +768,10 @@ export default function App() {
         } else if (notification.dm_channel_id) {
           setLayout('home');
           setPendingDMId(notification.dm_channel_id);
+        } else if (notification.type === 'friend_request' || notification.type === 'friend_accepted') {
+          setLayout('home');
+          setPendingDMId(null);
+          setHomeNavigationRequest({ tab: notification.type === 'friend_request' ? 'pending' : 'all', id: notification.id || Date.now() });
         }
       }} />
       <Suspense fallback={null}>
