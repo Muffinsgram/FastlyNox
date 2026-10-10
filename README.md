@@ -1,606 +1,263 @@
 
 <div align="center">
 
-# ⚡ FastlyNox
+<img src="https://capsule-render.vercel.app/api?type=rect&height=220&color=0:09090f,50:312e81,100:7c3aed&text=FastlyNox&fontSize=68&fontColor=ffffff&fontAlignY=42&desc=Your%20community.%20Your%20conversations.&descAlignY=65&descSize=17&animation=fadeIn" width="100%" />
 
-### One space. Every conversation. Zero distance.
+<br/>
 
-**A modern communication platform built for communities, real-time conversations, and voice collaboration.**
+### 💜 A new way to stay connected.
 
-[🌐 Live Demo](https://fastlynox.vercel.app) · [📦 Repository](https://github.com/Muffinsgram/FastlyNox) · [🐛 Report a Bug](https://github.com/Muffinsgram/FastlyNox/issues) · [✨ Request a Feature](https://github.com/Muffinsgram/FastlyNox/issues)
+A modern communication experience built for communities, conversations, and voice.
+<br/>
+Designed for the web. Available on Windows.
 
-<br />
+<br/>
 
-[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
-[![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vite.dev/)
-[![Supabase](https://img.shields.io/badge/Supabase-Backend-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
-[![LiveKit](https://img.shields.io/badge/LiveKit-Voice-FF6B6B?style=for-the-badge&logo=webrtc&logoColor=white)](https://livekit.io/)
-[![Electron](https://img.shields.io/badge/Electron-Desktop-47848F?style=for-the-badge&logo=electron&logoColor=white)](https://www.electronjs.org/)
+<a href="https://github.com/Muffinsgram/FastlyNox/releases/latest">
+  <img src="https://img.shields.io/badge/⬇%20DOWNLOAD%20FOR%20WINDOWS-Latest%20Release-7c3aed?style=for-the-badge" alt="Download FastlyNox"/>
+</a>
 
-<br />
+<br/><br/>
 
-**💬 Real-time Messaging · 🎙️ Voice Rooms · 🌐 Web · 🖥️ Windows**
+<a href="https://github.com/Muffinsgram/FastlyNox/releases">All Releases</a>
+&nbsp; • &nbsp;
+<a href="https://github.com/Muffinsgram/FastlyNox/issues">Support & Feedback</a>
+&nbsp; • &nbsp;
+<a href="https://github.com/Muffinsgram/FastlyNox">Source Code</a>
+
+<br/><br/>
+
+![React](https://img.shields.io/badge/React-61DAFB?style=flat-square&logo=react&logoColor=black)
+![Supabase](https://img.shields.io/badge/Supabase-3FCF8E?style=flat-square&logo=supabase&logoColor=white)
+![LiveKit](https://img.shields.io/badge/LiveKit-7c3aed?style=flat-square)
+![Electron](https://img.shields.io/badge/Windows%20Desktop-47848F?style=flat-square&logo=electron&logoColor=white)
 
 </div>
 
 ---
 
-## 📖 Table of Contents
+## ✨ Meet FastlyNox
 
-- [🌟 About](#-about)
-- [✨ Features](#-features)
-- [🛠️ Technology Stack](#️-technology-stack)
-- [🏗️ Architecture](#️-architecture)
-- [🚀 Getting Started](#-getting-started)
-- [⚙️ Environment Variables](#️-environment-variables)
-- [🗄️ Database Setup](#️-database-setup)
-- [🌍 Deployment](#-deployment)
-- [🖥️ Windows Desktop App](#️-windows-desktop-app)
-- [🧪 Development & Testing](#-development--testing)
-- [🔐 Security](#-security)
-- [🤝 Contributing](#-contributing)
-- [📄 License](#-license)
+**Everything feels better when you're connected.**
 
----
+FastlyNox brings messaging, communities, and voice conversations together in one modern communication platform.
 
-## 🌟 About
+Create your space, connect with friends, join conversations, and make your community feel closer — all through an experience designed to keep things simple and connected.
 
-**FastlyNox** is a real-time communication application designed to bring people together through messaging, communities, and voice conversations.
+Whether you're catching up with friends or building a community of your own, FastlyNox gives you a place to make it happen.
 
-Built with a modern React frontend and powered by Supabase and LiveKit, FastlyNox combines the flexibility of a web application with the convenience of a native Windows desktop experience.
+## 🌌 Explore the experience
 
-Whether you're building a community, chatting with friends, organizing conversations into servers and channels, or joining a voice room, FastlyNox aims to keep communication connected in one place.
+<table>
+<tr>
+<td width="50%" valign="top">
 
-### 💡 The Vision
+### 💬 Real-time messaging
 
-FastlyNox is built around three core principles:
+Conversations that keep up with you.
 
-- **⚡ Speed** — A responsive experience for everyday communication.
-- **🔗 Connectivity** — Real-time messaging, presence, and voice interactions.
-- **🧩 Flexibility** — A web application and a dedicated Windows desktop client.
+- Real-time messages
+- Direct messages
+- Organized text channels
+- Message replies and reactions
+- Emoji and GIF support
+- Mentions and unread indicators
 
-> Communication should feel instant, communities should feel connected, and the tools we use should stay out of the way.
+</td>
+<td width="50%" valign="top">
 
-## ✨ Features
+### 🌐 Your own community
 
-### 💬 Messaging & Conversations
+Bring people together in your own space.
 
-- Real-time messaging powered by Supabase Realtime.
-- Server-based communities with organized text channels.
-- Direct messaging between users.
-- Message editing and deletion.
-- Message replies and reactions.
-- Emoji selection and GIF discovery through GIPHY.
-- Mention notifications and unread-message indicators.
-- Attachment support with configurable expiration cleanup.
+- Create and manage servers
+- Organize channels
+- Manage members and roles
+- Invite people to your community
+- Customize your profile
+- Stay connected with presence indicators
 
-### 🌐 Communities & Servers
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
 
-- Create and manage community servers.
-- Organize conversations into channels.
-- Server roles and permission management.
-- Server ownership and administrative controls.
-- Custom server invitations and public invitation previews.
-- Public vanity URLs for supported servers.
-- Member presence and real-time synchronization.
-- Server announcements and unread server indicators.
+### 🎙️ Voice rooms
 
-### 👤 Profiles & Social Features
+Sometimes, a conversation is better out loud.
 
-- Customizable profile pictures and banners.
-- Profile biographies and banner positioning controls.
-- User presence and activity indicators.
-- One-way profile following.
-- Media posts and 24-hour stories.
-- In-app announcements and private reminders.
-- Browser notification support for supported reminder workflows.
+- Join supported voice channels
+- Connect with other community members
+- Real-time participant presence
+- Voice-channel moderation
+- Reconnection support
 
-### 🎙️ Voice Communication
+</td>
+<td width="50%" valign="top">
 
-- LiveKit-powered voice rooms.
-- Real-time voice participant presence.
-- Voice-channel membership validation.
-- Server-side voice token issuance.
-- Voice participant moderation and channel movement.
-- Reconnection support for voice sessions.
-- Audio noise-suppression integrations.
+### 🖥️ Windows desktop
 
-Voice functionality depends on a correctly configured LiveKit deployment and the corresponding Supabase Edge Function.
+Your conversations, right on your desktop.
 
-### 🖥️ Windows Desktop Application
+- Dedicated Electron application
+- Windows x64 installer
+- Desktop-focused experience
+- Update availability notifications
+- Downloadable releases from GitHub
 
-- Dedicated Electron desktop client.
-- Windows x64 installer.
-- Native desktop application packaging.
-- Background release checks and update downloads.
-- In-app update availability controls.
-- GitHub Releases-based update distribution.
+</td>
+</tr>
+</table>
 
-### 🔒 Security & Reliability
+### 👤 More ways to connect
 
-- Supabase authentication and database access controls.
-- Row Level Security (RLS) policies.
-- Server-side validation for sensitive voice operations.
-- Role-based server permissions.
-- Restricted administrative announcement publishing.
-- Realtime synchronization and reconnect recovery.
-- Configurable attachment retention and cleanup.
+FastlyNox also includes social and personalization features designed to make the experience feel more personal.
 
-**Note:** Some features require the corresponding SQL migrations, storage policies, environment variables, or backend functions to be configured before they become available.
+- Custom profile pictures and banners
+- User biographies and presence
+- Following and social posts
+- Stories that expire after 24 hours
+- Announcements and private reminders
+- Invitation previews for supported communities
+
+*Feature availability may depend on the current release and server configuration.*
 
 ---
 
-## 🛠️ Technology Stack
+## 📸 A look inside FastlyNox
 
-| Technology | Purpose |
-| --- | --- |
-| [React](https://react.dev/) | User interface |
-| [Vite](https://vite.dev/) | Development server and production builds |
-| [Tailwind CSS](https://tailwindcss.com/) | Utility-first styling |
-| [Zustand](https://zustand.docs.pmnd.rs/) | Client-side state management |
-| [Supabase](https://supabase.com/) | Authentication, PostgreSQL, storage, and realtime |
-| [LiveKit](https://livekit.io/) | Voice communication infrastructure |
-| [Electron](https://www.electronjs.org/) | Windows desktop application |
-| [electron-updater](https://www.electron.build/auto-update) | Desktop release updates |
-| [Lucide](https://lucide.dev/) | Interface icons |
-| [GIPHY](https://developers.giphy.com/) | GIF search and discovery |
-| [Vercel](https://vercel.com/) | Web deployment |
-| [GitHub Actions](https://github.com/features/actions) | Automated desktop release workflow |
+<div align="center">
 
----
+**Your next favorite place to connect.**
 
-## 🏗️ Architecture
+<br/>
 
-FastlyNox separates its client interface from the services responsible for authentication, persistence, and real-time communication.
+<!-- Add real application screenshots here when available. -->
 
-```mermaid
-flowchart TD
-    User["👤 User"]
-    Web["🌐 React + Vite Web App"]
-    Desktop["🖥️ Electron Desktop App"]
-    Supabase["⚡ Supabase"]
-    Auth["🔐 Authentication"]
-    DB["🗄️ PostgreSQL"]
-    Realtime["📡 Realtime"]
-    Storage["📁 Storage"]
-    Edge["🛡️ Edge Functions"]
-    LiveKit["🎙️ LiveKit Voice"]
-    Vercel["🚀 Vercel"]
-    GitHub["📦 GitHub Releases"]
+<!--
+<img src="docs/images/home.png" width="90%" alt="FastlyNox home screen"/>
+<br/><br/>
+<img src="docs/images/chat.png" width="90%" alt="FastlyNox messaging interface"/>
+<br/><br/>
+<img src="docs/images/voice.png" width="90%" alt="FastlyNox voice channels"/>
+-->
 
-    User --> Web
-    User --> Desktop
-    Web --> Supabase
-    Desktop --> Supabase
-    Supabase --> Auth
-    Supabase --> DB
-    Supabase --> Realtime
-    Supabase --> Storage
-    Supabase --> Edge
-    Edge --> LiveKit
-    Web --> Vercel
-    Desktop --> GitHub
-```
+*Application screenshots coming soon.*
 
-### How it works
-
-1. **Client layer:** React renders the application in the browser or inside Electron.
-2. **Authentication and data:** Supabase provides user authentication, PostgreSQL, and storage.
-3. **Realtime layer:** Supabase Realtime delivers supported messaging and presence updates.
-4. **Voice layer:** LiveKit handles voice rooms, with Supabase Edge Functions issuing validated voice tokens.
-5. **Deployment layer:** Vercel hosts the web application, while GitHub Releases distributes Windows desktop updates.
+</div>
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Get FastlyNox
 
-Follow these steps to run FastlyNox locally.
+Ready to join the experience? Getting started is simple.
 
-### Prerequisites
+<div align="center">
 
-Make sure you have the following:
+### 💻 FastlyNox for Windows
 
-- [Node.js](https://nodejs.org/) — a version compatible with the dependencies in `package.json`.
-- npm — included with Node.js.
-- A configured [Supabase](https://supabase.com/) project.
-- A configured [LiveKit](https://livekit.io/) deployment for voice features.
-- A [GIPHY API key](https://developers.giphy.com/) if you want GIF search and discovery.
+Download the latest available desktop release and start connecting.
 
-### 1. Clone the repository
+<br/>
 
-```bash
-git clone https://github.com/Muffinsgram/FastlyNox.git
-cd FastlyNox
-```
+<a href="https://github.com/Muffinsgram/FastlyNox/releases/latest">
+  <img src="https://img.shields.io/badge/Download%20Latest%20Release-7c3aed?style=for-the-badge&logo=windows&logoColor=white" alt="Download latest release"/>
+</a>
 
-### 2. Install dependencies
+<br/><br/>
 
-```bash
-npm install
-```
+<sub>Windows x64 · Electron Desktop · GitHub Releases</sub>
 
-### 3. Configure environment variables
+</div>
 
-Create a local environment file from the example:
+### 📥 Installation guide
 
-**Windows — Command Prompt**
+**1. Open the releases page**
 
-```bat
-copy .env.example .env
-```
+Visit the [FastlyNox Releases](https://github.com/Muffinsgram/FastlyNox/releases/latest) page to find the latest published version.
 
-**macOS / Linux**
+**2. Download the Windows installer**
 
-```bash
-cp .env.example .env
-```
+Under the release's **Assets** section, download the `.exe` installer provided for Windows.
 
-Open `.env` and provide the appropriate credentials for your services.
+**3. Install FastlyNox**
 
-See [Environment Variables](#️-environment-variables) for details.
+Open the downloaded installer and follow the on-screen instructions.
 
-### 4. Configure Supabase
+**4. Launch and connect**
 
-Create a Supabase project, then apply the required SQL migrations in the order described in [Database Setup](#️-database-setup).
+Open FastlyNox from your desktop or Start menu and sign in to get started.
 
-Make sure your database schema, RLS policies, storage configuration, and required Edge Functions are in place.
-
-### 5. Start the development server
-
-```bash
-npm run dev
-```
-
-Vite will display the local development URL in your terminal, typically:
-
-`http://localhost:5173`
-
-### 6. Run the Windows desktop client
-
-Keep the Vite development server running and open a second terminal:
-
-```bash
-npm run desktop:dev
-```
-
-This starts the Electron application against the local development environment.
+> **Can't find an installer?** Check the release's Assets section. If no Windows installer is available, a desktop build may not have been published for that version yet.
 
 ---
 
-## ⚙️ Environment Variables
+## 🔄 Stay up to date
 
-FastlyNox uses environment variables to configure its external services.
+FastlyNox supports a desktop update workflow through published GitHub Releases.
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `VITE_SUPABASE_URL` | Yes | Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY` | Yes | Supabase publishable/anonymous client key |
-| `VITE_PUBLIC_APP_URL` | Yes for deployment | Canonical public HTTPS application URL |
-| `VITE_LIVEKIT_URL` | For voice | LiveKit WebSocket URL |
-| `VITE_LIVEKIT_API_KEY` | For voice | LiveKit API key |
-| `LIVEKIT_API_SECRET` | Server-side only | LiveKit API secret |
-| `VITE_GIPHY_API_KEY` | Optional | GIPHY client API key |
+When a compatible update is available, the desktop application can notify you and offer the update for installation.
 
-Example:
+Want to see what's new?
 
-```dotenv
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
-
-VITE_PUBLIC_APP_URL=https://fastlynox.vercel.app
-
-VITE_LIVEKIT_URL=wss://your-livekit-host
-VITE_LIVEKIT_API_KEY=your-livekit-api-key
-LIVEKIT_API_SECRET=your-livekit-api-secret
-
-VITE_GIPHY_API_KEY=your-giphy-api-key
-```
-
-### ⚠️ Important security rules
-
-- Never commit your `.env` file.
-- Never expose `LIVEKIT_API_SECRET` to browser code.
-- Never rename the server-side secret to `VITE_LIVEKIT_API_SECRET`.
-- Never put Supabase service-role credentials in the client or Vercel client-side environment.
-- Use only the Supabase client key intended for browser access, with appropriate RLS policies.
-- Keep production secrets in the appropriate server-side environment.
-
-Environment variables prefixed with `VITE_` are exposed to client-side application code. Treat them as public values.
+- [✨ Latest release](https://github.com/Muffinsgram/FastlyNox/releases/latest)
+- [📦 All versions](https://github.com/Muffinsgram/FastlyNox/releases)
+- [📝 Release notes](https://github.com/Muffinsgram/FastlyNox/releases)
 
 ---
 
-## 🗄️ Database Setup
+## 🔒 Built with care
 
-FastlyNox relies on Supabase SQL migrations for database structure, access policies, and additional application features.
+Your communication experience should be both useful and reliable.
 
-Run the SQL files using the Supabase SQL Editor.
+FastlyNox uses Supabase for authentication and data services, alongside access policies designed to protect application resources. Voice communication is powered by LiveKit.
 
-### Core setup
-
-Apply the required baseline schema and security policies first. The repository includes the following scripts for core functionality and subsequent features:
-
-1. `rls-security-policies.sql`
-2. `migration_server_creation.sql`
-3. `migration_edit_delete.sql`
-4. `migration_message_reactions.sql`
-5. `migration_message_replies.sql`
-6. `migration_profile_customization.sql`
-7. `migration_channel_order.sql`
-8. `migration_global_announcements.sql`
-9. `migration_chat_mentions_notifications.sql`
-
-### Realtime, presence & social synchronization
-
-After the baseline schema is available, apply:
-
-- `migration_friendships_realtime.sql`
-- `migration_user_presence.sql`
-- `migration_realtime_sync_reliability.sql`
-
-The realtime reliability migration includes synchronization settings, presence sessions, and direct-message unread notification support. Resolve duplicate legacy friendship pairs before rerunning it if the uniqueness constraint cannot be created.
-
-### Additional migrations
-
-Other migrations cover features such as:
-
-- Voice presence and moderation.
-- Server roles and permissions.
-- Invitation previews and public identifiers.
-- Message reactions and notification read states.
-- Profile customization and social activity.
-- Story storage and attachment expiration.
-- Server operations and administration.
-
-Review the individual SQL files before applying additional migrations, and use the repository's current schema as the source of truth.
-
-### Voice token function
-
-Deploy the voice-token Edge Function:
-
-```bash
-supabase functions deploy livekit-token
-```
-
-Configure the following Edge Function secrets:
-
-```bash
-supabase secrets set LIVEKIT_API_KEY=your-livekit-api-key
-supabase secrets set LIVEKIT_API_SECRET=your-livekit-api-secret
-```
-
-The function validates the authenticated session and voice-channel membership before issuing a time-limited token.
-
-### Attachment cleanup
-
-For scheduled deletion of expired attachments:
-
-1. Deploy `cleanup-expired-attachments`.
-2. Configure `ATTACHMENT_CLEANUP_SECRET` as an Edge Function secret.
-3. Store the cleanup configuration in Supabase Vault.
-4. Apply `migration_attachment_expiry.sql` to schedule the cleanup job.
-
-The cleanup process requires a configured Supabase project; running the frontend alone does not provide scheduled background deletion.
+As with any online platform, security also depends on the server configuration, permissions, and services used by each deployment.
 
 ---
 
-## 🌍 Deployment
+## 💡 The idea behind FastlyNox
 
-### Deploy the web application to Vercel
+We believe communication software should bring people together without making the experience complicated.
 
-1. Import [Muffinsgram/FastlyNox](https://github.com/Muffinsgram/FastlyNox) into Vercel.
-2. Select the Vite framework preset.
-3. Set the build command to `npm run build`.
-4. Set the output directory to `dist`.
-5. Configure the required environment variables for Production, Preview, and Development.
-6. Set `VITE_PUBLIC_APP_URL` to the canonical HTTPS domain.
-7. Apply the public invitation preview migration before deploying the related functionality.
+FastlyNox is built around a simple idea:
 
-**Build settings**
+**Less distance. More connection. One place to belong.**
 
-| Setting | Value |
-| --- | --- |
-| Framework | Vite |
-| Build command | `npm run build` |
-| Output directory | `dist` |
-| Install command | `npm install` |
-
-The live web application is available at:
-
-**[https://fastlynox.vercel.app](https://fastlynox.vercel.app)**
-
-If you use a custom domain, update `VITE_PUBLIC_APP_URL` accordingly.
-
-### Public invitation previews
-
-FastlyNox includes support for server-rendered invitation preview metadata, Open Graph information, and public server sitemap entries.
-
-Public vanity links can be indexed when the relevant deployment and domain verification requirements are satisfied. Short-lived, limited-use, or otherwise restricted invitations are marked `noindex`.
-
-Search engine indexing is not guaranteed and may take time.
+From everyday messages to community conversations and voice rooms, we're building an experience that makes staying connected feel natural.
 
 ---
 
-## 🖥️ Windows Desktop App
+## 🤝 Be part of the journey
 
-FastlyNox includes a Windows desktop client built with Electron.
+FastlyNox is an evolving project, and feedback helps shape what comes next.
 
-### Build locally
+Found a bug? Have an idea? Want to suggest an improvement?
 
-Start the Vite development server:
+- 🐛 [Report a bug](https://github.com/Muffinsgram/FastlyNox/issues)
+- 💡 [Suggest a feature](https://github.com/Muffinsgram/FastlyNox/issues)
+- ⭐ [Star the project on GitHub](https://github.com/Muffinsgram/FastlyNox)
 
-```bash
-npm run dev
-```
-
-In a separate terminal, run:
-
-```bash
-npm run desktop:dev
-```
-
-### Create a Windows installer
-
-```bash
-npm run dist:win
-```
-
-The Windows build targets **x64** and creates an NSIS installer. The build script writes the installer to:
-
-```text
-%LOCALAPPDATA%\Fastlynox\windows-build\
-```
-
-This location helps avoid file-renaming restrictions in protected project directories.
-
-### Automatic updates
-
-The desktop client checks the public GitHub Releases page for new versions. When an update is available, it downloads in the background and presents an update control in the title bar.
-
-Updates can be installed by restarting through the update control or by closing and reopening the application.
-
-### Publish a release
-
-Configure these GitHub Actions repository secrets:
-
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-- `VITE_PUBLIC_APP_URL`
-- `VITE_LIVEKIT_URL`
-- `VITE_LIVEKIT_API_KEY`
-
-`VITE_GIPHY_API_KEY` is optional.
-
-Then push a semantic-version tag, for example:
-
-```bash
-git tag v1.0.1
-git push origin v1.0.1
-```
-
-The release workflow builds the Windows installer and publishes the installer and updater metadata to GitHub Releases.
-
-**Important:** Keep the generated `latest.yml`, `.exe`, and `.blockmap` release assets available. Do not place `LIVEKIT_API_SECRET` in the desktop build secrets.
-
-Windows may display a SmartScreen warning because the installer is not code-signed. A code-signing certificate can improve publisher trust.
-
----
-
-## 🧪 Development & Testing
-
-FastlyNox includes scripts for linting, automated tests, and production builds.
-
-### Available commands
-
-| Command | Description |
-| --- | --- |
-| `npm run dev` | Start the Vite development server |
-| `npm run desktop:dev` | Launch the Electron desktop client |
-| `npm run build` | Build the production web application |
-| `npm run preview` | Preview the production build locally |
-| `npm run lint` | Run Oxlint |
-| `npm test` | Run the Node.js test suite |
-| `npm run dist:win` | Build the Windows installer |
-| `npm run release:win` | Run the Windows release build script |
-
-### Run the checks
-
-```bash
-npm run lint
-npm test
-npm run build
-```
-
-For changes involving authentication, database access, storage, or voice communication, also verify the corresponding Supabase policies, migrations, and Edge Functions.
-
-Live integration tests require a correctly configured Supabase project and any relevant external services.
-
----
-
-## 🔐 Security
-
-Security is an essential part of any real-time communication platform.
-
-When deploying or contributing to FastlyNox:
-
-- Apply and review Row Level Security policies.
-- Validate authorization on the server side.
-- Keep privileged API secrets out of the browser.
-- Restrict server-management actions to authorized roles.
-- Protect storage access and user-owned media.
-- Configure cleanup jobs for expiring attachments.
-- Never commit production credentials or private keys.
-- Review migration changes before applying them to production.
-- Keep dependencies updated and investigate security advisories.
-
-If you discover a security vulnerability, please avoid publishing sensitive exploit details in a public issue. Contact the repository maintainer privately to coordinate a responsible disclosure.
-
----
-
-## 🤝 Contributing
-
-Contributions, bug reports, and ideas are welcome!
-
-### Contribution workflow
-
-1. Fork the repository.
-2. Create a feature branch.
-3. Make your changes.
-4. Run linting, tests, and the production build.
-5. Commit your changes with a clear message.
-6. Open a pull request describing the changes.
-
-Example:
-
-```bash
-git checkout -b feature/your-feature
-npm install
-
-npm run lint
-npm test
-npm run build
-
-git add .
-git commit -m "feat: add your feature"
-git push origin feature/your-feature
-```
-
-Please keep pull requests focused, document any required environment variables or migrations, and avoid committing generated artifacts or secrets.
-
-For bugs and feature requests, visit the [GitHub Issues](https://github.com/Muffinsgram/FastlyNox/issues) page.
-
----
-
-## 🗺️ Roadmap
-
-FastlyNox is an evolving project. Potential areas for future development include:
-
-- [ ] Expanded automated integration testing.
-- [ ] Improved onboarding and setup documentation.
-- [ ] Additional accessibility and usability improvements.
-- [ ] Further realtime reliability improvements.
-- [ ] Expanded community and moderation tooling.
-- [ ] More comprehensive deployment and operational guides.
-
-Roadmap items are suggestions rather than promises or confirmed release dates.
-
----
-
-## 📄 License
-
-FastlyNox includes a `LICENSE` file in the repository.
-
-Please review the [project license](https://github.com/Muffinsgram/FastlyNox/blob/main/LICENSE) before redistributing or modifying the project.
+Contributions and constructive feedback are welcome.
 
 ---
 
 <div align="center">
 
-### ⚡ Built for conversations. Designed for communities.
+<img src="https://capsule-render.vercel.app/api?type=rect&height=120&color=0:7c3aed,100:09090f&section=footer" width="100%" />
 
-**FastlyNox — Stay connected.**
+### 💜 FastlyNox
 
-[🌐 Website](https://fastlynox.vercel.app) · [⭐ Star on GitHub](https://github.com/Muffinsgram/FastlyNox) · [💬 Join the development](https://github.com/Muffinsgram/FastlyNox/issues)
+**Your community. Your conversations. Your space.**
 
-<sub>Made with ❤️ by <a href="https://github.com/Muffinsgram">Muffinsgram</a></sub>
+<br/>
+
+<a href="https://github.com/Muffinsgram/FastlyNox/releases/latest">⬇ Download FastlyNox</a>
+&nbsp; • &nbsp;
+<a href="https://github.com/Muffinsgram/FastlyNox">Explore on GitHub</a>
+
+<br/><br/>
+
+<sub>Made with 💜 by <a href="https://github.com/Muffinsgram">Muffinsgram</a></sub>
 
 </div>
