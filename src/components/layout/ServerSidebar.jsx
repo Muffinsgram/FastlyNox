@@ -393,7 +393,7 @@ export function ServerSidebar({ layout, setLayout, setShowCreateServer, setShowS
           <div className={`server-icon-bg flex h-10 w-10 items-center justify-center rounded-[14px] text-white transition-all ${layout === 'home' ? 'bg-gradient-to-br from-violet-500 to-cyan-500 shadow-[0_4px_18px_rgba(113,133,255,.35)]' : 'bg-white/[0.06] hover:bg-white/[0.12]'}`}>
             <MessageSquare className="h-5 w-5" />
           </div>
-          {totalDMUnread > 0 && <span aria-label={`${totalDMUnread} okunmamış DM`} className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 place-items-center rounded-full border-2 border-[#151a24] bg-rose-400 px-1 text-[8px] font-black text-[#200b0b]">{totalDMUnread > 99 ? '99+' : totalDMUnread}</span>}
+          {totalDMUnread > 0 && <span aria-label={`${totalDMUnread} okunmamış DM`} className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 place-items-center rounded-full border-2 border-[#151a24] bg-rose-500 px-1 text-[8px] font-black text-white">{totalDMUnread > 99 ? '99+' : totalDMUnread}</span>}
           <div className="fast-tooltip">Direkt Mesajlar</div>
         </button>
 

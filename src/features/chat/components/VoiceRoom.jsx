@@ -35,7 +35,7 @@ function getAudioPublishOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
   return { audioPreset: settings.audioQuality === 'high' ? AudioPresets.musicHighQuality : AudioPresets.speech };
 }
 
-function EnableMicrophoneAfterConnect({ settings, deafened, onFailure }) {
+function EnableMicrophoneAfterConnect({ settings, deafened, pushToTalkEnabled, onFailure }) {
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const connectionState = useConnectionState();
   const attemptedRef = useRef(false);
@@ -50,13 +50,21 @@ function EnableMicrophoneAfterConnect({ settings, deafened, onFailure }) {
       if (isMicrophoneEnabled) void localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(settings), getAudioPublishOptions(settings)).catch((error) => onFailure(error));
       return undefined;
     }
+    // PTT owns microphone transitions while it is enabled. Opening the mic
+    // here and muting it in VoiceControls races the first key press and can
+    // briefly publish audio before the user asks to speak.
+    if (pushToTalkEnabled) {
+      attemptedRef.current = true;
+      if (isMicrophoneEnabled) void localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(settings), getAudioPublishOptions(settings)).catch((error) => onFailure(error));
+      return undefined;
+    }
     if (attemptedRef.current || isMicrophoneEnabled) return undefined;
     attemptedRef.current = true;
     let active = true;
     void localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(settings), getAudioPublishOptions(settings))
       .catch((error) => { if (active) onFailure(error); });
     return () => { active = false; };
-  }, [connectionState, deafened, isMicrophoneEnabled, localParticipant, onFailure, settings]);
+  }, [connectionState, deafened, pushToTalkEnabled, isMicrophoneEnabled, localParticipant, onFailure, settings]);
 
   return null;
 }
@@ -952,11 +960,6 @@ function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, micro
     return () => window.removeEventListener('fastcord:preferences-updated', refresh);
   }, [currentUserId]);
   const voiceAudioSettings = getAppPreferences(currentUserId).voiceAudioSettings || DEFAULT_VOICE_AUDIO_SETTINGS;
-  useEffect(() => {
-    if (connectionState === 'connected' && voiceKeyPreferences.pushToTalkEnabled && isMicrophoneEnabled) {
-      void localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings));
-    }
-  }, [connectionState, voiceKeyPreferences.pushToTalkEnabled, localParticipant, isMicrophoneEnabled, voiceAudioSettings]);
   const [screenShareSettings, setScreenShareSettings] = useState(() => ({ quality: '1080', frameRate: 30, audio: false, ...(getAppPreferences(currentUserId).screenShareSettings || {}) }));
 
   const updateScreenShareSettings = (key, value) => {
@@ -1251,13 +1254,19 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
   const [isDockExpanded, setIsDockExpanded] = useState(false);
   const { user } = useAuthStore();
   const userId = user?.id;
+  const [pushToTalkEnabled, setPushToTalkEnabled] = useState(() => Boolean(getAppPreferences(userId).pushToTalkEnabled));
 
   const [voiceAudioSettings, setVoiceAudioSettings] = useState(() => ({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) }));
 
   useEffect(() => {
     setVoiceAudioSettings({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) });
+    setPushToTalkEnabled(Boolean(getAppPreferences(userId).pushToTalkEnabled));
     const syncVoiceSettings = event => {
-      if (!event?.detail?.userId || event.detail.userId === userId) setVoiceAudioSettings({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) });
+      if (!event?.detail?.userId || event.detail.userId === userId) {
+        const preferences = getAppPreferences(userId);
+        setVoiceAudioSettings({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(preferences.voiceAudioSettings || {}) });
+        setPushToTalkEnabled(Boolean(preferences.pushToTalkEnabled));
+      }
     };
     window.addEventListener('fastcord:preferences-updated', syncVoiceSettings);
     return () => window.removeEventListener('fastcord:preferences-updated', syncVoiceSettings);
@@ -1375,7 +1384,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           onError={handleLiveKitError}
         >
           <VoiceConnectionOverlay channelName={channelName} onLeave={onLeave} />
-          <EnableMicrophoneAfterConnect settings={voiceAudioSettings} deafened={localDeafened} onFailure={handleMediaDeviceFailure} />
+          <EnableMicrophoneAfterConnect settings={voiceAudioSettings} deafened={localDeafened} pushToTalkEnabled={pushToTalkEnabled} onFailure={handleMediaDeviceFailure} />
           <div className={`flex min-h-0 flex-col ${isStageVisible || isDockExpanded ? 'h-full' : ''}`}>
             <div className={isStageVisible || isDockExpanded ? 'flex min-h-0 flex-1' : 'pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0'}>
               <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4"><VoiceParticipants serverId={serverId} channelId={channelId} localDeafened={localDeafened} outputVolume={voiceAudioSettings.outputVolume} onPresenceError={onPresenceError} onParticipantsChange={onParticipantsChange} contextMenuRequest={contextMenuRequest} onContextMenuRequestHandled={onContextMenuRequestHandled} /></div>

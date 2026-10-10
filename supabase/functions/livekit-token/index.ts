@@ -115,19 +115,21 @@ Deno.serve(async (request) => {
       if (channelError) throw channelError;
       if (!channel || channel.type !== 'voice') return respond(404, { error: 'Voice channel not found.' });
 
-      const { data: membership, error: membershipError } = await supabase
-        .from('server_members').select('user_id').eq('server_id', channel.server_id)
-        .eq('user_id', user.id).maybeSingle();
-      if (membershipError) throw membershipError;
-      if (!membership) return respond(403, { error: 'You are not a member of this server.' });
-      const [viewResult, connectResult] = await Promise.all([
+      const [membershipResult, viewResult, connectResult, moderationResult] = await Promise.all([
+        supabase.from('server_members').select('user_id').eq('server_id', channel.server_id)
+          .eq('user_id', user.id).maybeSingle(),
         supabase.rpc('has_channel_permission', { channel_uuid: channel.id, permission_key: 'view_channel' }),
         supabase.rpc('has_channel_permission', { channel_uuid: channel.id, permission_key: 'connect' }),
+        supabase.from('server_voice_moderation').select('server_muted,server_deafened')
+          .eq('channel_id', channel.id).eq('user_id', user.id).maybeSingle(),
       ]);
+      const { data: membership, error: membershipError } = membershipResult;
+      if (membershipError) throw membershipError;
+      if (!membership) return respond(403, { error: 'You are not a member of this server.' });
       if (viewResult.error || connectResult.error) return respond(503, { error: 'Voice channel permissions are unavailable. Apply the server permissions migrations.' });
       if (!viewResult.data || !connectResult.data) return respond(403, { error: 'You do not have permission to view or join this voice channel.' });
-      const { data: moderation } = await supabase.from('server_voice_moderation').select('server_muted,server_deafened')
-        .eq('channel_id', channel.id).eq('user_id', user.id).maybeSingle();
+      if (moderationResult.error) console.warn('Voice moderation state could not be loaded:', moderationResult.error.message);
+      const moderation = moderationResult.data;
       if (moderation?.server_muted) canPublishSources = ['camera', 'screen_share', 'screen_share_audio'];
       if (moderation?.server_deafened) canSubscribe = false;
       roomId = channel.id;
