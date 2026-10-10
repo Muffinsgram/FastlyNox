@@ -2,7 +2,7 @@ import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, us
 import { createPortal } from 'react-dom';
 import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionQualityIndicator, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
-import { AudioPresets, DisconnectReason, Room as LiveKitClientRoom, RoomEvent, Track, supportsAudioOutputSelection } from 'livekit-client';
+import { createLocalAudioTrack, DisconnectReason, Room as LiveKitClientRoom, RoomEvent, Track, supportsAudioOutputSelection } from 'livekit-client';
 import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Maximize2, MessageSquare, Mic, MicOff, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
 import { generateLiveKitToken } from '../../../lib/livekit';
 import { useAuthStore } from '../../../store/useAuthStore';
@@ -20,25 +20,11 @@ import { invokeAuthenticatedFunction } from '../../../lib/edgeFunctions';
 import { VIEWING_TOPIC, screenShareKey, shouldSubscribeToTrack, readViewingMessage, getShareViewers, changeDeafenState } from '../../../lib/screenShareViewing';
 
 import { getScreenShareCaptureOptions, getScreenSharePublishOptions, supportsOwnAudioExclusion } from '../../../lib/screenCapture';
-import { syncNoiseProcessor } from '../../../lib/microphoneNoiseProcessor';
+import { prepareMicrophoneProcessing, syncNoiseProcessor } from '../../../lib/microphoneNoiseProcessor';
+import { DEFAULT_VOICE_AUDIO_SETTINGS, getAudioCaptureOptions, getAudioPublishOptions } from '../../../lib/voiceAudio';
+import { prepareMicrophone } from '../../../lib/preparedMicrophone';
 
-const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, inputSensitivityEnabled: false, inputSensitivityDb: -100, inputVolume: 100, outputVolume: 100 };
-
-function getAudioCaptureOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
-  return {
-    ...(settings.inputDeviceId ? { deviceId: { exact: settings.inputDeviceId } } : {}),
-    echoCancellation: settings.echoCancellation,
-    noiseSuppression: settings.noiseSuppression,
-    autoGainControl: true,
-    voiceIsolation: settings.noiseSuppression && settings.noiseProcessor !== 'standard' ? false : settings.voiceIsolation,
-  };
-}
-
-function getAudioPublishOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
-  return { audioPreset: settings.audioQuality === 'high' ? AudioPresets.musicHighQuality : AudioPresets.speech };
-}
-
-function EnableMicrophoneAfterConnect({ settings, deafened, pushToTalkEnabled, onFailure }) {
+function EnableMicrophoneAfterConnect({ settings, deafened, pushToTalkEnabled, preparedMicrophoneRef, onFailure }) {
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const connectionState = useConnectionState();
   const attemptedRef = useRef(false);
@@ -66,10 +52,16 @@ function EnableMicrophoneAfterConnect({ settings, deafened, pushToTalkEnabled, o
     if (attemptedRef.current || isMicrophoneEnabled) return undefined;
     attemptedRef.current = true;
     let active = true;
-    void localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(settings), getAudioPublishOptions(settings))
-      .catch((error) => { if (active) onFailure(error); });
+    void (async () => {
+      const track = await preparedMicrophoneRef.current?.take();
+      if (!active || localParticipant.isMicrophoneEnabled) { track?.stop(); return; }
+      if (track) {
+        try { await localParticipant.publishTrack(track, { ...getAudioPublishOptions(settings), source: Track.Source.Microphone }); }
+        catch (error) { track.stop(); throw error; }
+      } else await localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(settings), getAudioPublishOptions(settings));
+    })().catch((error) => { if (active) onFailure(error); });
     return () => { active = false; };
-  }, [connectionState, deafened, pushToTalkEnabled, isMicrophoneEnabled, localParticipant, onFailure, settings]);
+  }, [connectionState, deafened, pushToTalkEnabled, isMicrophoneEnabled, localParticipant, onFailure, settings, preparedMicrophoneRef]);
 
   return null;
 }
@@ -713,6 +705,7 @@ function VoiceAudioSettings({ currentUserId }) {
   const [inputVolumeDraft, setInputVolumeDraft] = useState(settings.inputVolume);
   const [outputVolumeDraft, setOutputVolumeDraft] = useState(settings.outputVolume);
   const settingsRef = useRef(settings);
+  const preferredQualityRef = useRef(settings.audioQuality);
   const [devices, setDevices] = useState({ audioinput: [], audiooutput: [] });
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
@@ -820,7 +813,7 @@ function VoiceAudioSettings({ currentUserId }) {
     settingsRef.current = next;
     setSettings(next);
     const preferences = getAppPreferences(currentUserId);
-    saveAppPreferences(currentUserId, { ...preferences, voiceAudioSettings: next });
+    saveAppPreferences(currentUserId, { ...preferences, voiceAudioSettings: { ...next, audioQuality: preferredQualityRef.current } });
   };
 
   useEffect(() => {
@@ -883,18 +876,22 @@ function VoiceAudioSettings({ currentUserId }) {
         try { await localParticipant.publishTrack(track, getAudioPublishOptions(next)); }
         catch (error) { await localParticipant.publishTrack(track, getAudioPublishOptions(settings)); throw error; }
       }
-      persist(next);
-      setMessage(automatic ? 'Bağlantı zayıf; daha az internet kullanan konuşma kalitesine geçildi.' : isMicrophoneEnabled ? 'Ses kalitesi güncellendi.' : 'Ses kalitesi mikrofonu açtığında uygulanacak.');
+      if (automatic) { setSettings(next); settingsRef.current = next; }
+      else { preferredQualityRef.current = audioQuality; persist(next); }
+      setMessage(automatic ? audioQuality === 'high' ? 'Bağlantı düzeldi; yüksek ses kalitesi geri açıldı.' : 'Bağlantı zayıf; geçici olarak daha az internet kullanan konuşma kalitesine geçildi.' : isMicrophoneEnabled ? 'Ses kalitesi güncellendi.' : 'Ses kalitesi mikrofonu açtığında uygulanacak.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Ses kalitesi değiştirilemedi.');
     } finally { setBusy(''); }
   };
 
   useEffect(() => {
-    if (connectionQuality === 'poor' || connectionQuality === 'lost') {
-      if (settingsRef.current.audioQuality === 'high' && !busy) void updateAudioQuality('speech', { automatic: true });
-    }
-  }, [connectionQuality, busy]);
+    if (connectionState !== 'connected' || busy || !isMicrophoneEnabled || preferredQualityRef.current !== 'high') return;
+    const degrade = connectionQuality === 'poor' && settingsRef.current.audioQuality === 'high';
+    const recover = connectionQuality === 'excellent' && settingsRef.current.audioQuality === 'speech';
+    if (!degrade && !recover) return;
+    const timer = setTimeout(() => void updateAudioQuality(degrade ? 'speech' : 'high', { automatic: true }), degrade ? 8_000 : 15_000);
+    return () => clearTimeout(timer);
+  }, [connectionQuality, connectionState, busy, isMicrophoneEnabled]);
 
   const changeDevice = async (kind, deviceId) => {
     const settingKey = kind === 'audioinput' ? 'inputDeviceId' : 'outputDeviceId';
@@ -1321,6 +1318,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
   const [connection, setConnection] = useState({ channelId: null, userId: null, token: null, error: '' });
   const [attempt, setAttempt] = useState(0);
   const [connectedRoom, setConnectedRoom] = useState(null);
+  const preparedMicrophoneRef = useRef(null);
   const [deviceWarning, setDeviceWarning] = useState('');
   const [showVoiceChat, setShowVoiceChat] = useState(false);
   const [isDockExpanded, setIsDockExpanded] = useState(false);
@@ -1355,12 +1353,20 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
     if (!channelId || !userId) return () => { isCurrent = false; };
     const url = import.meta.env.VITE_LIVEKIT_URL;
     if (url) void room.prepareConnection(url).catch(() => {});
+    const preferences = getAppPreferences(userId);
+    prepareMicrophoneProcessing(preferences.voiceAudioSettings);
+    const microphone = !preferences.pushToTalkEnabled && !localDeafened
+      ? prepareMicrophone(() => createLocalAudioTrack(getAudioCaptureOptions(preferences.voiceAudioSettings))) : null;
+    preparedMicrophoneRef.current = microphone;
 
     generateLiveKitToken(channelId, { dmChannelId })
       .then((token) => {
-        if (isCurrent) setConnection({ channelId, userId, token, error: '' });
+        if (isCurrent) {
+          setConnection({ channelId, userId, token, error: '' });
+        }
       })
       .catch((reason) => {
+        microphone?.dispose();
         if (isCurrent) setConnection({
           channelId,
           userId,
@@ -1369,8 +1375,16 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
         });
       });
 
-    return () => { isCurrent = false; };
+    return () => {
+      isCurrent = false;
+      microphone?.dispose();
+      if (preparedMicrophoneRef.current === microphone) preparedMicrophoneRef.current = null;
+    };
   }, [channelId, dmChannelId, userId, attempt, room]);
+
+  useEffect(() => {
+    if (localDeafened || pushToTalkEnabled) preparedMicrophoneRef.current?.dispose();
+  }, [localDeafened, pushToTalkEnabled]);
 
   const isCurrentConnection = connection.channelId === channelId && connection.userId === userId;
   const token = isCurrentConnection ? connection.token : null;
@@ -1395,6 +1409,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
   const handleLiveKitError = useCallback((reason) => {
     const message = reason?.message || '';
     if (/client initiated disconnect|connection attempt aborted/i.test(message)) return;
+    preparedMicrophoneRef.current?.dispose();
     setConnection({ channelId, userId, token: null, error: message || 'Ses bağlantısı kurulamadı.' });
   }, [channelId, userId]);
   const handleMediaDeviceFailure = useCallback((failure) => {
@@ -1466,7 +1481,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           onMediaDeviceFailure={handleMediaDeviceFailure}
           onError={handleLiveKitError}
         >
-          <EnableMicrophoneAfterConnect settings={voiceAudioSettings} deafened={localDeafened} pushToTalkEnabled={pushToTalkEnabled} onFailure={handleMediaDeviceFailure} />
+          <EnableMicrophoneAfterConnect settings={voiceAudioSettings} deafened={localDeafened} pushToTalkEnabled={pushToTalkEnabled} preparedMicrophoneRef={preparedMicrophoneRef} onFailure={handleMediaDeviceFailure} />
           <div className={`flex min-h-0 flex-col ${isStageVisible || isDockExpanded ? 'h-full' : ''}`}>
             {(isStageVisible || isDockExpanded) && <VoiceConnectionStatus />}
             <div className={isStageVisible || isDockExpanded ? 'flex min-h-0 flex-1' : 'pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0'}>

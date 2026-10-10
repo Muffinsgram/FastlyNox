@@ -26,6 +26,13 @@ async function loadBinary() {
   return response.arrayBuffer();
 }
 
+export function prepareMicrophoneProcessing(settings) {
+  if (!settings?.noiseSuppression || settings.noiseProcessor === 'standard') return;
+  binary ||= loadBinary().catch(error => { binary = undefined; throw error; });
+  void binary.catch(() => {});
+  if (settings.noiseProcessor === 'krisp') void import('@livekit/krisp-noise-filter').catch(() => {});
+}
+
 // Each microphone owns its graph. Never connect it to the speaker destination.
 export class MicrophoneNoiseProcessor {
   name = 'fastlynox-rnnoise';
