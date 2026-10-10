@@ -5,6 +5,14 @@ import { mergeFetchedMessages, mergeMessage, replaceOptimisticMessage, sortMessa
 import { appendReaction, attachReactions, MESSAGE_REACTIONS, removeReaction } from '../lib/messageReactions';
 import { writeDraft } from '../lib/draftStorage';
 
+function sendDMRealtimeSignal(channelId, payload) {
+  const state = useDMChatStore.getState();
+  if (state.activeSubscriptionChannelId !== channelId || !state.activeSubscription) return;
+  void state.activeSubscription.send({ type: 'broadcast', event: 'dm_changed', payload }).then((status) => {
+    if (status !== 'ok') console.warn(`DM canlı sinyali gönderilemedi (${channelId}):`, status);
+  }).catch((error) => console.warn(`DM canlı sinyali gönderilemedi (${channelId}):`, error));
+}
+
 export const useDMChatStore = create((set, get) => ({
   messages: {},
   drafts: {},
@@ -112,7 +120,7 @@ export const useDMChatStore = create((set, get) => ({
 
     let subscription;
     const isCurrent = () => get().subscriptionToken === subscriptionToken && generation === get().requestGeneration;
-    subscription = supabase.channel(`public:dm_messages:${channelId}`)
+    subscription = supabase.channel(`public:dm_messages:${channelId}`, { config: { broadcast: { ack: true } } })
       .on('broadcast', { event: 'dm_changed' }, ({ payload }) => {
         if (!isCurrent() || payload?.dm_channel_id !== channelId || !payload?.id) return;
         if (payload.kind === 'delete') get().removeRealtimeMessage(channelId, payload.id);
@@ -162,13 +170,9 @@ export const useDMChatStore = create((set, get) => ({
       });
 
     const refreshWhenConnected = () => { if (isCurrent() && document.visibilityState === 'visible') void get().fetchRecentMessages(channelId); };
-    const recoveryTimer = window.setInterval(() => {
-      if (isCurrent() && document.visibilityState === 'visible' && navigator.onLine) void get().fetchRecentMessages(channelId);
-    }, 2000);
     window.addEventListener('online', refreshWhenConnected);
     document.addEventListener('visibilitychange', refreshWhenConnected);
     set({ activeSubscription: subscription, activeSubscriptionChannelId: channelId, activeSubscriptionCleanup: () => {
-      window.clearInterval(recoveryTimer);
       window.removeEventListener('online', refreshWhenConnected);
       document.removeEventListener('visibilitychange', refreshWhenConnected);
     } });
@@ -226,7 +230,7 @@ export const useDMChatStore = create((set, get) => ({
       if (error) return { success: false, error: error.message };
       set((state) => ({ messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id, messages.map((message) => message.id === messageId ? { ...message, ...data } : message)])) }));
       const message = Object.values(get().messages).flat().find((item) => item.id === messageId);
-      if (message && get().activeSubscriptionChannelId === message.dm_channel_id) void get().activeSubscription?.send({ type: 'broadcast', event: 'dm_changed', payload: { id: messageId, dm_channel_id: message.dm_channel_id, kind: 'update' } });
+      if (message) sendDMRealtimeSignal(message.dm_channel_id, { id: messageId, dm_channel_id: message.dm_channel_id, kind: 'update' });
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Message could not be edited.' };
@@ -239,7 +243,7 @@ export const useDMChatStore = create((set, get) => ({
       const { error } = await supabase.from('dm_messages').delete().eq('id', messageId);
       if (error) return { success: false, error: error.message };
       set((state) => ({ messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id, messages.filter((message) => message.id !== messageId)])) }));
-      if (dmChannelId && get().activeSubscriptionChannelId === dmChannelId) void get().activeSubscription?.send({ type: 'broadcast', event: 'dm_changed', payload: { id: messageId, dm_channel_id: dmChannelId, kind: 'delete' } });
+      if (dmChannelId) sendDMRealtimeSignal(dmChannelId, { id: messageId, dm_channel_id: dmChannelId, kind: 'delete' });
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Message could not be deleted.' };
@@ -265,7 +269,7 @@ export const useDMChatStore = create((set, get) => ({
         }
         return { messages: { ...state.messages, [channelId]: replaceOptimisticMessage(msgs, tempId, data) } };
       });
-      if (!error && data && get().activeSubscriptionChannelId === channelId) void get().activeSubscription?.send({ type: 'broadcast', event: 'dm_changed', payload: { id: data.id, dm_channel_id: channelId, kind: 'insert' } });
+      if (!error && data) sendDMRealtimeSignal(channelId, { id: data.id, dm_channel_id: channelId, kind: 'insert' });
       return error ? { success: false, error: error.message } : { success: true };
     } catch (error) {
       console.error('DM mesajı gönderimi başarısız:', error);
