@@ -1,7 +1,7 @@
 import workletUrl from '@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url';
 import wasmUrl from '@sapphi-red/web-noise-suppressor/rnnoise.wasm?url';
 import simdUrl from '@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url';
-import voiceGateUrl from './voiceActivityGate.worklet.js?url';
+import inputThresholdUrl from './inputThresholdGate.worklet.js?url';
 
 let binary;
 const warnFallback = () => window.dispatchEvent(new CustomEvent('fastlynox:noise-fallback'));
@@ -52,15 +52,15 @@ export class MicrophoneNoiseProcessor {
         // Keep speech flowing if the worklet fails after initialization.
         this.source.disconnect();
         this.source.connect(this.destination);
-        void track.applyConstraints({ noiseSuppression: true }).catch(() => {});
+        void track.applyConstraints({ ...(track.getConstraints?.() || {}), noiseSuppression: true }).catch(() => {});
         warnFallback();
       };
-      // Avoid applying two noise filters. Echo cancellation remains enabled.
-      await track.applyConstraints({ noiseSuppression: false, voiceIsolation: false }).catch(() => {});
+      // Capture constraints are applied by syncNoiseProcessor so custom
+      // processing never resets echo cancellation or automatic gain control.
     } catch (error) {
       if (this.generation !== generation) return;
       await this.destroy();
-      await track.applyConstraints({ noiseSuppression: true }).catch(() => {});
+      await track.applyConstraints({ ...(track.getConstraints?.() || {}), noiseSuppression: true }).catch(() => {});
       console.warn('RNNoise kullanılamadı; standart mikrofon filtresi etkin.', error);
       warnFallback();
     }
@@ -87,13 +87,14 @@ export class MicrophoneNoiseProcessor {
   }
 }
 
-class VoiceActivationGateProcessor {
-  name = 'fastlynox-voice-activation-gate';
+class InputThresholdProcessor {
+  name = 'fastlynox-input-threshold';
 
-  constructor(innerProcessor, sensitivity) {
+  constructor(innerProcessor, thresholdDb) {
     this.innerProcessor = innerProcessor;
-    this.sensitivity = Math.max(0, Math.min(100, Number(sensitivity) || 0));
-    this.configurationKey = `voice-gate:${this.sensitivity}:${innerProcessor?.name || 'standard'}`;
+    const parsedThreshold = Number(thresholdDb);
+    this.thresholdDb = Number.isFinite(parsedThreshold) ? Math.max(-100, Math.min(0, parsedThreshold)) : -100;
+    this.configurationKey = `input-threshold:${this.thresholdDb}:${innerProcessor?.name || 'standard'}`;
   }
 
   async init(options) {
@@ -101,14 +102,14 @@ class VoiceActivationGateProcessor {
     if (this.innerProcessor) await this.innerProcessor.init(options);
     try {
       this.context = new AudioContext({ latencyHint: 'interactive' });
-      await Promise.all([this.context.audioWorklet.addModule(voiceGateUrl), this.context.resume()]);
+      await Promise.all([this.context.audioWorklet.addModule(inputThresholdUrl), this.context.resume()]);
       const sourceTrack = this.innerProcessor?.processedTrack || options.track;
       this.source = this.context.createMediaStreamSource(new MediaStream([sourceTrack]));
-      this.gate = new AudioWorkletNode(this.context, 'fastlynox-voice-activity-gate', {
+      this.gate = new AudioWorkletNode(this.context, 'fastlynox-input-threshold', {
         numberOfInputs: 1,
         numberOfOutputs: 1,
         outputChannelCount: [1],
-        parameterData: { thresholdDb: -30 - this.sensitivity * 0.4 },
+        parameterData: { thresholdDb: this.thresholdDb },
       });
       this.destination = this.context.createMediaStreamDestination();
       this.source.connect(this.gate).connect(this.destination);
@@ -146,9 +147,29 @@ export function syncNoiseProcessor(track, settings) {
     if (track.mediaStreamTrack.readyState === 'ended') return;
     const current = track.getProcessor();
     const noiseEnabled = settings.noiseSuppression && settings.noiseProcessor !== 'standard';
-    const gateEnabled = Boolean(settings.voiceActivationEnabled);
-    if (!noiseEnabled && !gateEnabled) {
-      if (current?.configurationKey || current?.name === 'fastlynox-rnnoise' || current?.name === 'livekit-noise-filter' || current?.name === 'fastlynox-voice-activation-gate') await track.stopProcessor();
+    const requestedThreshold = Number(settings.inputSensitivityDb ?? -100);
+    const thresholdDb = Number.isFinite(requestedThreshold) ? Math.max(-100, Math.min(0, requestedThreshold)) : -100;
+    const thresholdEnabled = thresholdDb > -100;
+    const captureTrack = track.mediaStreamTrack;
+    const previousConstraints = captureTrack.getConstraints?.() || {};
+    const captureConstraints = {
+      ...previousConstraints,
+      echoCancellation: Boolean(settings.echoCancellation),
+      noiseSuppression: noiseEnabled ? false : Boolean(settings.noiseSuppression),
+      autoGainControl: true,
+      ...(typeof settings.voiceIsolation === 'boolean' ? { voiceIsolation: settings.noiseSuppression ? false : settings.voiceIsolation } : {}),
+    };
+    try { await captureTrack.applyConstraints(captureConstraints); }
+    catch {
+      await captureTrack.applyConstraints({
+        ...previousConstraints,
+        echoCancellation: Boolean(settings.echoCancellation),
+        noiseSuppression: noiseEnabled ? false : Boolean(settings.noiseSuppression),
+        autoGainControl: true,
+      }).catch(() => {});
+    }
+    if (!noiseEnabled && !thresholdEnabled) {
+      if (current?.configurationKey || current?.name === 'fastlynox-rnnoise' || current?.name === 'livekit-noise-filter' || current?.name === 'fastlynox-input-threshold') await track.stopProcessor();
       return;
     }
 
@@ -171,11 +192,10 @@ export function syncNoiseProcessor(track, settings) {
       noiseName = noiseProcessor.name;
     }
 
-    const sensitivity = Number(settings.voiceSensitivity ?? 60);
-    const configurationKey = `${noiseName}:gate-${gateEnabled ? sensitivity : 'off'}`;
+    const configurationKey = `${noiseName}:threshold-${thresholdEnabled ? thresholdDb : 'off'}`;
     if (current?.configurationKey === configurationKey) return;
     if (current) await track.stopProcessor();
-    if (!gateEnabled) {
+    if (!thresholdEnabled) {
       await track.setProcessor(noiseProcessor);
       if (noiseName === 'livekit-noise-filter') {
         await noiseProcessor.setEnabled(true);
@@ -185,15 +205,15 @@ export function syncNoiseProcessor(track, settings) {
       return;
     }
 
-    const gatedProcessor = new VoiceActivationGateProcessor(noiseProcessor, sensitivity);
-    gatedProcessor.configurationKey = configurationKey;
+    const thresholdProcessor = new InputThresholdProcessor(noiseProcessor, thresholdDb);
+    thresholdProcessor.configurationKey = configurationKey;
     try {
-      await track.setProcessor(gatedProcessor);
+      await track.setProcessor(thresholdProcessor);
       if (noiseName === 'livekit-noise-filter') await noiseProcessor.setEnabled(true);
       window.dispatchEvent(new CustomEvent('fastlynox:noise-quality', { detail: noiseName === 'standard' ? 'standard' : noiseName === 'livekit-noise-filter' ? 'krisp' : 'rnnoise' }));
     } catch (error) {
-      await gatedProcessor.destroy().catch(() => {});
-      window.dispatchEvent(new CustomEvent('fastlynox:voice-activation-fallback', { detail: error instanceof Error ? error.message : '' }));
+      await thresholdProcessor.destroy().catch(() => {});
+      window.dispatchEvent(new CustomEvent('fastlynox:input-threshold-fallback', { detail: error instanceof Error ? error.message : '' }));
       if (noiseProcessor) {
         await track.setProcessor(noiseProcessor);
         if (noiseName === 'livekit-noise-filter') await noiseProcessor.setEnabled(true);

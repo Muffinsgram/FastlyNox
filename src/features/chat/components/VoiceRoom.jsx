@@ -18,14 +18,14 @@ import { getVoicePlayback, normalizeVoiceVolume } from '../../../lib/voicePlayba
 import { getScreenShareCaptureOptions, getScreenSharePublishOptions, supportsOwnAudioExclusion } from '../../../lib/screenCapture';
 import { syncNoiseProcessor } from '../../../lib/microphoneNoiseProcessor';
 
-const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, voiceActivationEnabled: false, voiceSensitivity: 60 };
+const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, inputSensitivityDb: -100 };
 
 function getAudioCaptureOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
   return {
     ...(settings.inputDeviceId ? { deviceId: { exact: settings.inputDeviceId } } : {}),
     echoCancellation: settings.echoCancellation,
     noiseSuppression: settings.noiseSuppression,
-    autoGainControl: settings.autoGainControl,
+    autoGainControl: true,
     voiceIsolation: settings.noiseSuppression && settings.noiseProcessor !== 'standard' ? false : settings.voiceIsolation,
   };
 }
@@ -533,7 +533,7 @@ function VoiceAudioSettings({ currentUserId }) {
   const { localParticipant, isMicrophoneEnabled, microphoneTrack } = useLocalParticipant();
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(currentUserId).voiceAudioSettings || {}) }));
-  const [sensitivityDraft, setSensitivityDraft] = useState(settings.voiceSensitivity);
+  const [sensitivityDraft, setSensitivityDraft] = useState(settings.inputSensitivityDb);
   const settingsRef = useRef(settings);
   const [devices, setDevices] = useState({ audioinput: [], audiooutput: [] });
   const [message, setMessage] = useState('');
@@ -543,7 +543,7 @@ function VoiceAudioSettings({ currentUserId }) {
   useEffect(() => {
     if (!localMicrophoneTrack || connectionState !== 'connected' || !isMicrophoneEnabled) return;
     void syncNoiseProcessor(localMicrophoneTrack, settings).catch(() => setMessage('Gelişmiş mikrofon işleme uygulanamadı; standart filtre kullanılacak.'));
-  }, [localMicrophoneTrack, connectionState, isMicrophoneEnabled, settings.noiseSuppression, settings.noiseProcessor, settings.voiceActivationEnabled, settings.voiceSensitivity]);
+  }, [localMicrophoneTrack, connectionState, isMicrophoneEnabled, settings.noiseSuppression, settings.noiseProcessor, settings.inputSensitivityDb, settings.echoCancellation, settings.voiceIsolation]);
 
   useEffect(() => {
     const notify = event => setMessage(event?.detail === 'rnnoise' ? 'Krisp kullanılamadı; RNNoise yedeği etkin.' : 'Gelişmiş filtre açılamadı; standart gürültü engelleme kullanılıyor.');
@@ -552,9 +552,9 @@ function VoiceAudioSettings({ currentUserId }) {
   }, []);
 
   useEffect(() => {
-    const notify = event => setMessage(`Konuşma algılama desteklenmiyor${event?.detail ? `: ${event.detail}` : ''}; mikrofon sesi kesilmesin diye bu özellik devre dışı bırakıldı.`);
-    window.addEventListener('fastlynox:voice-activation-fallback', notify);
-    return () => window.removeEventListener('fastlynox:voice-activation-fallback', notify);
+    const notify = event => setMessage(`Giriş eşiği uygulanamadı${event?.detail ? `: ${event.detail}` : ''}. Mikrofon sesi kesilmesin diye eşik filtresi kapatıldı.`);
+    window.addEventListener('fastlynox:input-threshold-fallback', notify);
+    return () => window.removeEventListener('fastlynox:input-threshold-fallback', notify);
   }, []);
 
   const refreshDevices = async () => {
@@ -628,7 +628,7 @@ function VoiceAudioSettings({ currentUserId }) {
         const next = { ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(currentUserId).voiceAudioSettings || {}) };
         settingsRef.current = next;
         setSettings(next);
-        setSensitivityDraft(next.voiceSensitivity);
+        setSensitivityDraft(next.inputSensitivityDb);
       }
     };
     window.addEventListener('fastcord:preferences-updated', refreshPreferences);
@@ -658,7 +658,7 @@ function VoiceAudioSettings({ currentUserId }) {
             try { await localParticipant.publishTrack(microphoneTrack, getAudioPublishOptions(next)); }
             catch (error) { await localParticipant.publishTrack(microphoneTrack, getAudioPublishOptions(previous)); throw error; }
           }
-          const captureKeys = ['inputDeviceId', 'echoCancellation', 'noiseSuppression', 'noiseProcessor', 'autoGainControl', 'voiceIsolation', 'voiceActivationEnabled', 'voiceSensitivity'];
+          const captureKeys = ['inputDeviceId', 'echoCancellation', 'noiseSuppression', 'noiseProcessor', 'voiceIsolation', 'inputSensitivityDb'];
           if (captureKeys.some(key => previous[key] !== next[key])) await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
           if (captureKeys.some(key => previous[key] !== next[key])) await syncNoiseProcessor(microphoneTrack, next);
         };
@@ -682,7 +682,7 @@ function VoiceAudioSettings({ currentUserId }) {
       if (isMicrophoneEnabled && microphoneTrack?.restartTrack) {
         await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
         await syncNoiseProcessor(microphoneTrack, next);
-      } else if (key === 'voiceActivationEnabled' || key === 'voiceSensitivity') {
+      } else if (key === 'inputSensitivityDb' || key === 'noiseProcessor' || key === 'noiseSuppression') {
         const track = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
         if (track) await syncNoiseProcessor(track, next);
       }
@@ -749,10 +749,9 @@ function VoiceAudioSettings({ currentUserId }) {
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Mikrofon girişi</span><AnimatedSelect ariaLabel="Mikrofon girişi" value={settings.inputDeviceId} onValueChange={value => void changeDevice('audioinput', value)} options={inputOptions} disabled={busy !== ''} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hoparlör / kulaklık</span><AnimatedSelect ariaLabel="Hoparlör veya kulaklık çıkışı" value={settings.outputDeviceId} onValueChange={value => void changeDevice('audiooutput', value)} options={outputOptions} disabled={busy !== '' || !supportsAudioOutputSelection()} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor || 'rnnoise'} onValueChange={value => void updateCaptureSetting('noiseProcessor', value)} options={[{ value: 'krisp', label: 'Krisp · en güçlü filtre' }, { value: 'rnnoise', label: 'RNNoise · cihazda, çevrim dışı' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} disabled={busy !== ''} className="w-full" /></label>
-        <div className="flex items-center justify-between gap-3 rounded-xl px-2 py-2 transition hover:bg-white/[0.04]"><span><span className="block text-xs font-medium text-slate-200">Konuşma algılama</span><span className="mt-0.5 block text-[9px] leading-4 text-slate-500">Mikrofon yalnızca konuşma algılandığında iletilir.</span></span><button type="button" role="switch" aria-checked={settings.voiceActivationEnabled} aria-label="Konuşma algılama" disabled={busy !== ''} onClick={() => void updateCaptureSetting('voiceActivationEnabled', !settings.voiceActivationEnabled)} className={`relative h-6 w-11 shrink-0 rounded-full border p-[3px] transition ${settings.voiceActivationEnabled ? 'border-cyan-200/40 bg-cyan-400/50' : 'border-white/10 bg-slate-800'} disabled:opacity-50`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${settings.voiceActivationEnabled ? 'translate-x-5' : ''}`} /></button></div>
-        {settings.voiceActivationEnabled && <label className="block rounded-xl bg-white/[0.025] px-3 py-2"><span className="flex justify-between text-[10px] font-semibold text-slate-300"><span>Mikrofon hassasiyeti</span><span>{sensitivityDraft}%</span></span><input type="range" min="0" max="100" value={sensitivityDraft} aria-label="Mikrofon hassasiyeti" onChange={event => setSensitivityDraft(Number(event.target.value))} onPointerUp={event => void updateCaptureSetting('voiceSensitivity', Number(event.currentTarget.value))} onKeyUp={event => void updateCaptureSetting('voiceSensitivity', Number(event.currentTarget.value))} className="mt-2 w-full accent-cyan-300" /><span className="text-[9px] text-slate-500">Yüksek değer daha kısık konuşmaları algılar.</span></label>}
+        <label className="block rounded-xl bg-white/[0.025] px-3 py-2"><span className="flex justify-between text-[10px] font-semibold text-slate-300"><span>Mikrofon giriş eşiği</span><span>{sensitivityDraft} dB</span></span><input type="range" min="-100" max="0" step="1" value={sensitivityDraft} aria-label="Mikrofon giriş eşiği (dB)" onChange={event => setSensitivityDraft(Number(event.target.value))} onPointerUp={event => void updateCaptureSetting('inputSensitivityDb', Number(event.currentTarget.value))} onKeyUp={event => void updateCaptureSetting('inputSensitivityDb', Number(event.currentTarget.value))} className="mt-2 w-full accent-cyan-300" /><span className="text-[9px] leading-4 text-slate-500">Düşük eşik daha kısık sesi geçirir; yüksek eşik arka planı azaltır. −100 dB açık, 0 dB kapalıya yakındır.</span></label>
         <div className="border-t border-white/[0.07] pt-2">
-          {[["echoCancellation", 'Yankı engelleme', 'Hoparlörden mikrofona dönen sesi azaltır.'], ["noiseSuppression", 'Gürültü engelleme', 'Fan ve ortam gürültüsünü azaltır.'], ["autoGainControl", 'Otomatik mikrofon seviyesi', 'Konuşma sesini dengeler.']].map(([key, label, description]) => <div key={key} className="flex items-center justify-between gap-3 rounded-xl px-2 py-2 transition hover:bg-white/[0.04]"><span><span className="block text-xs font-medium text-slate-200">{label}</span><span className="mt-0.5 block text-[9px] leading-4 text-slate-500">{description}</span></span><button type="button" role="switch" aria-checked={settings[key]} aria-label={label} disabled={busy !== ''} onClick={() => void updateCaptureSetting(key, !settings[key])} className={`relative h-6 w-11 shrink-0 rounded-full border p-[3px] transition ${settings[key] ? 'border-cyan-200/40 bg-cyan-400/50' : 'border-white/10 bg-slate-800'} disabled:opacity-50`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${settings[key] ? 'translate-x-5' : ''}`} /></button></div>)}
+          {[["echoCancellation", 'Yankı engelleme', 'Hoparlörden mikrofona dönen sesi azaltır.'], ["noiseSuppression", 'Gürültü engelleme', 'Fan ve ortam gürültüsünü azaltır.']].map(([key, label, description]) => <div key={key} className="flex items-center justify-between gap-3 rounded-xl px-2 py-2 transition hover:bg-white/[0.04]"><span><span className="block text-xs font-medium text-slate-200">{label}</span><span className="mt-0.5 block text-[9px] leading-4 text-slate-500">{description}</span></span><button type="button" role="switch" aria-checked={settings[key]} aria-label={label} disabled={busy !== ''} onClick={() => void updateCaptureSetting(key, !settings[key])} className={`relative h-6 w-11 shrink-0 rounded-full border p-[3px] transition ${settings[key] ? 'border-cyan-200/40 bg-cyan-400/50' : 'border-white/10 bg-slate-800'} disabled:opacity-50`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${settings[key] ? 'translate-x-5' : ''}`} /></button></div>)}
         </div>
       </div>
       {message && <p role="status" className={`mt-3 rounded-xl border px-3 py-2 text-[10px] leading-4 ${message.includes('uygulanamadı') || message.includes('değiştirilemedi') || message.includes('desteklemiyor') || message.includes('bulunamadı') ? 'border-rose-300/15 bg-rose-400/[0.05] text-rose-200' : 'border-emerald-300/10 bg-emerald-400/[0.05] text-emerald-200'}`}>{message}</p>}

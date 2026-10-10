@@ -317,9 +317,9 @@ function VoiceSettingsPanel({ value, onChange }) {
   const [diagnostic, setDiagnostic] = useState({ busy: false, results: null });
   const micTestRef = useRef(null);
   const finishMicTestRef = useRef(() => {});
-  const settings = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, voiceActivationEnabled: false, voiceSensitivity: 60, ...value };
-  const [sensitivityDraft, setSensitivityDraft] = useState(settings.voiceSensitivity);
-  useEffect(() => setSensitivityDraft(settings.voiceSensitivity), [settings.voiceSensitivity]);
+  const settings = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', voiceIsolation: false, inputSensitivityDb: -100, ...value, autoGainControl: true };
+  const [sensitivityDraft, setSensitivityDraft] = useState(settings.inputSensitivityDb);
+  useEffect(() => setSensitivityDraft(settings.inputSensitivityDb), [settings.inputSensitivityDb]);
 
   const finishMicTest = useCallback((session = micTestRef.current) => {
     if (!session || micTestRef.current !== session) return;
@@ -349,7 +349,7 @@ function VoiceSettingsPanel({ value, onChange }) {
         deviceId: settings.inputDeviceId ? { exact: settings.inputDeviceId } : undefined,
         echoCancellation: Boolean(settings.echoCancellation),
         noiseSuppression: Boolean(settings.noiseSuppression),
-        autoGainControl: Boolean(settings.autoGainControl),
+        autoGainControl: true,
       };
       const stream = await navigator.mediaDevices.getUserMedia({ audio });
       if (micTestRef.current !== session) { stream.getTracks().forEach(track => track.stop()); return; }
@@ -389,7 +389,7 @@ function VoiceSettingsPanel({ value, onChange }) {
         setMicTest({ active: false, level: 0, error: message });
       }
     }
-  }, [finishMicTest, settings.inputDeviceId, settings.outputDeviceId, settings.echoCancellation, settings.noiseSuppression, settings.autoGainControl]);
+  }, [finishMicTest, settings.inputDeviceId, settings.outputDeviceId, settings.echoCancellation, settings.noiseSuppression]);
 
   useEffect(() => {
     let active = true;
@@ -437,11 +437,10 @@ function VoiceSettingsPanel({ value, onChange }) {
     </div>
     <label className="mt-3 block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor} onValueChange={value => update('noiseProcessor', value)} options={[{ value: 'krisp', label: 'Krisp · en güçlü filtre' }, { value: 'rnnoise', label: 'RNNoise · cihazda, çevrim dışı' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} className="w-full" /></label>
     <div className="mt-3 space-y-2">
-      <PreferenceRow icon={<AudioLines className="h-4 w-4" />} title="Konuşma algılama" description="Mikrofonu yalnızca sesin eşik değerini geçtiğinde iletir." checked={Boolean(settings.voiceActivationEnabled)} onChange={checked => update('voiceActivationEnabled', checked)} />
-      {settings.voiceActivationEnabled && <label className="block rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><span className="flex items-center justify-between text-xs font-semibold text-white"><span>Mikrofon hassasiyeti</span><span>{sensitivityDraft}%</span></span><input aria-label="Mikrofon hassasiyeti" type="range" min="0" max="100" value={sensitivityDraft} onChange={event => setSensitivityDraft(Number(event.target.value))} onPointerUp={event => update('voiceSensitivity', Number(event.currentTarget.value))} onKeyUp={event => update('voiceSensitivity', Number(event.currentTarget.value))} className="mt-3 w-full accent-violet-400" /><span className="mt-1 block text-[10px] text-slate-500">Yüksek değer, daha kısık konuşmaları da algılar.</span></label>}
+      <label className="block rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><span className="flex items-center justify-between text-xs font-semibold text-white"><span>Mikrofon giriş eşiği</span><span>{sensitivityDraft} dB</span></span><input aria-label="Mikrofon giriş eşiği (dB)" type="range" min="-100" max="0" step="1" value={sensitivityDraft} onChange={event => setSensitivityDraft(Number(event.target.value))} onPointerUp={event => update('inputSensitivityDb', Number(event.currentTarget.value))} onKeyUp={event => update('inputSensitivityDb', Number(event.currentTarget.value))} className="mt-3 w-full accent-violet-400" /><span className="mt-1 block text-[10px] text-slate-500">Daha düşük değerler kısık sesi geçirir; eşiği yükseltmek arka plan sesini azaltır. −100 dB sesi açık bırakır, 0 dB neredeyse tüm sesi keser.</span></label>
     </div>
     <div className="mt-3 grid gap-2 sm:grid-cols-2">
-      {[["echoCancellation", 'Yankı engelleme', 'Hoparlör yankısını azalt'], ["noiseSuppression", 'Gürültü engelleme', 'Arka plan sesini azalt'], ["autoGainControl", 'Ses seviyesini dengele', 'Mikrofon seviyesini otomatik ayarla']].map(([key, title, description]) => <PreferenceRow key={key} icon={<AudioLines className="h-4 w-4" />} title={title} description={description} checked={Boolean(settings[key])} onChange={checked => update(key, checked)} />)}
+      {[["echoCancellation", 'Yankı engelleme', 'Hoparlör yankısını azalt'], ["noiseSuppression", 'Gürültü engelleme', 'Arka plan sesini azalt']].map(([key, title, description]) => <PreferenceRow key={key} icon={<AudioLines className="h-4 w-4" />} title={title} description={description} checked={Boolean(settings[key])} onChange={checked => update(key, checked)} />)}
     </div>
     <div className="mt-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3.5"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold text-white">Ses sorunlarını denetle</p><p className="mt-1 text-[10px] text-slate-500">İzinleri, bağlantıyı ve seçili aygıtları kontrol eder.</p></div><button type="button" disabled={diagnostic.busy} onClick={() => void runDiagnostics()} className="rounded-xl bg-violet-300/10 px-3 py-2 text-[10px] font-semibold text-violet-100 hover:bg-violet-300/15 disabled:opacity-50">{diagnostic.busy ? 'Denetleniyor…' : 'Denetle'}</button></div>{diagnostic.results && <ul className="mt-3 space-y-1.5 border-t border-white/[0.06] pt-3">{diagnostic.results.map(item => <li key={item.label} className="flex justify-between gap-3 text-[10px]"><span className="text-slate-400">{item.label}</span><span className={item.ok ? 'text-emerald-200' : 'text-amber-200'}>{item.value}</span></li>)}</ul>}</div>
     <div className="mt-3 rounded-2xl border border-white/[0.08] bg-[#0b1019]/70 p-3.5">
