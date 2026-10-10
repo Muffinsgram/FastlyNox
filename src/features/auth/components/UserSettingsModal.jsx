@@ -33,14 +33,28 @@ function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalk
   useEffect(() => {
     if (!recording) return undefined;
     let rightAltHeld = false;
+    let rightAltUsedAsModifier = false;
     let rightCtrlHeld = false;
     const capture = event => {
-      if (event.code === 'AltRight') rightAltHeld = event.type === 'keydown';
+      if (event.code === 'AltRight' && event.type === 'keyup') {
+        event.preventDefault(); event.stopPropagation();
+        rightAltHeld = false;
+        if (!rightAltUsedAsModifier) {
+          const conflict = Object.entries(bindings).find(([key, binding]) => key !== recording && binding === 'AltRight');
+          if (conflict) setNotice('Bu tuş başka bir işlemde kullanılıyor.');
+          else { onChange({ ...bindings, [recording]: 'AltRight' }); setRecording(''); setNotice('Tuş ataması kaydedildi.'); }
+        }
+        return;
+      }
+      if (event.code === 'AltRight') rightAltHeld = true;
       if (event.code === 'ControlRight') rightCtrlHeld = event.type === 'keydown';
+      if (event.type === 'keyup') return;
       if (event.type === 'keydown') {
         event.preventDefault(); event.stopPropagation();
         if (event.key === 'Escape') { setRecording(''); return; }
+        if (event.code === 'AltRight') { rightAltUsedAsModifier = false; return; }
         if (['Shift', 'Control', 'Alt', 'Meta', 'AltGraph'].includes(event.key) && event.code !== 'ControlRight') return;
+        if (rightAltHeld || event.getModifierState?.('AltGraph')) rightAltUsedAsModifier = true;
         const altGraph = event.getModifierState?.('AltGraph');
         const baseKey = event.code === 'ControlRight' ? 'CtrlRight' : event.code === 'Fn' || event.key === 'Fn' ? 'Fn' : event.code;
         const chord = [(rightCtrlHeld && event.code !== 'ControlRight') ? 'CtrlRight' : event.ctrlKey && !altGraph && event.code !== 'ControlRight' && 'Ctrl', event.code === 'ControlRight' && 'CtrlRight', (rightAltHeld || altGraph) ? 'AltRight' : event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta', baseKey].filter(Boolean).join('+');

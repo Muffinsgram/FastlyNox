@@ -52,10 +52,12 @@ async function getSenderName(userId, fallback = 'Yeni mesaj') {
 }
 
 async function showIncomingMessageToast(message, isDM, userId) {
-  if (!message?.id || !message.user_id || message.user_id === userId) return;
+  if (!message?.id || !message.user_id || message.user_id === userId || useAuthStore.getState().user?.id !== userId) return;
   const preferences = getAppPreferences(userId);
-  const senderName = await getSenderName(message.user_id, isDM ? 'Yeni özel mesaj' : 'Yeni mesaj');
-  if (useAuthStore.getState().user?.id !== userId) return;
+  const fallbackName = isDM ? 'Yeni özel mesaj' : 'Yeni mesaj';
+  const dm = isDM ? useFriendStore.getState().dmChannels.find((item) => item.id === message.dm_channel_id) : null;
+  const sender = dm?.user1_id === message.user_id ? dm?.user1 : dm?.user2;
+  const senderName = message.profiles?.username || sender?.username || senderNameCache.get(message.user_id) || fallbackName;
   const toast = {
     id: `incoming-message:${isDM ? 'dm' : 'server'}:${message.id}`,
     message_id: message.id,
@@ -68,9 +70,7 @@ async function showIncomingMessageToast(message, isDM, userId) {
   };
   if (isDM) {
     toast.dm_channel_id = message.dm_channel_id;
-    const dm = useFriendStore.getState().dmChannels.find((item) => item.id === message.dm_channel_id);
-    const sender = dm?.user1_id === message.user_id ? dm?.user1 : dm?.user2;
-    if (sender?.username) toast.title = senderName || sender.username;
+    toast.title = senderName;
   } else {
     toast.channel_id = message.channel_id;
     const servers = useServerStore.getState().servers;
@@ -79,11 +79,6 @@ async function showIncomingMessageToast(message, isDM, userId) {
     for (const item of servers) {
       const found = (item.categories || []).flatMap((category) => category.channels || []).find((candidate) => candidate.id === message.channel_id);
       if (found) { server = item; channel = found; break; }
-    }
-    if (!channel && message.channel_id) {
-      const { data } = await supabase.from('channels').select('id,name,server_id').eq('id', message.channel_id).maybeSingle();
-      channel = data;
-      server = servers.find((item) => item.id === data?.server_id) || null;
     }
     if (channel?.server_id) toast.server_id = channel.server_id;
     else if (server?.id) toast.server_id = server.id;
@@ -98,6 +93,31 @@ async function showIncomingMessageToast(message, isDM, userId) {
     try { new Notification(toast.title, { body: toast.body }); }
     catch { /* Keep the in-app toast available if the OS blocks a desktop popup. */ }
   }
+
+  // Never hold the visible toast behind profile/channel lookups. Those requests
+  // can take seconds on a weak connection, while the incoming message itself
+  // has already arrived over Realtime.
+  void (async () => {
+    const [resolvedSender, channelResult] = await Promise.all([
+      senderName === fallbackName ? getSenderName(message.user_id, fallbackName) : Promise.resolve(senderName),
+      !isDM && !channel && message.channel_id
+        ? supabase.from('channels').select('id,name,server_id').eq('id', message.channel_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+    if (useAuthStore.getState().user?.id !== userId) return;
+    const resolvedChannel = channel || channelResult.data;
+    const resolvedServer = server || servers.find((item) => item.id === resolvedChannel?.server_id);
+    const title = isDM
+      ? resolvedSender
+      : `${resolvedSender} · #${resolvedChannel?.name || 'sunucu'}`;
+    useNotificationStore.setState((state) => ({
+      activeToasts: state.activeToasts.map((item) => item.id === toast.id ? {
+        ...item,
+        title,
+        ...(resolvedChannel?.server_id || resolvedServer?.id ? { server_id: resolvedChannel?.server_id || resolvedServer.id } : {}),
+      } : item),
+    }));
+  })().catch(() => {});
 }
 
 function playNotificationSound(volume = 65) {
