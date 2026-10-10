@@ -118,5 +118,5 @@ export function FormattedMessage({ content, userMap = {}, roleMap = {}, channelM
       index += 1;
     }
   }
-  return <div className="select-text min-w-0 max-w-full whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{blocks}</div>;
+  return <div style={{ overflowWrap: 'anywhere', wordBreak: 'break-word' }} className="select-text w-full min-w-0 max-w-full whitespace-pre-wrap break-words">{blocks}</div>;
 }

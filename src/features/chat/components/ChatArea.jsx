@@ -346,7 +346,7 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention, o
           <div ref={chatScrollRef} onScroll={(event) => {
             const element = event.currentTarget;
             shouldAutoScroll.current = element.scrollHeight - element.clientHeight - element.scrollTop < 96;
-          }} className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-4 flex flex-col custom-scrollbar">
+          }} className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain p-4 flex flex-col custom-scrollbar">
              
               {channelMessages.length === 0 && isLoading && (
                 <div role="status" aria-label="Mesajlar yükleniyor" className="mt-auto space-y-4 pb-4">
@@ -364,7 +364,7 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention, o
                 </div>
              )}
 
-             <div className="flex flex-col">
+             <div className="flex min-w-0 w-full flex-col">
                {channelMessages.map((m, index) => {
                    const isSelf = m.user_id === user?.id;
                    const msgDate = new Date(m.created_at);

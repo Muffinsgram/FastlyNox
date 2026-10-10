@@ -18,7 +18,7 @@ import { getVoicePlayback, normalizeVoiceVolume } from '../../../lib/voicePlayba
 import { getScreenShareCaptureOptions, getScreenSharePublishOptions, supportsOwnAudioExclusion } from '../../../lib/screenCapture';
 import { syncNoiseProcessor } from '../../../lib/microphoneNoiseProcessor';
 
-const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, inputSensitivityEnabled: false, inputSensitivityDb: -100, inputVolume: 100, outputVolume: 100 };
+const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, inputSensitivityEnabled: false, inputSensitivityDb: -100, inputVolume: 100, outputVolume: 100 };
 
 function getAudioCaptureOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
   return {
@@ -543,6 +543,7 @@ function VoiceAudioSettings({ currentUserId }) {
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState('');
   const connectionState = useConnectionState();
+  const { quality: connectionQuality } = useConnectionQualityIndicator({ participant: localParticipant });
   const localMicrophoneTrack = microphoneTrack?.track;
   useEffect(() => {
     if (!localMicrophoneTrack || connectionState !== 'connected' || !isMicrophoneEnabled) return;
@@ -685,14 +686,9 @@ function VoiceAudioSettings({ currentUserId }) {
     setMessage('');
     setBusy(key);
     try {
-      const microphoneTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-      if (isMicrophoneEnabled && microphoneTrack?.restartTrack && !['inputSensitivityEnabled', 'inputSensitivityDb', 'inputVolume'].includes(key)) {
-        await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
-        await syncNoiseProcessor(microphoneTrack, next);
-      } else if (key === 'inputSensitivityEnabled' || key === 'inputSensitivityDb' || key === 'inputVolume' || key === 'noiseProcessor' || key === 'noiseSuppression') {
-        const track = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-        if (track) await syncNoiseProcessor(track, next);
-      }
+      // Store the switch state first. The settings effect below applies capture
+      // constraints in place; restarting the live track made supported device
+      // settings appear to snap back on when restartTrack rejected them.
       persist(next);
       setMessage(isMicrophoneEnabled ? 'Mikrofon ayarı uygulandı.' : 'Mikrofonu açtığında ayar uygulanacak.');
     } catch (error) {
@@ -702,7 +698,7 @@ function VoiceAudioSettings({ currentUserId }) {
     }
   };
 
-  const updateAudioQuality = async audioQuality => {
+  const updateAudioQuality = async (audioQuality, { automatic = false } = {}) => {
     const next = { ...settings, audioQuality };
     const track = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
     setBusy('audioQuality');
@@ -714,11 +710,17 @@ function VoiceAudioSettings({ currentUserId }) {
         catch (error) { await localParticipant.publishTrack(track, getAudioPublishOptions(settings)); throw error; }
       }
       persist(next);
-      setMessage(isMicrophoneEnabled ? 'Ses kalitesi güncellendi.' : 'Ses kalitesi mikrofonu açtığında uygulanacak.');
+      setMessage(automatic ? 'Bağlantı zayıf; daha az internet kullanan konuşma kalitesine geçildi.' : isMicrophoneEnabled ? 'Ses kalitesi güncellendi.' : 'Ses kalitesi mikrofonu açtığında uygulanacak.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Ses kalitesi değiştirilemedi.');
     } finally { setBusy(''); }
   };
+
+  useEffect(() => {
+    if (connectionQuality === 'poor' || connectionQuality === 'lost') {
+      if (settingsRef.current.audioQuality === 'high' && !busy) void updateAudioQuality('speech', { automatic: true });
+    }
+  }, [connectionQuality, busy]);
 
   const changeDevice = async (kind, deviceId) => {
     const settingKey = kind === 'audioinput' ? 'inputDeviceId' : 'outputDeviceId';
@@ -752,7 +754,7 @@ function VoiceAudioSettings({ currentUserId }) {
       <header className="mb-3 flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-200/10 text-cyan-100"><AudioLines className="h-4 w-4" /></span><div><h3 className="text-sm font-semibold text-white">Ses kalitesi</h3><p className="mt-0.5 text-[10px] text-slate-400">WebRTC mikrofon işleme ve cihaz tercihleri</p></div></header>
       <div className="mb-3"><VoiceConnectionHealth /></div>
       <div className="space-y-3">
-        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Giden ses kalitesi</span><AnimatedSelect ariaLabel="Mikrofon yayın kalitesi" value={settings.audioQuality} onValueChange={value => void updateAudioQuality(value)} options={[{ value: 'speech', label: 'Konuşma · düşük gecikme' }, { value: 'high', label: 'Yüksek kalite · daha çok internet' }]} disabled={busy !== ''} className="w-full" /></label>
+        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Giden ses kalitesi</span><AnimatedSelect ariaLabel="Mikrofon yayın kalitesi" value={settings.audioQuality} onValueChange={value => void updateAudioQuality(value)} options={[{ value: 'speech', label: 'Konuşma · düşük internet kullanımı' }, { value: 'high', label: 'Yüksek kalite · daha çok internet' }]} disabled={busy !== ''} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Mikrofon girişi</span><AnimatedSelect ariaLabel="Mikrofon girişi" value={settings.inputDeviceId} onValueChange={value => void changeDevice('audioinput', value)} options={inputOptions} disabled={busy !== ''} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hoparlör / kulaklık</span><AnimatedSelect ariaLabel="Hoparlör veya kulaklık çıkışı" value={settings.outputDeviceId} onValueChange={value => void changeDevice('audiooutput', value)} options={outputOptions} disabled={busy !== '' || !supportsAudioOutputSelection()} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor || 'rnnoise'} onValueChange={value => void updateCaptureSetting('noiseProcessor', value)} options={[{ value: 'krisp', label: 'Krisp · en güçlü filtre' }, { value: 'rnnoise', label: 'RNNoise · cihazda, çevrim dışı' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} disabled={busy !== ''} className="w-full" /></label>
