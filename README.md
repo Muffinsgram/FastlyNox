@@ -1,61 +1,606 @@
-# Fastlynox
 
-Fastlynox is a React/Vite communication app. Supabase provides authentication, Postgres, storage, and realtime updates. LiveKit provides voice rooms.
+<div align="center">
 
-## Local setup
+# ⚡ FastlyNox
 
-1. Copy `.env.example` to `.env` and fill in the Supabase and LiveKit values.
-2. Apply `rls-security-policies.sql`, `migration_server_creation.sql`, `migration_edit_delete.sql`, `migration_message_reactions.sql`, `migration_message_replies.sql`, `migration_profile_customization.sql`, `migration_channel_order.sql`, `migration_global_announcements.sql`, then `migration_chat_mentions_notifications.sql` to the Supabase project. The server creation migration installs the atomic server creation and owner-only deletion RPCs; profile customization also adds banner framing controls. The chat notification migration installs mention delivery and unread server badges; only server owners and admins can broadcast `@everyone`.
-3. Apply `migration_friendships_realtime.sql`, `migration_user_presence.sql`, and `migration_realtime_sync_reliability.sql` in the Supabase SQL Editor after the base schema. The last migration adds per-window presence sessions, DM unread notifications, and the realtime publication/replica-identity settings used for reconnect recovery. It preserves existing rows; if it reports duplicate legacy friendship pairs, reconcile those rows before rerunning so the uniqueness guarantee can be installed.
-4. Install dependencies with `npm install`.
-5. Start the app with `npm run dev`.
+### One space. Every conversation. Zero distance.
 
-## Deploying the web app to Vercel
+**A modern communication platform built for communities, real-time conversations, and voice collaboration.**
 
-Import `Muffinsgram/FastlyNox` as a Vite project in Vercel (build command `npm run build`, output directory `dist`). Configure `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_PUBLIC_APP_URL` for Production, Preview, and Development. `VITE_PUBLIC_APP_URL` should be the canonical HTTPS domain attached to the Vercel project; replace the example `fastlynox.vercel.app` if Vercel assigns a different hostname or you use a custom domain. Keep the Supabase service-role key out of Vercel and the browser; the invite preview uses two narrowly scoped, anonymous SQL functions instead.
+[🌐 Live Demo](https://fastlynox.vercel.app) · [📦 Repository](https://github.com/Muffinsgram/FastlyNox) · [🐛 Report a Bug](https://github.com/Muffinsgram/FastlyNox/issues) · [✨ Request a Feature](https://github.com/Muffinsgram/FastlyNox/issues)
 
-Before deploying, run `migration_public_invite_preview.sql` in the Supabase SQL editor. Vercel serves public invite previews with server-rendered title/Open Graph metadata, a join button, a sitemap of servers that have a public vanity URL, and a robots file. Short, expiring or limited-use invite codes remain usable but are marked `noindex`; public vanity links can appear in Google after the domain is verified in Search Console and the sitemap is submitted. Google indexing can take time and is not guaranteed. Existing invite URLs automatically use the current web origin, so generated links work on the Vercel/custom domain.
+<br />
 
-The web deploy does not replace the Windows desktop release. The `Build and publish Windows release` workflow builds that installer after a version tag is pushed.
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vite.dev/)
+[![Supabase](https://img.shields.io/badge/Supabase-Backend-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
+[![LiveKit](https://img.shields.io/badge/LiveKit-Voice-FF6B6B?style=for-the-badge&logo=webrtc&logoColor=white)](https://livekit.io/)
+[![Electron](https://img.shields.io/badge/Electron-Desktop-47848F?style=for-the-badge&logo=electron&logoColor=white)](https://www.electronjs.org/)
 
-## Windows desktop app and automatic updates
+<br />
 
-The Windows desktop build uses Electron and checks the public GitHub Releases page for `Muffinsgram/FastlyNox` whenever the installed app starts. If a newer release exists, it downloads in the background. A small update control appears in the title bar when the download is ready; choosing it restarts the app and installs the release. If you simply close the app, the downloaded update installs on the next launch.
+**💬 Real-time Messaging · 🎙️ Voice Rooms · 🌐 Web · 🖥️ Windows**
 
-For local desktop development, start Vite with `npm run dev`, then start Electron in a second terminal with `npm run desktop:dev`. Build a Windows installer locally with `npm run dist:win`; the installer is written to `%LOCALAPPDATA%\Fastlynox\windows-build\` to avoid Windows rename restrictions in protected project folders.
+</div>
 
-To publish an update, add the Actions repository secrets `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_PUBLIC_APP_URL`, `VITE_LIVEKIT_URL`, and `VITE_LIVEKIT_API_KEY` in GitHub Settings → Secrets and variables → Actions. `VITE_GIPHY_API_KEY` is optional. Then push a semantic-version tag such as `v1.0.1` and let the **Build and publish Windows release** GitHub Action finish. The action builds a Windows NSIS installer and publishes the installer plus updater metadata to GitHub Releases. Keep releases public and do not edit or delete the generated `latest.yml`, `.exe`, or `.blockmap` assets. Never add `LIVEKIT_API_SECRET` to the desktop build secrets; it belongs only in the Supabase Edge Function environment.
+---
 
-The app currently targets Windows x64. Windows may show a SmartScreen warning because the installer is not code-signed; automatic update delivery works without signing, but a code-signing certificate improves publisher trust.
+## 📖 Table of Contents
 
-The LiveKit API secret must be stored as `LIVEKIT_API_SECRET` without a `VITE_` prefix. Vite's local development endpoint uses that server-side value. Never put it in browser code or commit `.env`.
+- [🌟 About](#-about)
+- [✨ Features](#-features)
+- [🛠️ Technology Stack](#️-technology-stack)
+- [🏗️ Architecture](#️-architecture)
+- [🚀 Getting Started](#-getting-started)
+- [⚙️ Environment Variables](#️-environment-variables)
+- [🗄️ Database Setup](#️-database-setup)
+- [🌍 Deployment](#-deployment)
+- [🖥️ Windows Desktop App](#️-windows-desktop-app)
+- [🧪 Development & Testing](#-development--testing)
+- [🔐 Security](#-security)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
 
-## Deploying voice token issuance
+---
 
-Deploy `server-voice-control` together with the client when updating voice moves. The function now changes the existing presence row's channel, which the client uses to distinguish moderator moves from ordinary heartbeats. Self-hosted LiveKit uses this update to reconnect the member with a fresh room token; LiveKit Cloud additionally uses its native move API. Function errors are read from the response body, and expired sessions are refreshed once before retrying.
+## 🌟 About
 
-The production client calls the Supabase Edge Function at `supabase/functions/livekit-token`. Deploy it with `supabase functions deploy livekit-token`, then set `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` as Edge Function secrets. The function validates the user's Supabase session, verifies voice-channel membership, and returns a ten-minute token. The separate Vite middleware is for local development and preview only.
+**FastlyNox** is a real-time communication application designed to bring people together through messaging, communities, and voice conversations.
 
-## GIF picker
+Built with a modern React frontend and powered by Supabase and LiveKit, FastlyNox combines the flexibility of a web application with the convenience of a native Windows desktop experience.
 
-The composer includes emoji selection and GIPHY search/trending. Set `VITE_GIPHY_API_KEY` in your local `.env`; do not commit `.env`. GIPHY requires searches from the client and attribution, so the picker links results to GIPHY and labels them “Powered by GIPHY.”
+Whether you're building a community, chatting with friends, organizing conversations into servers and channels, or joining a voice room, FastlyNox aims to keep communication connected in one place.
 
-## Seven-day attachment retention
+### 💡 The Vision
 
-To automatically delete attachment files older than seven days, deploy `supabase/functions/cleanup-expired-attachments` and set the Edge Function secret `ATTACHMENT_CLEANUP_SECRET` to a long random value. Then add the project URL and the same cleanup secret to Supabase Vault under the names shown in `migration_attachment_expiry.sql`, and run that SQL to schedule a daily cleanup. The cleanup endpoint uses that secret for authentication (`supabase/config.toml` disables gateway JWT checks for this endpoint). The job deletes expired files and clears their message attachment references. This scheduled deletion requires the Supabase project to be configured; the local app alone cannot run a reliable background retention job.
+FastlyNox is built around three core principles:
 
-Run the SQL scripts in Supabase before expecting cross-user edit/delete events, private media, or seven-day deletion to be active. The client updates the sender's own message immediately after the database confirms an edit or delete; other sessions receive the change through Supabase Realtime.
+- **⚡ Speed** — A responsive experience for everyday communication.
+- **🔗 Connectivity** — Real-time messaging, presence, and voice interactions.
+- **🧩 Flexibility** — A web application and a dedicated Windows desktop client.
 
-The reactions migration creates separate server and DM reaction tables with per-user uniqueness, participant-only RLS, and Realtime publication. Reaction buttons remain unavailable until that migration has been applied.
+> Communication should feel instant, communities should feel connected, and the tools we use should stay out of the way.
 
-Profile photo, banner and bio editing requires `migration_profile_customization.sql` to be applied before using the upload controls. Uploaded images are resized to WebP in the browser (animated GIF avatars and banners are preserved) and stored in the public profile-media bucket; users can write only to their own storage folder. Banner zoom and focal point are saved with the profile.
+## ✨ Features
 
-`migration_global_announcements.sql` adds a cross-app live announcement feed, private reminders with browser notifications, one-way profile following, media posts, and 24-hour stories. To grant your account announcement publishing rights, find its UUID in Supabase Authentication → Users and run `INSERT INTO public.app_admins (user_id) VALUES ('YOUR_USER_UUID') ON CONFLICT DO NOTHING;` in SQL Editor. Authenticated users can read the announcement feed; only explicitly listed app admins can publish or remove announcements. Redeploy `cleanup-expired-attachments` after applying this migration so its daily sweep also removes expired story media.
+### 💬 Messaging & Conversations
 
-## Checks
+- Real-time messaging powered by Supabase Realtime.
+- Server-based communities with organized text channels.
+- Direct messaging between users.
+- Message editing and deletion.
+- Message replies and reactions.
+- Emoji selection and GIF discovery through GIPHY.
+- Mention notifications and unread-message indicators.
+- Attachment support with configurable expiration cleanup.
 
-- `npm run lint`
-- `npm test`
-- `npm run build`
+### 🌐 Communities & Servers
 
-The database and Edge Function require a configured Supabase project for live integration testing. The current UI/API contract does not yet provide database schema migrations for every table, so the SQL scripts assume the existing Fastlynox tables and columns.
+- Create and manage community servers.
+- Organize conversations into channels.
+- Server roles and permission management.
+- Server ownership and administrative controls.
+- Custom server invitations and public invitation previews.
+- Public vanity URLs for supported servers.
+- Member presence and real-time synchronization.
+- Server announcements and unread server indicators.
+
+### 👤 Profiles & Social Features
+
+- Customizable profile pictures and banners.
+- Profile biographies and banner positioning controls.
+- User presence and activity indicators.
+- One-way profile following.
+- Media posts and 24-hour stories.
+- In-app announcements and private reminders.
+- Browser notification support for supported reminder workflows.
+
+### 🎙️ Voice Communication
+
+- LiveKit-powered voice rooms.
+- Real-time voice participant presence.
+- Voice-channel membership validation.
+- Server-side voice token issuance.
+- Voice participant moderation and channel movement.
+- Reconnection support for voice sessions.
+- Audio noise-suppression integrations.
+
+Voice functionality depends on a correctly configured LiveKit deployment and the corresponding Supabase Edge Function.
+
+### 🖥️ Windows Desktop Application
+
+- Dedicated Electron desktop client.
+- Windows x64 installer.
+- Native desktop application packaging.
+- Background release checks and update downloads.
+- In-app update availability controls.
+- GitHub Releases-based update distribution.
+
+### 🔒 Security & Reliability
+
+- Supabase authentication and database access controls.
+- Row Level Security (RLS) policies.
+- Server-side validation for sensitive voice operations.
+- Role-based server permissions.
+- Restricted administrative announcement publishing.
+- Realtime synchronization and reconnect recovery.
+- Configurable attachment retention and cleanup.
+
+**Note:** Some features require the corresponding SQL migrations, storage policies, environment variables, or backend functions to be configured before they become available.
+
+---
+
+## 🛠️ Technology Stack
+
+| Technology | Purpose |
+| --- | --- |
+| [React](https://react.dev/) | User interface |
+| [Vite](https://vite.dev/) | Development server and production builds |
+| [Tailwind CSS](https://tailwindcss.com/) | Utility-first styling |
+| [Zustand](https://zustand.docs.pmnd.rs/) | Client-side state management |
+| [Supabase](https://supabase.com/) | Authentication, PostgreSQL, storage, and realtime |
+| [LiveKit](https://livekit.io/) | Voice communication infrastructure |
+| [Electron](https://www.electronjs.org/) | Windows desktop application |
+| [electron-updater](https://www.electron.build/auto-update) | Desktop release updates |
+| [Lucide](https://lucide.dev/) | Interface icons |
+| [GIPHY](https://developers.giphy.com/) | GIF search and discovery |
+| [Vercel](https://vercel.com/) | Web deployment |
+| [GitHub Actions](https://github.com/features/actions) | Automated desktop release workflow |
+
+---
+
+## 🏗️ Architecture
+
+FastlyNox separates its client interface from the services responsible for authentication, persistence, and real-time communication.
+
+```mermaid
+flowchart TD
+    User["👤 User"]
+    Web["🌐 React + Vite Web App"]
+    Desktop["🖥️ Electron Desktop App"]
+    Supabase["⚡ Supabase"]
+    Auth["🔐 Authentication"]
+    DB["🗄️ PostgreSQL"]
+    Realtime["📡 Realtime"]
+    Storage["📁 Storage"]
+    Edge["🛡️ Edge Functions"]
+    LiveKit["🎙️ LiveKit Voice"]
+    Vercel["🚀 Vercel"]
+    GitHub["📦 GitHub Releases"]
+
+    User --> Web
+    User --> Desktop
+    Web --> Supabase
+    Desktop --> Supabase
+    Supabase --> Auth
+    Supabase --> DB
+    Supabase --> Realtime
+    Supabase --> Storage
+    Supabase --> Edge
+    Edge --> LiveKit
+    Web --> Vercel
+    Desktop --> GitHub
+```
+
+### How it works
+
+1. **Client layer:** React renders the application in the browser or inside Electron.
+2. **Authentication and data:** Supabase provides user authentication, PostgreSQL, and storage.
+3. **Realtime layer:** Supabase Realtime delivers supported messaging and presence updates.
+4. **Voice layer:** LiveKit handles voice rooms, with Supabase Edge Functions issuing validated voice tokens.
+5. **Deployment layer:** Vercel hosts the web application, while GitHub Releases distributes Windows desktop updates.
+
+---
+
+## 🚀 Getting Started
+
+Follow these steps to run FastlyNox locally.
+
+### Prerequisites
+
+Make sure you have the following:
+
+- [Node.js](https://nodejs.org/) — a version compatible with the dependencies in `package.json`.
+- npm — included with Node.js.
+- A configured [Supabase](https://supabase.com/) project.
+- A configured [LiveKit](https://livekit.io/) deployment for voice features.
+- A [GIPHY API key](https://developers.giphy.com/) if you want GIF search and discovery.
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/Muffinsgram/FastlyNox.git
+cd FastlyNox
+```
+
+### 2. Install dependencies
+
+```bash
+npm install
+```
+
+### 3. Configure environment variables
+
+Create a local environment file from the example:
+
+**Windows — Command Prompt**
+
+```bat
+copy .env.example .env
+```
+
+**macOS / Linux**
+
+```bash
+cp .env.example .env
+```
+
+Open `.env` and provide the appropriate credentials for your services.
+
+See [Environment Variables](#️-environment-variables) for details.
+
+### 4. Configure Supabase
+
+Create a Supabase project, then apply the required SQL migrations in the order described in [Database Setup](#️-database-setup).
+
+Make sure your database schema, RLS policies, storage configuration, and required Edge Functions are in place.
+
+### 5. Start the development server
+
+```bash
+npm run dev
+```
+
+Vite will display the local development URL in your terminal, typically:
+
+`http://localhost:5173`
+
+### 6. Run the Windows desktop client
+
+Keep the Vite development server running and open a second terminal:
+
+```bash
+npm run desktop:dev
+```
+
+This starts the Electron application against the local development environment.
+
+---
+
+## ⚙️ Environment Variables
+
+FastlyNox uses environment variables to configure its external services.
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `VITE_SUPABASE_URL` | Yes | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Yes | Supabase publishable/anonymous client key |
+| `VITE_PUBLIC_APP_URL` | Yes for deployment | Canonical public HTTPS application URL |
+| `VITE_LIVEKIT_URL` | For voice | LiveKit WebSocket URL |
+| `VITE_LIVEKIT_API_KEY` | For voice | LiveKit API key |
+| `LIVEKIT_API_SECRET` | Server-side only | LiveKit API secret |
+| `VITE_GIPHY_API_KEY` | Optional | GIPHY client API key |
+
+Example:
+
+```dotenv
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+
+VITE_PUBLIC_APP_URL=https://fastlynox.vercel.app
+
+VITE_LIVEKIT_URL=wss://your-livekit-host
+VITE_LIVEKIT_API_KEY=your-livekit-api-key
+LIVEKIT_API_SECRET=your-livekit-api-secret
+
+VITE_GIPHY_API_KEY=your-giphy-api-key
+```
+
+### ⚠️ Important security rules
+
+- Never commit your `.env` file.
+- Never expose `LIVEKIT_API_SECRET` to browser code.
+- Never rename the server-side secret to `VITE_LIVEKIT_API_SECRET`.
+- Never put Supabase service-role credentials in the client or Vercel client-side environment.
+- Use only the Supabase client key intended for browser access, with appropriate RLS policies.
+- Keep production secrets in the appropriate server-side environment.
+
+Environment variables prefixed with `VITE_` are exposed to client-side application code. Treat them as public values.
+
+---
+
+## 🗄️ Database Setup
+
+FastlyNox relies on Supabase SQL migrations for database structure, access policies, and additional application features.
+
+Run the SQL files using the Supabase SQL Editor.
+
+### Core setup
+
+Apply the required baseline schema and security policies first. The repository includes the following scripts for core functionality and subsequent features:
+
+1. `rls-security-policies.sql`
+2. `migration_server_creation.sql`
+3. `migration_edit_delete.sql`
+4. `migration_message_reactions.sql`
+5. `migration_message_replies.sql`
+6. `migration_profile_customization.sql`
+7. `migration_channel_order.sql`
+8. `migration_global_announcements.sql`
+9. `migration_chat_mentions_notifications.sql`
+
+### Realtime, presence & social synchronization
+
+After the baseline schema is available, apply:
+
+- `migration_friendships_realtime.sql`
+- `migration_user_presence.sql`
+- `migration_realtime_sync_reliability.sql`
+
+The realtime reliability migration includes synchronization settings, presence sessions, and direct-message unread notification support. Resolve duplicate legacy friendship pairs before rerunning it if the uniqueness constraint cannot be created.
+
+### Additional migrations
+
+Other migrations cover features such as:
+
+- Voice presence and moderation.
+- Server roles and permissions.
+- Invitation previews and public identifiers.
+- Message reactions and notification read states.
+- Profile customization and social activity.
+- Story storage and attachment expiration.
+- Server operations and administration.
+
+Review the individual SQL files before applying additional migrations, and use the repository's current schema as the source of truth.
+
+### Voice token function
+
+Deploy the voice-token Edge Function:
+
+```bash
+supabase functions deploy livekit-token
+```
+
+Configure the following Edge Function secrets:
+
+```bash
+supabase secrets set LIVEKIT_API_KEY=your-livekit-api-key
+supabase secrets set LIVEKIT_API_SECRET=your-livekit-api-secret
+```
+
+The function validates the authenticated session and voice-channel membership before issuing a time-limited token.
+
+### Attachment cleanup
+
+For scheduled deletion of expired attachments:
+
+1. Deploy `cleanup-expired-attachments`.
+2. Configure `ATTACHMENT_CLEANUP_SECRET` as an Edge Function secret.
+3. Store the cleanup configuration in Supabase Vault.
+4. Apply `migration_attachment_expiry.sql` to schedule the cleanup job.
+
+The cleanup process requires a configured Supabase project; running the frontend alone does not provide scheduled background deletion.
+
+---
+
+## 🌍 Deployment
+
+### Deploy the web application to Vercel
+
+1. Import [Muffinsgram/FastlyNox](https://github.com/Muffinsgram/FastlyNox) into Vercel.
+2. Select the Vite framework preset.
+3. Set the build command to `npm run build`.
+4. Set the output directory to `dist`.
+5. Configure the required environment variables for Production, Preview, and Development.
+6. Set `VITE_PUBLIC_APP_URL` to the canonical HTTPS domain.
+7. Apply the public invitation preview migration before deploying the related functionality.
+
+**Build settings**
+
+| Setting | Value |
+| --- | --- |
+| Framework | Vite |
+| Build command | `npm run build` |
+| Output directory | `dist` |
+| Install command | `npm install` |
+
+The live web application is available at:
+
+**[https://fastlynox.vercel.app](https://fastlynox.vercel.app)**
+
+If you use a custom domain, update `VITE_PUBLIC_APP_URL` accordingly.
+
+### Public invitation previews
+
+FastlyNox includes support for server-rendered invitation preview metadata, Open Graph information, and public server sitemap entries.
+
+Public vanity links can be indexed when the relevant deployment and domain verification requirements are satisfied. Short-lived, limited-use, or otherwise restricted invitations are marked `noindex`.
+
+Search engine indexing is not guaranteed and may take time.
+
+---
+
+## 🖥️ Windows Desktop App
+
+FastlyNox includes a Windows desktop client built with Electron.
+
+### Build locally
+
+Start the Vite development server:
+
+```bash
+npm run dev
+```
+
+In a separate terminal, run:
+
+```bash
+npm run desktop:dev
+```
+
+### Create a Windows installer
+
+```bash
+npm run dist:win
+```
+
+The Windows build targets **x64** and creates an NSIS installer. The build script writes the installer to:
+
+```text
+%LOCALAPPDATA%\Fastlynox\windows-build\
+```
+
+This location helps avoid file-renaming restrictions in protected project directories.
+
+### Automatic updates
+
+The desktop client checks the public GitHub Releases page for new versions. When an update is available, it downloads in the background and presents an update control in the title bar.
+
+Updates can be installed by restarting through the update control or by closing and reopening the application.
+
+### Publish a release
+
+Configure these GitHub Actions repository secrets:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_PUBLIC_APP_URL`
+- `VITE_LIVEKIT_URL`
+- `VITE_LIVEKIT_API_KEY`
+
+`VITE_GIPHY_API_KEY` is optional.
+
+Then push a semantic-version tag, for example:
+
+```bash
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+The release workflow builds the Windows installer and publishes the installer and updater metadata to GitHub Releases.
+
+**Important:** Keep the generated `latest.yml`, `.exe`, and `.blockmap` release assets available. Do not place `LIVEKIT_API_SECRET` in the desktop build secrets.
+
+Windows may display a SmartScreen warning because the installer is not code-signed. A code-signing certificate can improve publisher trust.
+
+---
+
+## 🧪 Development & Testing
+
+FastlyNox includes scripts for linting, automated tests, and production builds.
+
+### Available commands
+
+| Command | Description |
+| --- | --- |
+| `npm run dev` | Start the Vite development server |
+| `npm run desktop:dev` | Launch the Electron desktop client |
+| `npm run build` | Build the production web application |
+| `npm run preview` | Preview the production build locally |
+| `npm run lint` | Run Oxlint |
+| `npm test` | Run the Node.js test suite |
+| `npm run dist:win` | Build the Windows installer |
+| `npm run release:win` | Run the Windows release build script |
+
+### Run the checks
+
+```bash
+npm run lint
+npm test
+npm run build
+```
+
+For changes involving authentication, database access, storage, or voice communication, also verify the corresponding Supabase policies, migrations, and Edge Functions.
+
+Live integration tests require a correctly configured Supabase project and any relevant external services.
+
+---
+
+## 🔐 Security
+
+Security is an essential part of any real-time communication platform.
+
+When deploying or contributing to FastlyNox:
+
+- Apply and review Row Level Security policies.
+- Validate authorization on the server side.
+- Keep privileged API secrets out of the browser.
+- Restrict server-management actions to authorized roles.
+- Protect storage access and user-owned media.
+- Configure cleanup jobs for expiring attachments.
+- Never commit production credentials or private keys.
+- Review migration changes before applying them to production.
+- Keep dependencies updated and investigate security advisories.
+
+If you discover a security vulnerability, please avoid publishing sensitive exploit details in a public issue. Contact the repository maintainer privately to coordinate a responsible disclosure.
+
+---
+
+## 🤝 Contributing
+
+Contributions, bug reports, and ideas are welcome!
+
+### Contribution workflow
+
+1. Fork the repository.
+2. Create a feature branch.
+3. Make your changes.
+4. Run linting, tests, and the production build.
+5. Commit your changes with a clear message.
+6. Open a pull request describing the changes.
+
+Example:
+
+```bash
+git checkout -b feature/your-feature
+npm install
+
+npm run lint
+npm test
+npm run build
+
+git add .
+git commit -m "feat: add your feature"
+git push origin feature/your-feature
+```
+
+Please keep pull requests focused, document any required environment variables or migrations, and avoid committing generated artifacts or secrets.
+
+For bugs and feature requests, visit the [GitHub Issues](https://github.com/Muffinsgram/FastlyNox/issues) page.
+
+---
+
+## 🗺️ Roadmap
+
+FastlyNox is an evolving project. Potential areas for future development include:
+
+- [ ] Expanded automated integration testing.
+- [ ] Improved onboarding and setup documentation.
+- [ ] Additional accessibility and usability improvements.
+- [ ] Further realtime reliability improvements.
+- [ ] Expanded community and moderation tooling.
+- [ ] More comprehensive deployment and operational guides.
+
+Roadmap items are suggestions rather than promises or confirmed release dates.
+
+---
+
+## 📄 License
+
+FastlyNox includes a `LICENSE` file in the repository.
+
+Please review the [project license](https://github.com/Muffinsgram/FastlyNox/blob/main/LICENSE) before redistributing or modifying the project.
+
+---
+
+<div align="center">
+
+### ⚡ Built for conversations. Designed for communities.
+
+**FastlyNox — Stay connected.**
+
+[🌐 Website](https://fastlynox.vercel.app) · [⭐ Star on GitHub](https://github.com/Muffinsgram/FastlyNox) · [💬 Join the development](https://github.com/Muffinsgram/FastlyNox/issues)
+
+<sub>Made with ❤️ by <a href="https://github.com/Muffinsgram">Muffinsgram</a></sub>
+
+</div>
