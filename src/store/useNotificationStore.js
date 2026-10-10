@@ -264,12 +264,12 @@ export const useNotificationStore = create((set, get) => ({
           dmUnreadCounts: notification.dm_channel_id && !isOpenDM ? { ...state.dmUnreadCounts, [notification.dm_channel_id]: (state.dmUnreadCounts[notification.dm_channel_id] || 0) + 1 } : state.dmUnreadCounts,
           serverUnreadCounts: countServerActivity && newNotif.server_id ? { ...state.serverUnreadCounts, [newNotif.server_id]: (state.serverUnreadCounts[newNotif.server_id] || 0) + 1 } : state.serverUnreadCounts,
           channelUnreadCounts: countServerActivity && newNotif.channel_id ? { ...state.channelUnreadCounts, [newNotif.channel_id]: (state.channelUnreadCounts[newNotif.channel_id] || 0) + 1 } : state.channelUnreadCounts,
-          activeToasts: doNotDisturb || isOpenDM ? state.activeToasts : [...state.activeToasts, notification].slice(-3),
+          activeToasts: doNotDisturb ? state.activeToasts : [...state.activeToasts, notification].slice(-3),
         }));
 
         // Remove toast after 4 seconds
         clearTimeout(toastTimers.get(newNotif.id));
-        if (!doNotDisturb && !isOpenDM) toastTimers.set(newNotif.id, setTimeout(() => {
+        if (!doNotDisturb) toastTimers.set(newNotif.id, setTimeout(() => {
           toastTimers.delete(newNotif.id);
           set(state => ({
             activeToasts: state.activeToasts.filter(t => t.id !== newNotif.id)

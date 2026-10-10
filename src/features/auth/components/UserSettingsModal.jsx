@@ -20,7 +20,7 @@ const DEFAULT_KEYBINDS = { toggleMicrophone: 'Ctrl+Alt+KeyM', toggleDeafen: 'Ctr
 
 function formatKeybind(binding) {
   if (!binding) return 'Atanmamış';
-  return binding.split('+').map(part => ({ AltRight: 'Sağ Alt', AltGraph: 'Sağ Alt', Mouse4: 'Fare 4', Mouse5: 'Fare 5' }[part] || (part.startsWith('Key') ? part.slice(3) : part.startsWith('Digit') ? part.slice(5) : part))).join(' + ');
+  return binding.split('+').map(part => ({ AltRight: 'Sağ Alt', AltGraph: 'Sağ Alt', CtrlRight: 'Sağ Ctrl', Fn: 'Fn', Mouse4: 'Fare 4', Mouse5: 'Fare 5' }[part] || (part.startsWith('Key') ? part.slice(3) : part.startsWith('Digit') ? part.slice(5) : part))).join(' + ');
 }
 
 function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalkChange, launchAtStartup, onLaunchAtStartupChange }) {
@@ -33,14 +33,17 @@ function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalk
   useEffect(() => {
     if (!recording) return undefined;
     let rightAltHeld = false;
+    let rightCtrlHeld = false;
     const capture = event => {
       if (event.code === 'AltRight') rightAltHeld = event.type === 'keydown';
+      if (event.code === 'ControlRight') rightCtrlHeld = event.type === 'keydown';
       if (event.type === 'keydown') {
         event.preventDefault(); event.stopPropagation();
         if (event.key === 'Escape') { setRecording(''); return; }
-        if (['Shift', 'Control', 'Alt', 'Meta', 'AltGraph'].includes(event.key)) return;
+        if (['Shift', 'Control', 'Alt', 'Meta', 'AltGraph'].includes(event.key) && event.code !== 'ControlRight') return;
         const altGraph = event.getModifierState?.('AltGraph');
-        const chord = [event.ctrlKey && !altGraph && 'Ctrl', (rightAltHeld || altGraph) ? 'AltRight' : event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta', event.code].filter(Boolean).join('+');
+        const baseKey = event.code === 'ControlRight' ? 'CtrlRight' : event.code === 'Fn' || event.key === 'Fn' ? 'Fn' : event.code;
+        const chord = [(rightCtrlHeld && event.code !== 'ControlRight') ? 'CtrlRight' : event.ctrlKey && !altGraph && event.code !== 'ControlRight' && 'Ctrl', event.code === 'ControlRight' && 'CtrlRight', (rightAltHeld || altGraph) ? 'AltRight' : event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta', baseKey].filter(Boolean).join('+');
         const conflict = Object.entries(bindings).find(([key, binding]) => key !== recording && binding === chord);
         if (conflict) { setNotice('Bu tuş başka bir işlemde kullanılıyor.'); return; }
         onChange({ ...bindings, [recording]: chord }); setRecording(''); setNotice('Tuş ataması kaydedildi.');
@@ -79,7 +82,7 @@ function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalk
     } catch { setLaunchCheck('Durum okunamadı. Uygulamayı yeniden başlatıp tekrar dene.'); }
   };
   return <section className="max-w-2xl space-y-3">
-    <div className="rounded-2xl border border-violet-200/10 bg-violet-300/[0.04] p-4 text-xs leading-5 text-slate-300">Bir atamaya tıkla, ardından tuş bileşimini bas. Sağ Alt ve yan fare tuşları (Fare 4/5) da atanabilir. Kurulu masaüstü uygulamasında mikrofon ve kulaklık kısayolları ses odasındayken arka planda da çalışır. <kbd className="rounded border border-white/10 bg-black/20 px-1.5 py-0.5">Esc</kbd> ile vazgeçebilirsin.</div>
+    <div className="rounded-2xl border border-violet-200/10 bg-violet-300/[0.04] p-4 text-xs leading-5 text-slate-300">Bir atamaya tıkla, ardından tuş bileşimini bas. Sağ Ctrl, Sağ Alt, tarayıcının algıladığı Fn ve yan fare tuşları (Fare 4/5) da atanabilir. Bazı klavyelerde Fn tuşu işletim sistemi tarafından uygulamaya iletilmez. Kurulu masaüstü uygulamasında mikrofon ve kulaklık kısayolları ses odasındayken arka planda da çalışır. <kbd className="rounded border border-white/10 bg-black/20 px-1.5 py-0.5">Esc</kbd> ile vazgeçebilirsin.</div>
     <PreferenceRow icon={<Mic className="h-4 w-4" />} title="Bas-konuş modu" description="Mikrofon, atadığın tuşa basılı tuttuğun sürece açılır." checked={Boolean(pushToTalkEnabled)} onChange={onPushToTalkChange} />
     {rows.map(([key, title, description]) => <div key={key} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><span><span className="block text-sm font-semibold text-white">{title}</span><span className="mt-1 block text-xs text-slate-400">{description}</span></span><button type="button" onClick={() => { setNotice(''); setRecording(key); }} className={`min-w-36 rounded-xl border px-3 py-2 text-xs font-semibold transition ${recording === key ? 'border-violet-200/30 bg-violet-300/15 text-violet-100 animate-pulse' : 'border-white/10 bg-white/[0.05] text-slate-200 hover:bg-white/10'}`}>{recording === key ? 'Tuş veya fare tuşu…' : formatKeybind(bindings[key])}</button></div>)}
     <div className="flex justify-end"><button type="button" onClick={resetBindings} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-white/[0.06]">Kısayolları varsayılana döndür</button></div>

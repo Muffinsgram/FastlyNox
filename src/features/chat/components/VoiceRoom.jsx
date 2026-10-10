@@ -812,13 +812,16 @@ function ScreenSourcePicker({ sources, settings, onSettingChange, pending, onCho
   </div>, document.body);
 }
 
-function matchesVoiceKeybind(event, binding, rightAltHeld = false) {
+function matchesVoiceKeybind(event, binding, rightAltHeld = false, rightCtrlHeld = false) {
   if (!binding) return false;
   const expected = binding.split('+');
   if (expected.at(-1)?.startsWith('Mouse')) return false;
   const expectsRightAlt = expected.includes('AltRight') || expected.includes('AltGraph');
-  return expected.at(-1) === event.code
-    && (expected.includes('Ctrl') || (expectsRightAlt && event.getModifierState?.('AltGraph'))) === event.ctrlKey
+  const expectsRightCtrl = expected.includes('CtrlRight');
+  const expectedCode = expected.at(-1) === 'CtrlRight' ? 'ControlRight' : expected.at(-1) === 'Fn' ? 'Fn' : expected.at(-1);
+  return expectedCode === event.code
+    && (expected.includes('Ctrl') || expectsRightCtrl || (expectsRightAlt && event.getModifierState?.('AltGraph'))) === event.ctrlKey
+    && (!expectsRightCtrl || rightCtrlHeld || event.code === 'ControlRight')
     && (expected.includes('Alt') || expectsRightAlt) === event.altKey
     && (!expectsRightAlt || rightAltHeld || event.getModifierState?.('AltGraph'))
     && expected.includes('Shift') === event.shiftKey
@@ -952,6 +955,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const voiceInputRef = useRef({});
   const pushHeldRef = useRef(false);
   const rightAltHeldRef = useRef(false);
+  const rightCtrlHeldRef = useRef(false);
   const pushEnablePromiseRef = useRef(Promise.resolve());
   const pushRestoreMicRef = useRef(false);
   const deafenActionRef = useRef(toggleDeafen);
@@ -1032,18 +1036,19 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     };
     const handleKeyDown = event => {
       if (event.code === 'AltRight') rightAltHeldRef.current = true;
+      if (event.code === 'ControlRight') rightCtrlHeldRef.current = true;
       const state = voiceInputRef.current;
       if (event.repeat || isEditable(event.target)) return;
-      if (matchesVoiceKeybind(event, state.keybinds.toggleMicrophone, rightAltHeldRef.current)) {
+      if (matchesVoiceKeybind(event, state.keybinds.toggleMicrophone, rightAltHeldRef.current, rightCtrlHeldRef.current)) {
         event.preventDefault();
         if (!state.pendingControl && !state.isDeafened && !state.pushToTalkEnabled) {
           const enabled = !state.isMicrophoneEnabled;
           void state.localParticipant.setMicrophoneEnabled(enabled, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).then(() => playUiSound(enabled ? 'microphoneOn' : 'microphoneOff', state.currentUserId)).catch(() => {});
         }
-      } else if (matchesVoiceKeybind(event, state.keybinds.toggleDeafen, rightAltHeldRef.current)) {
+      } else if (matchesVoiceKeybind(event, state.keybinds.toggleDeafen, rightAltHeldRef.current, rightCtrlHeldRef.current)) {
         event.preventDefault();
         deafenActionRef.current();
-      } else if (state.pushToTalkEnabled && matchesVoiceKeybind(event, state.keybinds.pushToTalk, rightAltHeldRef.current) && !state.isDeafened && !state.pendingControl) {
+      } else if (state.pushToTalkEnabled && matchesVoiceKeybind(event, state.keybinds.pushToTalk, rightAltHeldRef.current, rightCtrlHeldRef.current) && !state.isDeafened && !state.pendingControl) {
         event.preventDefault();
         if (pushHeldRef.current) return;
         pushHeldRef.current = true;
@@ -1054,7 +1059,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
         }
       }
     };
-    const handleKeyUp = event => { if (event.code === 'AltRight') rightAltHeldRef.current = false; if (pushHeldRef.current && event.code === voiceInputRef.current.keybinds.pushToTalk?.split('+').at(-1)) releasePushToTalk(); };
+    const handleKeyUp = event => { if (event.code === 'AltRight') rightAltHeldRef.current = false; if (event.code === 'ControlRight') rightCtrlHeldRef.current = false; if (pushHeldRef.current && (event.code === voiceInputRef.current.keybinds.pushToTalk?.split('+').at(-1) || (voiceInputRef.current.keybinds.pushToTalk?.split('+').at(-1) === 'CtrlRight' && event.code === 'ControlRight'))) releasePushToTalk(); };
     const handleMouseDown = event => {
       const state = voiceInputRef.current;
       const buttonKey = event.button === 3 ? 'Mouse4' : event.button === 4 ? 'Mouse5' : '';

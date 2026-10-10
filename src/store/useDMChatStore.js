@@ -169,10 +169,16 @@ export const useDMChatStore = create((set, get) => ({
         else if (isCurrent() && (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')) console.warn(`DM mesaj kanalı bağlantı sorunu (${channelId}):`, status, error?.message || error || 'Sunucu ayrıntı göndermedi');
       });
 
+    // Postgres Changes is the immediate delivery path. This lightweight tail
+    // sync recovers messages when a desktop websocket silently drops events.
+    const recoveryTimer = window.setInterval(() => {
+      if (isCurrent() && document.visibilityState === 'visible') void get().fetchRecentMessages(channelId);
+    }, 2000);
     const refreshWhenConnected = () => { if (isCurrent() && document.visibilityState === 'visible') void get().fetchRecentMessages(channelId); };
     window.addEventListener('online', refreshWhenConnected);
     document.addEventListener('visibilitychange', refreshWhenConnected);
     set({ activeSubscription: subscription, activeSubscriptionChannelId: channelId, activeSubscriptionCleanup: () => {
+      window.clearInterval(recoveryTimer);
       window.removeEventListener('online', refreshWhenConnected);
       document.removeEventListener('visibilitychange', refreshWhenConnected);
     } });
