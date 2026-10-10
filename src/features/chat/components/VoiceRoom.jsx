@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionQualityIndicator, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { AudioPresets, DisconnectReason, Room as LiveKitClientRoom, RoomEvent, Track, supportsAudioOutputSelection } from 'livekit-client';
-import { Activity, AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minimize2, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, Shield, ShieldAlert, Signal, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
+import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
 import { generateLiveKitToken } from '../../../lib/livekit';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { useServerStore } from '../../../store/useServerStore';
@@ -34,52 +34,25 @@ function getAudioPublishOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
   return { audioPreset: settings.audioQuality === 'high' ? AudioPresets.musicHighQuality : AudioPresets.speech };
 }
 
-function VoiceConnectionHealth() {
-  const { localParticipant } = useLocalParticipant();
+function EnableMicrophoneAfterConnect({ settings, onFailure }) {
+  const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const connectionState = useConnectionState();
-  const { quality } = useConnectionQualityIndicator({ participant: localParticipant });
-  const [stats, setStats] = useState({ latency: null, packetLoss: null });
+  const attemptedRef = useRef(false);
 
   useEffect(() => {
-    if (connectionState !== 'connected') { setStats({ latency: null, packetLoss: null }); return undefined; }
+    if (connectionState !== 'connected') {
+      attemptedRef.current = false;
+      return undefined;
+    }
+    if (attemptedRef.current || isMicrophoneEnabled) return undefined;
+    attemptedRef.current = true;
     let active = true;
-    let checking = false;
-    const refresh = async () => {
-      if (checking) return;
-      checking = true;
-      try {
-        const track = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-        const report = await track?.getSenderStats?.();
-        if (!active || !report) return;
-        const packetsLost = Number(report.packetsLost);
-        const packetsSent = Number(report.packetsSent);
-        setStats({
-          latency: Number.isFinite(Number(report.roundTripTime)) ? Math.round(Number(report.roundTripTime) * 1000) : null,
-          packetLoss: Number.isFinite(packetsLost) && Number.isFinite(packetsSent) && packetsLost >= 0 && packetsSent > 0
-            ? Math.min(100, Math.round((packetsLost / (packetsSent + packetsLost)) * 1000) / 10)
-            : null,
-        });
-      } catch { if (active) setStats({ latency: null, packetLoss: null }); }
-      finally { checking = false; }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 4000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [connectionState, localParticipant]);
+    void localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(settings), getAudioPublishOptions(settings))
+      .catch((error) => { if (active) onFailure(error); });
+    return () => { active = false; };
+  }, [connectionState, isMicrophoneEnabled, localParticipant, onFailure, settings]);
 
-  const details = {
-    excellent: { label: 'Çok iyi', className: 'border-emerald-300/15 bg-emerald-300/[0.07] text-emerald-100' },
-    good: { label: 'İyi', className: 'border-cyan-300/15 bg-cyan-300/[0.07] text-cyan-100' },
-    poor: { label: 'Zayıf', className: 'border-amber-300/20 bg-amber-300/[0.07] text-amber-100' },
-    lost: { label: 'Kesiliyor', className: 'border-rose-300/20 bg-rose-300/[0.07] text-rose-100' },
-    unknown: { label: connectionState === 'connected' ? 'Ölçülüyor' : 'Bağlı değil', className: 'border-white/10 bg-white/[0.04] text-slate-300' },
-  }[quality] || { label: 'Ölçülüyor', className: 'border-white/10 bg-white/[0.04] text-slate-300' };
-  return <div role="status" aria-label="Ses bağlantısı kalitesi" title={`Bağlantı: ${details.label} · Gidiş dönüş: ${stats.latency == null ? 'ölçülüyor' : `${stats.latency} ms`} · Mikrofon paket kaybı: ${stats.packetLoss == null ? 'ölçülüyor' : `%${stats.packetLoss}`}`} className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 ${details.className}`}>
-    <Signal className="h-3.5 w-3.5 shrink-0" />
-    <span className="min-w-0 flex-1 text-[10px] font-semibold">{details.label}</span>
-    {stats.latency != null && <span className="text-[9px] tabular-nums opacity-80">{stats.latency} ms</span>}
-    {stats.packetLoss != null && stats.packetLoss > 0 && <span className="text-[9px] tabular-nums opacity-80">%{stats.packetLoss} kayıp</span>}
-  </div>;
+  return null;
 }
 
 class VoiceRoomErrorBoundary extends Component {
@@ -105,11 +78,15 @@ class VoiceRoomErrorBoundary extends Component {
   }
 }
 
-function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened, outputVolume = 100 }) {
+function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened, outputVolume = 100, watchedScreenShares = new Set(), screenShares = [] }) {
   const tracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio, Track.Source.Unknown], { onlySubscribed: true });
   return <div hidden>{tracks.filter((track) => !track.participant.isLocal && track.publication.kind === Track.Kind.Audio).map((track) => {
     const playback = getVoicePlayback({ source: track.source, participantId: track.participant.identity, volumes, shareVolumes, mutedShares, deafened });
     playback.volume = Math.min(2, playback.volume * Math.max(0, Math.min(200, Number(outputVolume) || 0)) / 100);
+    if (track.source === Track.Source.ScreenShareAudio) {
+      const screen = screenShares.find((candidate) => candidate.participant.identity === track.participant.identity);
+      if (!screen || !watchedScreenShares.has(`screen:${track.participant.identity}:${screen.publication.trackSid}`)) playback.muted = true;
+    }
     playback.muted = playback.muted || playback.volume === 0;
     return <AudioTrack key={`${track.participant.identity}:${track.publication.trackSid}`} trackRef={track} volume={playback.volume} muted={playback.muted} />;
   })}</div>;
@@ -121,10 +98,11 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   const { isMicrophoneEnabled } = useLocalParticipant();
   const speakingParticipants = useSpeakingParticipants();
   const connectionState = useConnectionState();
-  const videoTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: true });
+  const videoTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: false });
   const currentUser = useAuthStore((state) => state.user);
   const server = useServerStore((state) => state.servers.find((item) => item.id === serverId));
   const [profiles, setProfiles] = useState([]);
+  const [watchedScreenShares, setWatchedScreenShares] = useState(() => new Set());
   const [expandedShareId, setExpandedShareId] = useState(null);
   const [shareFullscreenError, setShareFullscreenError] = useState('');
   const [moderationByUser, setModerationByUser] = useState({});
@@ -145,6 +123,19 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   const previousRemoteParticipantsRef = useRef(null);
   const fullscreenShareRef = useRef(null);
   const screenShares = videoTracks.filter((track) => track.publication.source === Track.Source.ScreenShare);
+  useEffect(() => {
+    for (const track of screenShares) {
+      const shareKey = `screen:${track.participant.identity}:${track.publication.trackSid}`;
+      if (!track.participant.isLocal && !watchedScreenShares.has(shareKey) && track.publication.isSubscribed) {
+        track.publication.setSubscribed(false);
+      }
+    }
+  }, [screenShares, watchedScreenShares]);
+  const watchScreenShare = (track) => {
+    const shareKey = `screen:${track.participant.identity}:${track.publication.trackSid}`;
+    setWatchedScreenShares((current) => new Set(current).add(shareKey));
+    if (!track.participant.isLocal) track.publication.setSubscribed(true);
+  };
   // LiveKit may keep a muted camera publication around after its video element
   // has stopped. Do not render an empty VideoTrack: it leaves a black tile behind.
   const cameraShares = videoTracks.filter((track) => track.publication.source === Track.Source.Camera
@@ -455,7 +446,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col text-slate-100">
-      <VoicePlayback volumes={savedVolumes} shareVolumes={shareVolumes} mutedShares={mutedShares} deafened={localDeafened} outputVolume={outputVolume} />
+      <VoicePlayback volumes={savedVolumes} shareVolumes={shareVolumes} mutedShares={mutedShares} deafened={localDeafened} outputVolume={outputVolume} watchedScreenShares={watchedScreenShares} screenShares={screenShares} />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-white">Ses odasındakiler</h2>
@@ -469,7 +460,10 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
       {(screenShares.length > 0 || cameraShares.length > 0) && <section aria-label="Canlı yayınlar" className="mb-5 grid gap-4">
         {screenShares.map((track) => <article key={`screen-${track.participant.identity}`} onContextMenu={(event) => openShareMenu(event, track.participant)} ref={(element) => { const key = `screen:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`screen:${track.participant.identity}`} className="screen-share-card overflow-hidden rounded-[22px] border border-violet-300/20 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.32)]">
           <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[linear-gradient(100deg,rgba(139,92,246,.12),transparent)] px-4 py-3 text-xs font-semibold text-violet-100"><span className="flex min-w-0 items-center gap-2"><MonitorUp className="h-4 w-4 shrink-0"/><span className="truncate">{track.participant.name || track.participant.identity}<span className="ml-1.5 font-normal text-slate-400">ekranını paylaşıyor</span></span></span><button type="button" onClick={() => void toggleShareFullscreen(`screen:${track.participant.identity}`)} aria-label={expandedShareId === `screen:${track.participant.identity}` ? 'Ekran paylaşımını küçült' : 'Ekran paylaşımını büyüt'} title="Büyüt / tam ekran" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-violet-200/25 hover:bg-violet-300/15"><Maximize2 className="h-4 w-4"/></button></div>
-          <div onDoubleClick={(event) => { if (!event.target.closest('button')) void toggleShareFullscreen(`screen:${track.participant.identity}`); }} className="screen-share-stage relative aspect-video max-h-[min(68vh,760px)] bg-[#05070b]"><VideoTrack trackRef={track} className="h-full w-full object-contain"/>
+          <div onDoubleClick={(event) => { if (!event.target.closest('button')) void toggleShareFullscreen(`screen:${track.participant.identity}`); }} className="screen-share-stage relative aspect-video max-h-[min(68vh,760px)] bg-[#05070b]">
+            {watchedScreenShares.has(`screen:${track.participant.identity}:${track.publication.trackSid}`)
+              ? <VideoTrack trackRef={track} className="h-full w-full object-contain" />
+              : <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[radial-gradient(ellipse_at_center,rgba(139,92,246,.14),transparent_55%)]"><span className="grid h-14 w-14 place-items-center rounded-2xl border border-violet-200/20 bg-violet-300/10 text-violet-100"><MonitorUp className="h-6 w-6" /></span><span className="text-sm font-semibold text-slate-200">{track.participant.name || track.participant.identity} yayın paylaşıyor</span><button type="button" onClick={() => watchScreenShare(track)} className="rounded-xl bg-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-950/40 transition hover:bg-violet-400">Yayını izle</button></div>}
             <button type="button" onClick={(event) => openShareMenu(event, track.participant)} aria-label="Yayın ses seçenekleri" title="Yayın ses seçenekleri · sağ tık" className="absolute bottom-3 right-3 flex items-center gap-2 rounded-xl border border-white/15 bg-[#111722]/90 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-xl hover:bg-[#202839]">
               {track.participant.isLocal || mutedShares[track.participant.identity] || normalizeVoiceVolume(shareVolumes[track.participant.identity]) === 0 ? <VolumeX className="h-4 w-4 text-rose-200" /> : <Volume2 className="h-4 w-4 text-violet-200" />}
               {track.participant.isLocal ? 'Önizleme sessiz' : mutedShares[track.participant.identity] || normalizeVoiceVolume(shareVolumes[track.participant.identity]) === 0 ? 'Yayın sende sessiz' : `Yayın sesi · %${Math.round(normalizeVoiceVolume(shareVolumes[track.participant.identity]) * 100)}`}
@@ -804,7 +798,6 @@ function VoiceAudioSettings({ currentUserId }) {
     <button type="button" aria-label="Ses ayarları" aria-expanded={open} title="Mikrofon, hoparlör ve ses kalitesi" onClick={() => { setOpen(value => !value); setMessage(''); }} className={`grid h-9 w-9 place-items-center rounded-xl border transition ${open ? 'border-cyan-200/25 bg-cyan-300/15 text-cyan-100' : 'border-white/10 bg-white/[0.07] text-slate-200 hover:bg-white/10'}`}><Settings2 className="h-4 w-4" /></button>
     {open && <section aria-label="Ses ayarları" className="absolute bottom-[calc(100%+12px)] right-0 z-[110] max-h-[min(76vh,760px)] w-[min(720px,calc(100vw-28px))] overflow-y-auto rounded-[24px] border border-cyan-100/15 bg-[linear-gradient(145deg,rgba(30,38,54,.99),rgba(13,18,28,.99))] p-4 shadow-[0_24px_80px_rgba(0,0,0,.65),0_0_30px_rgba(34,211,238,.08)] backdrop-blur-2xl sm:p-5">
       <header className="mb-3 flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-200/10 text-cyan-100"><AudioLines className="h-4 w-4" /></span><div><h3 className="text-sm font-semibold text-white">Ses kalitesi</h3><p className="mt-0.5 text-[10px] text-slate-400">WebRTC mikrofon işleme ve cihaz tercihleri</p></div></header>
-      <div className="mb-3"><VoiceConnectionHealth /></div>
       <div className="space-y-3">
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Giden ses kalitesi</span><AnimatedSelect ariaLabel="Mikrofon yayın kalitesi" value={settings.audioQuality} onValueChange={value => void updateAudioQuality(value)} options={[{ value: 'speech', label: 'Konuşma · düşük internet kullanımı' }, { value: 'high', label: 'Yüksek kalite · daha çok internet' }]} disabled={busy !== ''} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Mikrofon girişi</span><AnimatedSelect ariaLabel="Mikrofon girişi" value={settings.inputDeviceId} onValueChange={value => void changeDevice('audioinput', value)} options={inputOptions} disabled={busy !== ''} className="w-full" /></label>
@@ -1040,7 +1033,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
       const phase = typeof payload === 'object' ? payload?.phase : null;
       if (action === 'pushToTalk') {
         if (phase === 'up') { pushToTalkReleaseRef.current(); return; }
-        if (phase === 'down' && !document.hasFocus()) pushToTalkPressRef.current();
+        if (phase === 'down') pushToTalkPressRef.current();
         return;
       }
       // The DOM key handler owns the focused case. This prevents a global
@@ -1342,7 +1335,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
         <LiveKitRoom
           key={`${channelId}:${attempt}`}
           video={false}
-          audio={getAudioCaptureOptions(voiceAudioSettings)}
+          audio={false}
           options={{ publishDefaults: getAudioPublishOptions(voiceAudioSettings), webAudioMix: true, adaptiveStream: true, dynacast: true }}
           connect
           token={token}
@@ -1354,6 +1347,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           onMediaDeviceFailure={handleMediaDeviceFailure}
           onError={handleLiveKitError}
         >
+          <EnableMicrophoneAfterConnect settings={voiceAudioSettings} onFailure={handleMediaDeviceFailure} />
           <div className={`flex min-h-0 flex-col ${isStageVisible || isDockExpanded ? 'h-full' : ''}`}>
             <div className={isStageVisible || isDockExpanded ? 'flex min-h-0 flex-1' : 'pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0'}>
               <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4"><VoiceParticipants serverId={serverId} channelId={channelId} localDeafened={localDeafened} outputVolume={voiceAudioSettings.outputVolume} onPresenceError={onPresenceError} onParticipantsChange={onParticipantsChange} contextMenuRequest={contextMenuRequest} onContextMenuRequestHandled={onContextMenuRequestHandled} /></div>

@@ -304,6 +304,9 @@ export const useNotificationStore = create((set, get) => ({
     return true;
   },
 
+  notifyIncomingMessage: (message, isDM, userId = useAuthStore.getState().user?.id) =>
+    showIncomingMessageToast(message, Boolean(isDM), userId),
+
   subscribeToNotifications: () => {
     const user = useAuthStore.getState().user;
     if (!user) return;

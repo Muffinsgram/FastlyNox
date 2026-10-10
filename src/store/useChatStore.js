@@ -94,6 +94,9 @@ export const useChatStore = create((set, get) => ({
         const stateMessages = get().messages[channelId] || [];
         if (stateMessages.find(m => m.id === newMsg.id)) return;
         get().receiveRealtimeMessage(channelId, { ...newMsg, profiles: { id: newMsg.user_id, username: 'Yükleniyor', avatar_url: null } });
+        if (newMsg.user_id !== useAuthStore.getState().user?.id) {
+          window.dispatchEvent(new CustomEvent('fastlynox:incoming-message', { detail: { message: newMsg, isDM: false } }));
+        }
         void supabase.from('profiles').select('id, username, avatar_url').eq('id', newMsg.user_id).single().then(({ data: profile }) => {
           if (isCurrent() && profile) get().receiveRealtimeMessage(channelId, newMsg, profile);
         }).catch((error) => console.warn('Canlı mesaj profili yüklenemedi:', error));

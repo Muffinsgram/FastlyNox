@@ -267,6 +267,9 @@ export const useFriendStore = create((set, get) => ({
           : null;
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           useDMChatStore.getState().receiveRealtimeMessage(channelId, message, senderProfile);
+          if (payload.eventType === 'INSERT' && message?.user_id !== userId) {
+            window.dispatchEvent(new CustomEvent('fastlynox:incoming-message', { detail: { message, isDM: true } }));
+          }
         } else if (payload.eventType === 'DELETE') {
           useDMChatStore.getState().removeRealtimeMessage(channelId, payload.old?.id);
         }

@@ -27,6 +27,15 @@ export function NotificationManager({ onOpenNotification }) {
     };
   }, [userId, fetchNotifications, subscribeToNotifications, unsubscribe]);
 
+  useEffect(() => {
+    const handleIncomingMessage = (event) => {
+      const { message, isDM } = event.detail || {};
+      if (message?.id) void useNotificationStore.getState().notifyIncomingMessage(message, isDM, userId);
+    };
+    window.addEventListener('fastlynox:incoming-message', handleIncomingMessage);
+    return () => window.removeEventListener('fastlynox:incoming-message', handleIncomingMessage);
+  }, [userId]);
+
   return (
     <div className="fixed bottom-6 right-6 z-[100] flex flex-col gap-3 pointer-events-none">
       {activeToasts.map((toast) => (

@@ -67,6 +67,8 @@ let nativeInputHook;
 let nativeInputKeys;
 let nativeInputHookReady = false;
 let nativeInputHookActive = false;
+let mainWindowBlurred = false;
+const nativeHeldKeys = new Set();
 const activeBackgroundVoiceBindings = new Map();
 
 function sendVoiceHotkey(action, phase = null) {
@@ -86,8 +88,8 @@ function nativeKeyNameFromCode(code) {
     NumpadDecimal: 'NumpadDecimal', NumpadDivide: 'NumpadDivide',
     ControlLeft: 'Ctrl', ControlRight: 'CtrlRight', AltLeft: 'Alt', AltRight: 'AltRight',
     ShiftLeft: 'Shift', ShiftRight: 'ShiftRight', MetaLeft: 'Meta', MetaRight: 'MetaRight',
-    Ctrl: 'Ctrl', CtrlRight: 'CtrlRight', Alt: 'Alt', AltRight: 'AltRight',
-    Shift: 'Shift', ShiftRight: 'ShiftRight', Meta: 'Meta', MetaRight: 'MetaRight', AltGraph: 'AltRight',
+    Ctrl: 'Ctrl', CtrlRight: 'CtrlRight', Alt: 'Alt',
+    Shift: 'Shift', Meta: 'Meta', AltGraph: 'AltRight',
   };
   if (special[code]) return special[code];
   if (/^Key[A-Z]$/u.test(code)) return code.slice(3);
@@ -114,13 +116,26 @@ function parseGlobalVoiceBinding(binding) {
 
 function eventHasBindingModifiers(event, binding) {
   const codeIsModifier = /^(?:Control|Ctrl|Alt|Shift|Meta)/u.test(binding.code);
+  if (codeIsModifier) return binding.modifiers.size === 0 && event.keycode === binding.keycode;
+  const keycode = (name) => nativeInputKeys?.[name];
+  const rightCtrlHeld = nativeHeldKeys.has(keycode('CtrlRight'));
+  const leftCtrlHeld = nativeHeldKeys.has(keycode('Ctrl'));
+  const rightAltHeld = nativeHeldKeys.has(keycode('AltRight'));
+  const leftAltHeld = nativeHeldKeys.has(keycode('Alt'));
+  const altGraphCtrl = event.ctrlKey && rightAltHeld && !rightCtrlHeld && !leftCtrlHeld;
   const expected = {
     Ctrl: binding.modifiers.has('Ctrl') || binding.modifiers.has('CtrlRight') || /^(?:Control|Ctrl)/u.test(binding.code),
     Alt: binding.modifiers.has('Alt') || binding.modifiers.has('AltRight') || binding.modifiers.has('AltGraph') || /^Alt/u.test(binding.code),
     Shift: binding.modifiers.has('Shift') || binding.modifiers.has('ShiftRight') || /^Shift/u.test(binding.code),
     Meta: binding.modifiers.has('Meta') || binding.modifiers.has('MetaRight') || /^Meta/u.test(binding.code),
   };
-  return event.ctrlKey === expected.Ctrl && event.altKey === expected.Alt && event.shiftKey === expected.Shift && event.metaKey === expected.Meta && (!codeIsModifier || binding.modifiers.size === 0);
+  if ((event.ctrlKey && !expected.Ctrl && !altGraphCtrl) || (!event.ctrlKey && expected.Ctrl)) return false;
+  if (event.altKey !== expected.Alt || event.shiftKey !== expected.Shift || event.metaKey !== expected.Meta) return false;
+  if (binding.modifiers.has('CtrlRight') && !rightCtrlHeld) return false;
+  if (binding.modifiers.has('AltRight') && !rightAltHeld) return false;
+  if (binding.modifiers.has('Ctrl') && !rightCtrlHeld && !leftCtrlHeld) return false;
+  if (binding.modifiers.has('Alt') && !rightAltHeld && !leftAltHeld) return false;
+  return true;
 }
 
 function eventMatchesGlobalVoiceBinding(event, binding) {
@@ -143,15 +158,17 @@ function eventReleasesGlobalVoiceBinding(event, binding, inputType) {
 }
 
 function handleBackgroundVoiceInput(event, phase, inputType) {
-  if (!voiceHotkeysEnabled || !nativeInputHookActive || !mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) return;
+  if (!voiceHotkeysEnabled || !nativeInputHookActive || !mainWindowBlurred || !mainWindow || mainWindow.isDestroyed()) return;
   if (phase === 'up') {
     for (const [action, activeBinding] of activeBackgroundVoiceBindings) {
       if (!eventReleasesGlobalVoiceBinding(event, activeBinding, inputType)) continue;
       activeBackgroundVoiceBindings.delete(action);
       if (action === 'pushToTalk') sendVoiceHotkey(action, 'up');
     }
+    if (inputType === 'keyboard') nativeHeldKeys.delete(event.keycode);
     return;
   }
+  if (inputType === 'keyboard') nativeHeldKeys.add(event.keycode);
   for (const action of ['toggleMicrophone', 'toggleDeafen', 'pushToTalk']) {
     const binding = parseGlobalVoiceBinding(voiceKeybinds[action]);
     if (!binding || activeBackgroundVoiceBindings.has(action)) continue;
@@ -168,7 +185,7 @@ function handleBackgroundVoiceInput(event, phase, inputType) {
 }
 
 function startBackgroundVoiceInput() {
-  if (!voiceHotkeysEnabled || nativeInputHookActive || !mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) return;
+  if (!voiceHotkeysEnabled || nativeInputHookActive || !mainWindow || mainWindow.isDestroyed()) return;
   try {
     if (!nativeInputHookReady) {
       const hook = require('uiohook-napi');
@@ -192,8 +209,15 @@ function stopBackgroundVoiceInput() {
     try { nativeInputHook.stop(); } catch { /* Hook may already be stopping. */ }
   }
   nativeInputHookActive = false;
+  nativeHeldKeys.clear();
   if (activeBackgroundVoiceBindings.has('pushToTalk')) sendVoiceHotkey('pushToTalk', 'up');
   activeBackgroundVoiceBindings.clear();
+}
+
+function releaseBackgroundVoiceInputs() {
+  if (activeBackgroundVoiceBindings.has('pushToTalk')) sendVoiceHotkey('pushToTalk', 'up');
+  activeBackgroundVoiceBindings.clear();
+  nativeHeldKeys.clear();
 }
 
 function toElectronAccelerator(binding) {
@@ -248,8 +272,8 @@ function refreshVoiceHotkeys() {
       registeredVoiceHotkeys.add(requested);
     } else allRegistered = false;
   }
-  if (voiceHotkeysEnabled && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) startBackgroundVoiceInput();
-  else if (!voiceHotkeysEnabled || (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())) stopBackgroundVoiceInput();
+  if (voiceHotkeysEnabled) startBackgroundVoiceInput();
+  else stopBackgroundVoiceInput();
   return { success: allRegistered, bindings: registeredBindings };
 }
 
@@ -319,8 +343,8 @@ function createWindow() {
     },
   });
 
-  mainWindow.on('blur', startBackgroundVoiceInput);
-  mainWindow.on('focus', stopBackgroundVoiceInput);
+  mainWindow.on('blur', () => { mainWindowBlurred = true; startBackgroundVoiceInput(); });
+  mainWindow.on('focus', () => { mainWindowBlurred = false; releaseBackgroundVoiceInputs(); });
 
   mainWindow.on('maximize', publishWindowState);
   mainWindow.on('unmaximize', publishWindowState);

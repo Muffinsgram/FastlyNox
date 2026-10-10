@@ -49,6 +49,9 @@ Deno.serve(async (request) => {
     });
     const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
     if (authError || !user) return respond(401, { error: 'Authentication expired. Sign in again.' });
+    // Fetch the display name while room and permission checks run, instead of
+    // adding another sequential database round trip before signing the token.
+    const profilePromise = supabase.from('profiles').select('username').eq('id', user.id).maybeSingle();
 
     if (action === 'list_participants') {
       if (dmChannelId) return respond(400, { error: 'DM roster is not supported by this action.' });
@@ -130,8 +133,7 @@ Deno.serve(async (request) => {
       roomId = channel.id;
     }
 
-    const { data: profile } = await supabase
-      .from('profiles').select('username').eq('id', user.id).maybeSingle();
+    const { data: profile } = await profilePromise;
     const token = await new SignJWT({
       name: profile?.username || user.email || 'User',
       video: { room: roomId, roomJoin: true, canPublish: true, canPublishSources, canSubscribe },
