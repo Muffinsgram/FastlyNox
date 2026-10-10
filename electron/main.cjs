@@ -61,8 +61,140 @@ function applyAutoStart(enabled) {
 let selectedScreenShareAudio = false;
 let lastUpdateStatus = { state: 'idle' };
 let voiceHotkeysEnabled = false;
-let voiceKeybinds = { toggleMicrophone: '', toggleDeafen: '' };
+let voiceKeybinds = { toggleMicrophone: '', toggleDeafen: '', pushToTalk: '' };
 const registeredVoiceHotkeys = new Set();
+let nativeInputHook;
+let nativeInputKeys;
+let nativeInputHookReady = false;
+let nativeInputHookActive = false;
+const activeBackgroundVoiceBindings = new Map();
+
+function sendVoiceHotkey(action, phase = null) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('fastlynox:voice-hotkey', phase ? { action, phase } : action);
+}
+
+function nativeKeyNameFromCode(code) {
+  const special = {
+    Space: 'Space', Enter: 'Enter', NumpadEnter: 'NumpadEnter', Escape: 'Escape', Backspace: 'Backspace',
+    CapsLock: 'CapsLock', NumLock: 'NumLock', ScrollLock: 'ScrollLock', PrintScreen: 'PrintScreen',
+    Tab: 'Tab', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight',
+    Delete: 'Delete', Insert: 'Insert', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+    Minus: 'Minus', Equal: 'Equal', BracketLeft: 'BracketLeft', BracketRight: 'BracketRight', Backslash: 'Backslash',
+    Semicolon: 'Semicolon', Quote: 'Quote', Backquote: 'Backquote', Comma: 'Comma', Period: 'Period', Slash: 'Slash',
+    NumpadMultiply: 'NumpadMultiply', NumpadAdd: 'NumpadAdd', NumpadSubtract: 'NumpadSubtract',
+    NumpadDecimal: 'NumpadDecimal', NumpadDivide: 'NumpadDivide',
+    ControlLeft: 'Ctrl', ControlRight: 'CtrlRight', AltLeft: 'Alt', AltRight: 'AltRight',
+    ShiftLeft: 'Shift', ShiftRight: 'ShiftRight', MetaLeft: 'Meta', MetaRight: 'MetaRight',
+    Ctrl: 'Ctrl', CtrlRight: 'CtrlRight', Alt: 'Alt', AltRight: 'AltRight',
+    Shift: 'Shift', ShiftRight: 'ShiftRight', Meta: 'Meta', MetaRight: 'MetaRight', AltGraph: 'AltRight',
+  };
+  if (special[code]) return special[code];
+  if (/^Key[A-Z]$/u.test(code)) return code.slice(3);
+  if (/^Digit[0-9]$/u.test(code)) return code.slice(5);
+  if (/^Numpad[0-9]$/u.test(code)) return code;
+  if (/^Numpad(?:Arrow(?:Up|Down|Left|Right)|Home|End|PageUp|PageDown|Insert|Delete)$/u.test(code)) return code;
+  if (/^F(?:[1-9]|1[0-9]|2[0-4])$/u.test(code)) return code;
+  return '';
+}
+
+function parseGlobalVoiceBinding(binding) {
+  if (typeof binding !== 'string' || !binding) return null;
+  const parts = binding.split('+');
+  const code = parts.pop();
+  const modifiers = new Set(parts);
+  const modifierKeycodes = [...modifiers]
+    .map((modifier) => nativeInputKeys?.[modifier === 'AltGraph' ? 'AltRight' : modifier])
+    .filter(Number.isFinite);
+  if (code === 'Mouse4' || code === 'Mouse5') return { code, modifiers, modifierKeycodes };
+  const keyName = nativeKeyNameFromCode(code);
+  const keycode = keyName ? nativeInputKeys?.[keyName] : null;
+  return Number.isFinite(keycode) ? { code, keycode, modifiers, modifierKeycodes } : null;
+}
+
+function eventHasBindingModifiers(event, binding) {
+  const codeIsModifier = /^(?:Control|Ctrl|Alt|Shift|Meta)/u.test(binding.code);
+  const expected = {
+    Ctrl: binding.modifiers.has('Ctrl') || binding.modifiers.has('CtrlRight') || /^(?:Control|Ctrl)/u.test(binding.code),
+    Alt: binding.modifiers.has('Alt') || binding.modifiers.has('AltRight') || binding.modifiers.has('AltGraph') || /^Alt/u.test(binding.code),
+    Shift: binding.modifiers.has('Shift') || binding.modifiers.has('ShiftRight') || /^Shift/u.test(binding.code),
+    Meta: binding.modifiers.has('Meta') || binding.modifiers.has('MetaRight') || /^Meta/u.test(binding.code),
+  };
+  return event.ctrlKey === expected.Ctrl && event.altKey === expected.Alt && event.shiftKey === expected.Shift && event.metaKey === expected.Meta && (!codeIsModifier || binding.modifiers.size === 0);
+}
+
+function eventMatchesGlobalVoiceBinding(event, binding) {
+  if (!binding || !eventHasBindingModifiers(event, binding)) return false;
+  if (binding.code === 'Mouse4' || binding.code === 'Mouse5') {
+    const button = Number(event.button);
+    return (binding.code === 'Mouse4' && button === 4) || (binding.code === 'Mouse5' && button === 5);
+  }
+  return event.keycode === binding.keycode;
+}
+
+function eventReleasesGlobalVoiceBinding(event, binding, inputType) {
+  if (binding.code === 'Mouse4' || binding.code === 'Mouse5') {
+    if (inputType !== 'mouse') return false;
+    const button = Number(event.button);
+    return (binding.code === 'Mouse4' && button === 4) || (binding.code === 'Mouse5' && button === 5);
+  }
+  return inputType === 'keyboard'
+    && (event.keycode === binding.keycode || binding.modifierKeycodes.includes(event.keycode));
+}
+
+function handleBackgroundVoiceInput(event, phase, inputType) {
+  if (!voiceHotkeysEnabled || !nativeInputHookActive || !mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) return;
+  if (phase === 'up') {
+    for (const [action, activeBinding] of activeBackgroundVoiceBindings) {
+      if (!eventReleasesGlobalVoiceBinding(event, activeBinding, inputType)) continue;
+      activeBackgroundVoiceBindings.delete(action);
+      if (action === 'pushToTalk') sendVoiceHotkey(action, 'up');
+    }
+    return;
+  }
+  for (const action of ['toggleMicrophone', 'toggleDeafen', 'pushToTalk']) {
+    const binding = parseGlobalVoiceBinding(voiceKeybinds[action]);
+    if (!binding || activeBackgroundVoiceBindings.has(action)) continue;
+    const accelerator = toElectronAccelerator(voiceKeybinds[action]);
+    // Electron's native shortcut owns successful keyboard bindings. The low-level
+    // hook fills the gaps (push-to-talk, mouse buttons, and unsupported keys).
+    if (action !== 'pushToTalk' && accelerator && registeredVoiceHotkeys.has(accelerator)) continue;
+    if ((inputType === 'mouse') !== (binding.code === 'Mouse4' || binding.code === 'Mouse5')) continue;
+    if (!eventMatchesGlobalVoiceBinding(event, binding)) continue;
+    activeBackgroundVoiceBindings.set(action, binding);
+    if (action === 'pushToTalk') sendVoiceHotkey(action, 'down');
+    else sendVoiceHotkey(action);
+  }
+}
+
+function startBackgroundVoiceInput() {
+  if (!voiceHotkeysEnabled || nativeInputHookActive || !mainWindow || mainWindow.isDestroyed() || mainWindow.isFocused()) return;
+  try {
+    if (!nativeInputHookReady) {
+      const hook = require('uiohook-napi');
+      nativeInputHook = hook.uIOhook;
+      nativeInputKeys = hook.UiohookKey;
+      nativeInputHook.on('keydown', (event) => handleBackgroundVoiceInput(event, 'down', 'keyboard'));
+      nativeInputHook.on('keyup', (event) => handleBackgroundVoiceInput(event, 'up', 'keyboard'));
+      nativeInputHook.on('mousedown', (event) => handleBackgroundVoiceInput(event, 'down', 'mouse'));
+      nativeInputHook.on('mouseup', (event) => handleBackgroundVoiceInput(event, 'up', 'mouse'));
+      nativeInputHookReady = true;
+    }
+    nativeInputHook.start();
+    nativeInputHookActive = true;
+  } catch (error) {
+    console.warn('Arka plan bas-konuş kısayolu başlatılamadı.', error);
+  }
+}
+
+function stopBackgroundVoiceInput() {
+  if (nativeInputHookActive) {
+    try { nativeInputHook.stop(); } catch { /* Hook may already be stopping. */ }
+  }
+  nativeInputHookActive = false;
+  if (activeBackgroundVoiceBindings.has('pushToTalk')) sendVoiceHotkey('pushToTalk', 'up');
+  activeBackgroundVoiceBindings.clear();
+}
 
 function toElectronAccelerator(binding) {
   if (typeof binding !== 'string' || !binding || binding.includes('Mouse')) return '';
@@ -109,13 +241,15 @@ function refreshVoiceHotkeys() {
     const registered = globalShortcut.register(requested, () => {
       // Let the renderer decide whether the app is focused. Windows can report
       // a stale BrowserWindow focus state around minimize/restore transitions.
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('fastlynox:voice-hotkey', action);
+      sendVoiceHotkey(action);
     });
     if (registered) {
       registeredBindings[action] = requested;
       registeredVoiceHotkeys.add(requested);
     } else allRegistered = false;
   }
+  if (voiceHotkeysEnabled && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) startBackgroundVoiceInput();
+  else if (!voiceHotkeysEnabled || (mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused())) stopBackgroundVoiceInput();
   return { success: allRegistered, bindings: registeredBindings };
 }
 
@@ -184,6 +318,9 @@ function createWindow() {
       sandbox: true,
     },
   });
+
+  mainWindow.on('blur', startBackgroundVoiceInput);
+  mainWindow.on('focus', stopBackgroundVoiceInput);
 
   mainWindow.on('maximize', publishWindowState);
   mainWindow.on('unmaximize', publishWindowState);
@@ -320,6 +457,7 @@ ipcMain.handle('fastlynox:set-voice-keybinds', (event, bindings = {}) => {
   voiceKeybinds = {
     toggleMicrophone: typeof bindings.toggleMicrophone === 'string' ? bindings.toggleMicrophone.slice(0, 80) : '',
     toggleDeafen: typeof bindings.toggleDeafen === 'string' ? bindings.toggleDeafen.slice(0, 80) : '',
+    pushToTalk: typeof bindings.pushToTalk === 'string' ? bindings.pushToTalk.slice(0, 80) : '',
   };
   return refreshVoiceHotkeys();
 });

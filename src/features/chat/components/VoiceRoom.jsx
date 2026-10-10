@@ -2,7 +2,7 @@ import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, us
 import { createPortal } from 'react-dom';
 import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionQualityIndicator, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
-import { AudioPresets, DisconnectReason, Room as LiveKitClientRoom, Track, supportsAudioOutputSelection } from 'livekit-client';
+import { AudioPresets, DisconnectReason, Room as LiveKitClientRoom, RoomEvent, Track, supportsAudioOutputSelection } from 'livekit-client';
 import { Activity, AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minimize2, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, Shield, ShieldAlert, Signal, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
 import { generateLiveKitToken } from '../../../lib/livekit';
 import { useAuthStore } from '../../../store/useAuthStore';
@@ -116,6 +116,7 @@ function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened, outputVol
 }
 
 function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, onPresenceError, onParticipantsChange, contextMenuRequest, onContextMenuRequestHandled }) {
+  const room = useRoomContext();
   const participants = useParticipants();
   const { isMicrophoneEnabled } = useLocalParticipant();
   const speakingParticipants = useSpeakingParticipants();
@@ -142,6 +143,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   const participantIds = participants.map((participant) => participant.identity).filter(Boolean);
   const participantKey = participantIds.slice().sort().join(',');
   const previousRemoteParticipantsRef = useRef(null);
+  const fullscreenShareRef = useRef(null);
   const screenShares = videoTracks.filter((track) => track.publication.source === Track.Source.ScreenShare);
   // LiveKit may keep a muted camera publication around after its video element
   // has stopped. Do not render an empty VideoTrack: it leaves a black tile behind.
@@ -172,6 +174,26 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   // participantKey changes only when room membership changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionState, participantKey, currentUser?.id]);
+  const publishShareViewingChange = (fullscreenKey, action) => {
+    if (!fullscreenKey) return;
+    const shareIdentity = fullscreenKey.slice(fullscreenKey.indexOf(':') + 1);
+    if (!shareIdentity || shareIdentity === currentUser?.id) return;
+    playUiSound(action === 'start' ? 'streamWatchStart' : 'streamWatchEnd', currentUser?.id);
+    const payload = new TextEncoder().encode(JSON.stringify({ type: 'fastlynox:screen-share-view', action, shareIdentity }));
+    void room.localParticipant.publishData(payload, { reliable: true, topic: 'fastlynox:screen-share-view' }).catch(() => {});
+  };
+  useEffect(() => {
+    const handleDataReceived = (payload, participant) => {
+      if (!participant || participant.identity === currentUser?.id) return;
+      try {
+        const message = JSON.parse(new TextDecoder().decode(payload));
+        if (message?.type !== 'fastlynox:screen-share-view' || message.shareIdentity !== currentUser?.id) return;
+        if (message.action === 'start' || message.action === 'end') playUiSound(message.action === 'start' ? 'streamWatchStart' : 'streamWatchEnd', currentUser?.id);
+      } catch { /* Ignore unrelated voice-room data packets. */ }
+    };
+    room.on(RoomEvent.DataReceived, handleDataReceived);
+    return () => { room.off(RoomEvent.DataReceived, handleDataReceived); };
+  }, [room, currentUser?.id]);
   const publishVoicePresence = () => {
     if (!serverId || !channelId || !currentUser?.id || connectionState !== 'connected') return;
     void supabase.rpc('set_server_voice_presence', {
@@ -206,10 +228,20 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   const rosterKey = participants.map((participant) => `${participant.identity}:${participant.isMicrophoneEnabled ? 1 : 0}:${speakingIds.has(participant.identity) ? 1 : 0}:${moderationByUser[participant.identity]?.server_muted ? 1 : 0}:${moderationByUser[participant.identity]?.server_deafened ? 1 : 0}`).sort().join('|');
 
   useEffect(() => {
-    const syncFullscreenState = () => setExpandedShareId(document.fullscreenElement?.dataset.mediaStage || null);
+    const syncFullscreenState = () => {
+      const next = document.fullscreenElement?.dataset.mediaStage || null;
+      const previous = fullscreenShareRef.current;
+      fullscreenShareRef.current = next;
+      setExpandedShareId(next);
+      if (previous && previous !== next) publishShareViewingChange(previous, 'end');
+      if (next && next !== previous) publishShareViewingChange(next, 'start');
+    };
     document.addEventListener('fullscreenchange', syncFullscreenState);
-    return () => document.removeEventListener('fullscreenchange', syncFullscreenState);
-  }, []);
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState);
+      if (fullscreenShareRef.current) publishShareViewingChange(fullscreenShareRef.current, 'end');
+    };
+  }, [currentUser?.id, room]);
 
   const toggleShareFullscreen = async (identity) => {
     setShareFullscreenError('');
@@ -989,6 +1021,8 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const pushToTalkEnabled = Boolean(voiceKeyPreferences.pushToTalkEnabled);
   const voiceInputRef = useRef({});
   const pushHeldRef = useRef(false);
+  const pushToTalkPressRef = useRef(() => {});
+  const pushToTalkReleaseRef = useRef(() => {});
   const rightAltHeldRef = useRef(false);
   const rightCtrlHeldRef = useRef(false);
   const pushEnablePromiseRef = useRef(Promise.resolve());
@@ -1001,7 +1035,14 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   useEffect(() => {
     const desktop = window.fastlynoxDesktop;
     if (!desktop?.onVoiceHotkey) return undefined;
-    return desktop.onVoiceHotkey((action) => {
+    return desktop.onVoiceHotkey((payload) => {
+      const action = typeof payload === 'string' ? payload : payload?.action;
+      const phase = typeof payload === 'object' ? payload?.phase : null;
+      if (action === 'pushToTalk') {
+        if (phase === 'up') { pushToTalkReleaseRef.current(); return; }
+        if (phase === 'down' && !document.hasFocus()) pushToTalkPressRef.current();
+        return;
+      }
       // The DOM key handler owns the focused case. This prevents a global
       // shortcut and the regular keydown listener from toggling twice.
       if (document.hasFocus()) return;
@@ -1021,16 +1062,16 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     setEffectiveKeybinds(null);
     setControlError('');
     void desktop.setVoiceKeybinds(keybinds)
-      .then(() => desktop.setVoiceHotkeysEnabled(connectionState === 'connected'))
+      .then(() => desktop.setVoiceHotkeysEnabled(true))
       .then((result) => {
-        if (!active || connectionState !== 'connected') return;
+        if (!active) return;
         const codes = { Control: 'Ctrl', Super: 'Meta', M: 'KeyM', D: 'KeyD', F9: 'F9', F10: 'F10', F8: 'F8', F7: 'F7', F6: 'F6', F5: 'F5' };
         const effective = Object.fromEntries(Object.entries(result?.bindings || {}).map(([action, accelerator]) => [action, accelerator.split('+').map(part => codes[part] || part).join('+')]));
         setEffectiveKeybinds(effective);
       })
       .catch(() => {});
     return () => { active = false; void desktop.setVoiceHotkeysEnabled(false); };
-  }, [keybinds, connectionState]);
+  }, [keybinds]);
   useEffect(() => {
     const handleMicrophoneTest = event => {
       const active = Boolean(event.detail?.active);
@@ -1064,6 +1105,18 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
         void Promise.resolve(pushEnablePromiseRef.current).catch(() => {}).then(() => state.localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings))).catch(() => {});
       }
     };
+    const pressPushToTalk = () => {
+      const state = voiceInputRef.current;
+      if (!state.pushToTalkEnabled || state.isDeafened || state.pendingControl || pushHeldRef.current) return;
+      pushHeldRef.current = true;
+      pushRestoreMicRef.current = state.isMicrophoneEnabled;
+      if (!state.isMicrophoneEnabled) {
+        pushEnablePromiseRef.current = state.localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).catch(error => { pushHeldRef.current = false; throw error; });
+        void pushEnablePromiseRef.current.catch(() => {});
+      }
+    };
+    pushToTalkPressRef.current = pressPushToTalk;
+    pushToTalkReleaseRef.current = releasePushToTalk;
     const handleKeyDown = event => {
       if (event.code === 'AltRight') rightAltHeldRef.current = true;
       if (event.code === 'ControlRight') rightCtrlHeldRef.current = true;
@@ -1080,16 +1133,17 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
         deafenActionRef.current();
       } else if (state.pushToTalkEnabled && matchesVoiceKeybind(event, state.keybinds.pushToTalk, rightAltHeldRef.current, rightCtrlHeldRef.current) && !state.isDeafened && !state.pendingControl) {
         event.preventDefault();
-        if (pushHeldRef.current) return;
-        pushHeldRef.current = true;
-        pushRestoreMicRef.current = state.isMicrophoneEnabled;
-        if (!state.isMicrophoneEnabled) {
-          pushEnablePromiseRef.current = state.localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).catch(error => { pushHeldRef.current = false; throw error; });
-          void pushEnablePromiseRef.current.catch(() => {});
-        }
+        pressPushToTalk();
       }
     };
-    const handleKeyUp = event => { if (event.code === 'AltRight') rightAltHeldRef.current = false; if (event.code === 'ControlRight') rightCtrlHeldRef.current = false; if (pushHeldRef.current && (event.code === voiceInputRef.current.keybinds.pushToTalk?.split('+').at(-1) || (voiceInputRef.current.keybinds.pushToTalk?.split('+').at(-1) === 'CtrlRight' && event.code === 'ControlRight'))) releasePushToTalk(); };
+    const handleKeyUp = event => {
+      if (event.code === 'AltRight') rightAltHeldRef.current = false;
+      if (event.code === 'ControlRight') rightCtrlHeldRef.current = false;
+      if (!pushHeldRef.current) return;
+      const bindingParts = voiceInputRef.current.keybinds.pushToTalk?.split('+') || [];
+      const releasedModifierCodes = { Ctrl: 'ControlLeft', CtrlRight: 'ControlRight', Alt: 'AltLeft', AltRight: 'AltRight', AltGraph: 'AltRight', Shift: 'ShiftLeft', Meta: 'MetaLeft' };
+      if (event.code === bindingParts.at(-1) || bindingParts.some(part => releasedModifierCodes[part] === event.code)) releasePushToTalk();
+    };
     const handleMouseDown = event => {
       const state = voiceInputRef.current;
       const buttonKey = event.button === 3 ? 'Mouse4' : event.button === 4 ? 'Mouse5' : '';
@@ -1104,12 +1158,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
         void state.localParticipant.setMicrophoneEnabled(enabled, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).then(() => playUiSound(enabled ? 'microphoneOn' : 'microphoneOff', state.currentUserId)).catch(() => {});
       } else if (toggleHeadphones) deafenActionRef.current();
       else if (pushToTalk && !state.isDeafened && !state.pendingControl && !pushHeldRef.current) {
-        pushHeldRef.current = true;
-        pushRestoreMicRef.current = state.isMicrophoneEnabled;
-        if (!state.isMicrophoneEnabled) {
-          pushEnablePromiseRef.current = state.localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).catch(error => { pushHeldRef.current = false; throw error; });
-          void pushEnablePromiseRef.current.catch(() => {});
-        }
+        pressPushToTalk();
       }
     };
     const handleMouseUp = event => { if ((event.button === 3 || event.button === 4) && pushHeldRef.current && voiceInputRef.current.keybinds.pushToTalk === (event.button === 3 ? 'Mouse4' : 'Mouse5')) releasePushToTalk(); };
@@ -1119,7 +1168,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     window.addEventListener('mousedown', handleMouseDown, true);
     window.addEventListener('mouseup', handleMouseUp, true);
     window.addEventListener('blur', handleBlur);
-    return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); window.removeEventListener('mousedown', handleMouseDown, true); window.removeEventListener('mouseup', handleMouseUp, true); window.removeEventListener('blur', handleBlur); releasePushToTalk(); };
+    return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); window.removeEventListener('mousedown', handleMouseDown, true); window.removeEventListener('mouseup', handleMouseUp, true); window.removeEventListener('blur', handleBlur); releasePushToTalk(); pushToTalkPressRef.current = () => {}; pushToTalkReleaseRef.current = () => {}; };
   }, [keybinds.toggleMicrophone, keybinds.toggleDeafen, keybinds.pushToTalk, pushToTalkEnabled]);
 
   const controls = [

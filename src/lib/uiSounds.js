@@ -5,6 +5,8 @@ let audioContext;
 const soundNotes = {
   join: [{ frequency: 523, duration: 0.075 }, { frequency: 659, duration: 0.075 }, { frequency: 784, duration: 0.14 }],
   leave: [{ frequency: 784, duration: 0.07 }, { frequency: 587, duration: 0.08 }, { frequency: 440, duration: 0.15 }],
+  streamWatchStart: [{ frequency: 698, duration: 0.07 }, { frequency: 880, duration: 0.08 }, { frequency: 1046, duration: 0.16 }],
+  streamWatchEnd: [{ frequency: 784, duration: 0.08 }, { frequency: 587, duration: 0.1 }, { frequency: 392, duration: 0.16 }],
   move: [{ frequency: 523, duration: 0.07 }, { frequency: 659, duration: 0.07 }, { frequency: 784, duration: 0.12 }],
   microphoneOn: [{ frequency: 659, duration: 0.055 }, { frequency: 880, duration: 0.075 }],
   microphoneOff: [{ frequency: 587, duration: 0.07 }, { frequency: 440, duration: 0.09 }],
