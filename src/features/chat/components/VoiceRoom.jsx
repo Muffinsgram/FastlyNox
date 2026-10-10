@@ -1,9 +1,9 @@
-import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Component, createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionQualityIndicator, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { createLocalAudioTrack, DisconnectReason, Room as LiveKitClientRoom, RoomEvent, Track, supportsAudioOutputSelection } from 'livekit-client';
-import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Maximize2, MessageSquare, Mic, MicOff, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
+import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Eye, Headphones, HeadphoneOff, Maximize2, MessageSquare, Mic, MicOff, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
 import { generateLiveKitToken } from '../../../lib/livekit';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { useServerStore } from '../../../store/useServerStore';
@@ -23,6 +23,14 @@ import { getScreenShareCaptureOptions, getScreenSharePublishOptions, supportsOwn
 import { prepareMicrophoneProcessing, syncNoiseProcessor } from '../../../lib/microphoneNoiseProcessor';
 import { DEFAULT_VOICE_AUDIO_SETTINGS, getAudioCaptureOptions, getAudioPublishOptions } from '../../../lib/voiceAudio';
 import { prepareMicrophone } from '../../../lib/preparedMicrophone';
+
+const ScreenViewingContext = createContext(null);
+function ScreenViewingProvider({ children }) {
+  const [isWatching, setWatching] = useState(false);
+  const stopRef = useRef(null);
+  const value = useMemo(() => ({ isWatching, setWatching, stopRef }), [isWatching]);
+  return <ScreenViewingContext.Provider value={value}>{children}</ScreenViewingContext.Provider>;
+}
 
 function EnableMicrophoneAfterConnect({ settings, deafened, pushToTalkEnabled, preparedMicrophoneRef, onFailure }) {
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
@@ -123,6 +131,7 @@ function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened, outputVol
 }
 
 function VoiceParticipants({ serverId, channelId, initialParticipants = [], localDeafened, outputVolume, onPresenceError, onParticipantsChange, contextMenuRequest, onContextMenuRequestHandled }) {
+  const { setWatching, stopRef } = useContext(ScreenViewingContext);
   const room = useRoomContext();
   const participants = useParticipants().filter(participant => participant.identity);
   const { isMicrophoneEnabled } = useLocalParticipant();
@@ -203,6 +212,16 @@ function VoiceParticipants({ serverId, channelId, initialParticipants = [], loca
     sendViewingState();
     playUiSound('streamWatchEnd', currentUser?.id);
   };
+  const watchedKeys = [...watchedScreenShares].sort().join('|');
+  const publishedShareKeys = screenShares.map(track => screenShareKey(track.participant.identity, track.publication.trackSid)).sort().join('|');
+  useEffect(() => {
+    const watched = screenShares.filter(track => !track.participant.isLocal && watchedScreenSharesRef.current.has(screenShareKey(track.participant.identity, track.publication.trackSid)));
+    setWatching(watched.length > 0);
+    stopRef.current = () => watched.forEach(track => stopWatchingScreenShare(track));
+    // The keys represent membership; speaker activity must not replace this action.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchedKeys, publishedShareKeys, setWatching, stopRef]);
+  useEffect(() => () => { stopRef.current = null; setWatching(false); }, [stopRef, setWatching]);
   // LiveKit may keep a muted camera publication around after its video element
   // has stopped. Do not render an empty VideoTrack: it leaves a black tile behind.
   const cameraShares = videoTracks.filter((track) => track.publication.source === Track.Source.Camera
@@ -572,16 +591,14 @@ function VoiceParticipants({ serverId, channelId, initialParticipants = [], loca
       {(screenShares.length > 0 || cameraShares.length > 0) && <section aria-label="Canlı yayınlar" className="mb-5 grid gap-4">
         {screenShares.map((track) => {
           const shareKey = screenShareKey(track.participant.identity, track.publication.trackSid);
-          const isWatching = watchedScreenShares.has(shareKey);
           const viewers = getShareViewers(participants, track.participant.identity, shareKey, watchedScreenShares, viewingByParticipant);
           return <article key={shareKey} onContextMenu={(event) => openShareMenu(event, track.participant)} ref={(element) => { const key = `screen:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`screen:${track.participant.identity}`} className="screen-share-card overflow-hidden rounded-[22px] border border-violet-300/20 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.32)]">
           <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[linear-gradient(100deg,rgba(139,92,246,.12),transparent)] px-4 py-3 text-xs font-semibold text-violet-100"><span className="flex min-w-0 items-center gap-2"><MonitorUp className="h-4 w-4 shrink-0"/><span className="truncate">{track.participant.name || track.participant.identity}<span className="ml-1.5 font-normal text-slate-400">ekranını paylaşıyor</span></span></span><button type="button" onClick={() => void toggleShareFullscreen(`screen:${track.participant.identity}`)} aria-label={expandedShareId === `screen:${track.participant.identity}` ? 'Ekran paylaşımını küçült' : 'Ekran paylaşımını büyüt'} title="Büyüt / tam ekran" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-violet-200/25 hover:bg-violet-300/15"><Maximize2 className="h-4 w-4"/></button></div>
           <div onDoubleClick={(event) => { if (!event.target.closest('button')) void toggleShareFullscreen(`screen:${track.participant.identity}`); }} className="screen-share-stage relative aspect-video max-h-[min(68vh,760px)] bg-[#05070b]">
-            <div className="absolute left-3 top-3 z-10 max-w-[calc(100%-24px)]">
-              <button type="button" onClick={() => setViewerListFor(current => current === shareKey ? null : shareKey)} aria-expanded={viewerListFor === shareKey} aria-label="Yayını izleyen kullanıcıları göster" className="flex items-center gap-2 rounded-xl border border-white/15 bg-[#111722]/95 px-3 py-2 text-xs font-semibold text-slate-100 shadow-lg"><Users className="h-4 w-4 text-violet-200" />{viewers.length} izleyici</button>
+            <div onMouseEnter={() => setViewerListFor(shareKey)} onMouseLeave={() => setViewerListFor(null)} onFocus={() => setViewerListFor(shareKey)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setViewerListFor(null); }} className="absolute left-3 top-3 z-10 max-w-[calc(100%-24px)]">
+              <button type="button" onClick={() => setViewerListFor(current => current === shareKey ? null : shareKey)} aria-expanded={viewerListFor === shareKey} aria-label={`${viewers.length} izleyici; izleyen kullanıcıları göster`} className="flex items-center gap-2 rounded-xl border border-white/15 bg-[#111722]/95 px-3 py-2 text-xs font-semibold text-slate-100 shadow-lg"><Eye className="h-4 w-4 text-violet-200" />{viewers.length} izleyici</button>
               {viewerListFor === shareKey && <div className="mt-2 max-h-48 min-w-44 overflow-y-auto rounded-xl border border-white/15 bg-[#111722]/95 p-2 text-xs text-slate-200 shadow-xl"><p className="px-2 py-1 font-semibold text-violet-200">Yayını izleyenler</p>{viewers.length ? viewers.map(viewer => { const profile = viewer.isLocal ? currentUser : profileById.get(viewer.identity); return <div key={viewer.identity} className="flex items-center gap-2 px-2 py-1.5"><img src={getAvatarUrl(profile?.avatar_url, profile?.username || viewer.name)} alt="" className="h-6 w-6 rounded-full" /><span className="truncate">{profile?.username || viewer.name || 'Katılımcı'}{viewer.isLocal ? ' (sen)' : ''}</span></div>; }) : <p className="px-2 py-2 text-slate-400">Henüz izleyen yok.</p>}</div>}
             </div>
-            {!track.participant.isLocal && isWatching && <button type="button" onClick={() => stopWatchingScreenShare(track)} className="absolute right-3 top-3 z-10 flex items-center gap-2 rounded-xl border border-white/15 bg-[#111722]/95 px-3 py-2 text-xs font-semibold text-slate-100 shadow-lg hover:bg-rose-950"><X className="h-4 w-4" />İzlemeyi bırak</button>}
             {track.participant.isLocal || watchedScreenShares.has(`screen:${track.participant.identity}:${track.publication.trackSid}`)
               ? <VideoTrack trackRef={track} className="h-full w-full object-contain" />
               : <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[radial-gradient(ellipse_at_center,rgba(139,92,246,.14),transparent_55%)]"><span className="grid h-14 w-14 place-items-center rounded-2xl border border-violet-200/20 bg-violet-300/10 text-violet-100"><MonitorUp className="h-6 w-6" /></span><span className="text-sm font-semibold text-slate-200">{track.participant.name || track.participant.identity} yayın paylaşıyor</span><button type="button" onClick={() => watchScreenShare(track)} className="rounded-xl bg-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-950/40 transition hover:bg-violet-400">Yayını izle</button></div>}
@@ -1014,6 +1031,7 @@ function matchesVoiceKeybind(event, binding, rightAltHeld = false, rightCtrlHeld
 }
 
 function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, compact = false, expanded = false, onToggleExpand }) {
+  const { isWatching, stopRef } = useContext(ScreenViewingContext);
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } = useLocalParticipant();
   const connectionState = useConnectionState();
   const [pendingControl, setPendingControl] = useState('');
@@ -1303,9 +1321,9 @@ function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, compa
         <VoiceAudioSettings currentUserId={currentUserId} />
         {compact && <button type="button" onClick={onToggleExpand} className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/[0.05] text-slate-300 hover:bg-white/10 hover:text-white" aria-label={expanded ? 'Ses kontrollerini daralt' : 'Diğer ses kontrollerini göster'} title={expanded ? 'Daralt' : 'Kamera ve ekran paylaşımı'}><MoreHorizontal className="h-4 w-4" /></button>}
         {(!compact || expanded) && <div className="relative"><button type="button" onClick={() => setSoundboardOpen((open) => !open)} aria-expanded={soundboardOpen} aria-label="Ses efektleri" title="Ses efektleri · yalnızca sende duyulur" className={`grid h-9 w-9 place-items-center rounded-xl border transition ${soundboardOpen ? 'border-cyan-200/20 bg-cyan-300/15 text-cyan-100' : 'border-white/10 bg-white/[0.07] text-slate-200 hover:bg-white/10'}`}><AudioLines className="h-4 w-4" /></button>{soundboardOpen && <div className="absolute bottom-full left-1/2 z-[100] mb-2 w-44 -translate-x-1/2 rounded-2xl border border-white/10 bg-[#141a25]/95 p-1.5 shadow-2xl backdrop-blur-xl"><p className="px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">Ses efektleri · yerel</p>{[['soundboardChime', 'Kristal'], ['soundboardPulse', 'Ritim'], ['soundboardDrop', 'Düşüş']].map(([sound, label]) => <button key={sound} type="button" onClick={() => playUiSound(sound, currentUserId)} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-medium text-slate-200 hover:bg-white/[0.07]"><Volume2 className="h-3.5 w-3.5 text-cyan-200" />{label}</button>)}<p className="px-2.5 pb-1 pt-1 text-[9px] leading-4 text-slate-500">Bu efektler yalnızca bu cihazda çalar.</p></div>}</div>}
-        <button type="button" onClick={onLeave} className={`inline-flex items-center justify-center gap-2 border border-rose-300/15 bg-rose-500/15 text-rose-100 transition hover:bg-rose-500/25 ${compact ? 'h-9 w-9 rounded-full' : 'h-11 rounded-xl px-3'}`} aria-label="Ses odasından ayrıl" title="Ses odasından ayrıl">
-          <PhoneOff className="h-[17px] w-[17px]" />
-          {!compact && <span className="text-xs font-semibold">Ayrıl</span>}
+        <button type="button" onClick={() => isWatching ? stopRef.current?.() : onLeave()} className={`inline-flex shrink-0 items-center justify-center gap-1.5 border border-rose-300/15 bg-rose-500/15 text-rose-100 transition hover:bg-rose-500/25 ${compact ? 'h-9 w-9 rounded-full' : 'h-11 w-[94px] rounded-xl px-2'}`} aria-label={isWatching ? 'Yayından çık' : 'Ses odasından ayrıl'} title={isWatching ? 'Yayından çık · ses odasında kal' : 'Ses odasından ayrıl'}>
+          {isWatching ? <Monitor className="h-[17px] w-[17px] shrink-0" /> : <PhoneOff className="h-[17px] w-[17px] shrink-0" />}
+          {!compact && <span className={`${isWatching ? 'text-[10px]' : 'text-xs'} whitespace-nowrap font-semibold`}>{isWatching ? 'Yayından çık' : 'Ayrıl'}</span>}
         </button>
       </div>
       {screenSourcePickerOpen && <ScreenSourcePicker sources={screenSources} settings={screenShareSettings} onSettingChange={updateScreenShareSettings} pending={pendingControl !== ''} onChoose={chooseScreenSource} onClose={() => setScreenSourcePickerOpen(false)} />}
@@ -1481,6 +1499,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           onMediaDeviceFailure={handleMediaDeviceFailure}
           onError={handleLiveKitError}
         >
+          <ScreenViewingProvider>
           <EnableMicrophoneAfterConnect settings={voiceAudioSettings} deafened={localDeafened} pushToTalkEnabled={pushToTalkEnabled} preparedMicrophoneRef={preparedMicrophoneRef} onFailure={handleMediaDeviceFailure} />
           <div className={`flex min-h-0 flex-col ${isStageVisible || isDockExpanded ? 'h-full' : ''}`}>
             {(isStageVisible || isDockExpanded) && <VoiceConnectionStatus />}
@@ -1490,6 +1509,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
             </div>
             <VoiceControls onLeave={onLeave} isDeafened={localDeafened} onDeafenedChange={setLocalDeafened} compact={!isStageVisible} expanded={isDockExpanded} onToggleExpand={() => setIsDockExpanded((value) => !value)} />
           </div>
+          </ScreenViewingProvider>
         </LiveKitRoom>
         </VoiceRoomErrorBoundary>
       </div>

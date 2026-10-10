@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { uploadStorageFile } from './storageUpload';
 import { getUploadLimit } from '../hooks/useUploadLimit';
+import anonymousAvatarUrl from '../assets/anonymous-avatar.svg';
 
 const PROFILE_MEDIA_BUCKET = 'profile-media';
 let profileExtrasSupported;
@@ -18,10 +19,12 @@ export async function fetchPublicProfile(publicId) {
   return data || null;
 }
 
-export function getAvatarUrl(value, fallback = 'Fastlynox') {
-  if (typeof value === 'string' && /^https?:\/\//i.test(value)) return value;
-  const seed = value?.trim() || fallback;
-  return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed)}`;
+export function getAvatarUrl(value, _fallback = 'Fastlynox') {
+  if (typeof value === 'string' && /^https?:\/\//i.test(value)) {
+    try { if (new URL(value).hostname !== 'api.dicebear.com') return value; }
+    catch { return anonymousAvatarUrl; }
+  }
+  return anonymousAvatarUrl;
 }
 
 export function getBannerUrl(value) {
