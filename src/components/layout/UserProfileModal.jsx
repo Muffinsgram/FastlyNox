@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { UserPlus, UserRoundCheck, X, Shield, Copy, ExternalLink, Bug, BadgeCheck, UsersRound, Headphones, Palette, Sparkles, Crown, ShieldCheck, LoaderCircle, Ban, VolumeX, Volume2, Gamepad2, Music2, Server, Video, Camera, Radio } from 'lucide-react';
+import { UserPlus, UserRoundCheck, X, Shield, Copy, ExternalLink, Bug, BadgeCheck, UsersRound, Headphones, Palette, Sparkles, Crown, ShieldCheck, LoaderCircle, Ban, VolumeX, Volume2, Gamepad2, Music2, Server, Video, Camera, Radio, Send } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { fetchProfiles, getAvatarUrl, getBannerUrl } from '../../lib/profileMedia';
 import { useAuthStore } from '../../store/useAuthStore';
@@ -21,6 +21,9 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
   const sendDMMessage = useDMChatStore((state) => state.sendMessage);
   const [friendActionBusy, setFriendActionBusy] = useState(false);
   const [friendActionNotice, setFriendActionNotice] = useState('');
+  const [profileMessage, setProfileMessage] = useState('');
+  const [profileMessageBusy, setProfileMessageBusy] = useState(false);
+  const [profileMessageNotice, setProfileMessageNotice] = useState('');
   const [isFollowing, setIsFollowing] = useState(false);
   const [followerCount, setFollowerCount] = useState(0);
   const [isFollowLoading, setIsFollowLoading] = useState(false);
@@ -212,10 +215,25 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
     setFriendActionNotice(result.success ? 'Arkadaşlık isteği gönderildi.' : result.error || 'İstek gönderilemedi.');
   };
 
-  const openDirectMessage = () => {
-    if (!profile?.id) return;
-    window.dispatchEvent(new CustomEvent('fastlynox:open-dm', { detail: { userId: profile.id } }));
-    onClose?.();
+  const sendProfileMessage = async (event) => {
+    event.preventDefault();
+    const content = profileMessage.trim();
+    if (!content || !profile?.id || profileMessageBusy) return;
+    setProfileMessageBusy(true);
+    setProfileMessageNotice('');
+    try {
+      const dm = await getOrCreateDM(profile.id);
+      if (!dm?.id) throw new Error('Bu kullanıcıya özel mesaj gönderilemedi.');
+      const result = await sendDMMessage(dm.id, content);
+      if (!result?.success) throw new Error(result?.error || 'Mesaj gönderilemedi.');
+      setProfileMessage('');
+      window.dispatchEvent(new CustomEvent('fastlynox:open-dm', { detail: { userId: profile.id } }));
+      onClose?.();
+    } catch (error) {
+      setProfileMessageNotice(error instanceof Error ? error.message : 'Mesaj gönderilemedi.');
+    } finally {
+      setProfileMessageBusy(false);
+    }
   };
 
   const sendListenInvite = async (activity) => {
@@ -313,7 +331,16 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
             <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-2"><span className="mr-auto text-[10px] text-slate-500">Kullanıcı ID <strong className="ml-1 font-mono text-slate-300">{profile.public_id ?? '—'}</strong></span><button type="button" onClick={() => void copyIdentity(false)} title="Sayısal kullanıcı kimliğini kopyala" aria-label="Sayısal kullanıcı kimliğini kopyala" className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white"><Copy className="h-3.5 w-3.5" /></button><button type="button" onClick={() => void copyIdentity(true)} title="Profil bağlantısını kopyala" aria-label="Profil bağlantısını kopyala" className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[10px] font-semibold text-violet-200 hover:bg-violet-300/10"><ExternalLink className="h-3 w-3" /> Paylaş</button></div>
             {identityNotice && <p role="status" className="mt-1.5 text-[10px] text-cyan-200">{identityNotice}</p>}
             <section className="mt-4" aria-label="Profil rozetleri"><div className="mb-2 flex items-center justify-between"><h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Rozetler</h3>{isPlatformStaff && <span className="text-[9px] font-semibold text-violet-200">Staff yönetimi</span>}</div><div className="flex flex-wrap gap-1.5">{profileBadges.map((award) => { const badge = badgeCatalog.find((item) => item.badge_key === award.badge_key); if (!badge) return null; const Icon = BADGE_ICONS[badge.badge_key] || BadgeCheck; return <span key={badge.badge_key} title={`${badge.name} · ${badge.description}`} className="inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-semibold" style={{ color: badge.color, borderColor: `${badge.color}55`, backgroundColor: `${badge.color}18` }}><Icon className="h-3 w-3" />{badge.name}</span>; })}{profileBadges.length === 0 && !isPlatformStaff && <span className="text-[10px] text-slate-600">Henüz rozet yok</span>}</div>{isPlatformStaff && <div className="mt-2 flex flex-wrap gap-1">{badgeCatalog.map((badge) => { const awarded = profileBadges.some((item) => item.badge_key === badge.badge_key); const Icon = BADGE_ICONS[badge.badge_key] || BadgeCheck; return <button key={badge.badge_key} type="button" disabled={isBadgeSaving} onClick={() => void toggleProfileBadge(badge.badge_key)} title={badge.description} className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[9px] transition disabled:opacity-50 ${awarded ? 'border-rose-300/20 text-rose-200 hover:bg-rose-300/10' : 'border-white/[0.06] text-slate-400 hover:bg-white/[0.06] hover:text-white'}`}><Icon className="h-3 w-3" />{awarded ? 'Kaldır' : `Ver: ${badge.name}`}</button>; })}{isBadgeSaving && <LoaderCircle className="h-3.5 w-3.5 animate-spin text-violet-200" />}</div>}{badgeNotice && <p role="status" className="mt-1.5 text-[10px] text-amber-200">{badgeNotice}</p>}</section>
-            {user?.id !== profile.id && <div className="mt-4 flex flex-wrap items-center gap-2"><button type="button" onClick={openDirectMessage} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] px-3.5 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10">Mesaj gönder</button><button type="button" onClick={() => void (friendship ? setFriendActionNotice(friendship.status === 'accepted' ? 'Zaten arkadaşsınız.' : friendship.requester_id === user?.id ? 'Arkadaşlık isteği bekliyor.' : 'Bu kişiden bekleyen bir istek var.') : sendFriendRequest())} disabled={friendActionBusy || Boolean(friendship)} className="inline-flex items-center gap-2 rounded-xl bg-violet-500 px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-violet-950/25 transition hover:bg-violet-400 disabled:cursor-default disabled:opacity-60">{friendship?.status === 'accepted' ? <UserRoundCheck className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}{friendActionBusy ? 'Gönderiliyor…' : friendship?.status === 'accepted' ? 'Arkadaş' : friendship ? 'İstek gönderildi' : 'Arkadaş ekle'}</button><button type="button" onClick={() => void toggleFollow()} disabled={isFollowLoading || !user?.id} className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition disabled:opacity-50 ${isFollowing ? 'border border-white/10 bg-white/[0.05] text-slate-200 hover:border-rose-200/20 hover:bg-rose-400/[0.08] hover:text-rose-100' : 'border border-white/10 bg-white/[0.035] text-slate-300 hover:bg-white/[0.08]'}`}>{isFollowing ? <UserRoundCheck className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}{isFollowLoading ? 'Güncelleniyor…' : isFollowing ? 'Takip ediliyor' : 'Takip et'}</button><span className="text-xs text-slate-400"><strong className="text-slate-200">{followerCount}</strong> takipçi</span></div>}
+            {user?.id !== profile.id && <div className="mt-4 flex flex-wrap items-center gap-2">
+              <form onSubmit={sendProfileMessage} className="flex h-10 min-w-[210px] flex-[1_1_240px] items-center gap-2 rounded-xl border border-white/10 bg-white/[0.05] px-3 transition focus-within:border-violet-300/40 focus-within:bg-white/[0.07]">
+                <input type="text" maxLength={4000} value={profileMessage} onChange={(event) => { setProfileMessage(event.target.value); setProfileMessageNotice(''); }} placeholder={`${profile.username} kişisine mesaj yaz…`} aria-label={`${profile.username} kişisine mesaj yaz`} className="min-w-0 flex-1 bg-transparent text-xs text-slate-100 outline-none placeholder:text-slate-500" />
+                <button type="submit" disabled={!profileMessage.trim() || profileMessageBusy} aria-label="Mesaj gönder" title="Mesaj gönder" className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-violet-500 text-white transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-35">{profileMessageBusy ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}</button>
+              </form>
+              <button type="button" onClick={() => void (friendship ? setFriendActionNotice(friendship.status === 'accepted' ? 'Zaten arkadaşsınız.' : friendship.requester_id === user?.id ? 'Arkadaşlık isteği bekliyor.' : 'Bu kişiden bekleyen bir istek var.') : sendFriendRequest())} disabled={friendActionBusy || Boolean(friendship)} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-violet-500 px-3.5 py-2 text-xs font-semibold text-white shadow-lg shadow-violet-950/25 transition hover:bg-violet-400 disabled:cursor-default disabled:opacity-60">{friendship?.status === 'accepted' ? <UserRoundCheck className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}{friendActionBusy ? 'Gönderiliyor…' : friendship?.status === 'accepted' ? 'Arkadaş' : friendship ? 'İstek gönderildi' : 'Arkadaş ekle'}</button>
+              <button type="button" onClick={() => void toggleFollow()} disabled={isFollowLoading || !user?.id} className={`inline-flex min-h-10 items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition disabled:opacity-50 ${isFollowing ? 'border border-white/10 bg-white/[0.05] text-slate-200 hover:border-rose-200/20 hover:bg-rose-400/[0.08] hover:text-rose-100' : 'border border-white/10 bg-white/[0.035] text-slate-300 hover:bg-white/[0.08]'}`}>{isFollowing ? <UserRoundCheck className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}{isFollowLoading ? 'Güncelleniyor…' : isFollowing ? 'Takip ediliyor' : 'Takip et'}</button>
+              <span className="text-xs text-slate-400"><strong className="text-slate-200">{followerCount}</strong> takipçi</span>
+            </div>}
+            {profileMessageNotice && <p role="status" className="mt-2 text-[10px] text-rose-200">{profileMessageNotice}</p>}
             {friendActionNotice && <p role="status" className="mt-2 text-[10px] text-violet-200">{friendActionNotice}</p>}
             {user?.id !== profile.id && <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={toggleMute} className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.08] px-2.5 py-1.5 text-[10px] text-slate-300 hover:bg-white/[0.05]">{isMuted ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}{isMuted ? 'Sessizi kaldır' : 'Sessize al'}</button><button type="button" onClick={() => void toggleBlock()} className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[10px] ${isBlocked ? 'border-rose-300/15 text-rose-200 hover:bg-rose-300/[0.06]' : 'border-white/[0.08] text-slate-400 hover:bg-white/[0.05] hover:text-rose-200'}`}><Ban className="h-3.5 w-3.5" />{isBlocked ? 'Engeli kaldır' : 'Engelle'}</button></div>}
             {safetyNotice && <p role="status" className="mt-2 text-[10px] text-violet-200">{safetyNotice}</p>}
