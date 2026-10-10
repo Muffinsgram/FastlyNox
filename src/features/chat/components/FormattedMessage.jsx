@@ -2,12 +2,26 @@ import { Fragment, useEffect, useState } from 'react';
 import { ArrowUpRight, Check, Hash, LoaderCircle, Sparkles, Users, Volume2 } from 'lucide-react';
 import { fetchPublicProfile, getAvatarUrl, getBannerUrl } from '../../../lib/profileMedia';
 import { supabase } from '../../../lib/supabase';
+import { WEB_LINK_PATTERN, parseMessageLink } from '../../../lib/messageLinks';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
 const ENTITY_ID = `(?:${UUID}|[0-9]+)`;
 const PROFILE_LINK = String.raw`(?:https?://)?(?:www\.)?fastlynox(?:\.[a-z0-9-]+)*/user/[0-9]+`;
 const INVITE_LINK = String.raw`(?:https?://)?(?:www\.)?fastlynox(?:\.[a-z0-9-]+)*/invite/[a-z0-9_-]{3,32}`;
-const INLINE = new RegExp(`(${PROFILE_LINK}|${INVITE_LINK}|<@&${ENTITY_ID}>|<@!?${ENTITY_ID}>|<#${ENTITY_ID}>|@everyone|@here|@[\\p{L}\\p{N}_.-]+|\\*\\*[^\\n*]+\\*\\*|__[^\\n_]+__|~~[^\\n~]+~~|\\*[^\\n*]+\\*|_[^\\n_]+_|\\x60[^\\n\\x60]+\\x60)`, 'giu');
+const INLINE = new RegExp(`(${PROFILE_LINK}|${INVITE_LINK}|${WEB_LINK_PATTERN}|<@&${ENTITY_ID}>|<@!?${ENTITY_ID}>|<#${ENTITY_ID}>|@everyone|@here|@[\\p{L}\\p{N}_.-]+|\\*\\*[^\\n*]+\\*\\*|__[^\\n_]+__|~~[^\\n~]+~~|\\*[^\\n*]+\\*|_[^\\n_]+_|\\x60[^\\n\\x60]+\\x60)`, 'giu');
+
+function renderWebLinks(text, keyPrefix) {
+  const pieces = [];
+  let cursor = 0;
+  for (const match of text.matchAll(new RegExp(WEB_LINK_PATTERN, 'giu'))) {
+    if (match.index > cursor) pieces.push(text.slice(cursor, match.index));
+    const link = parseMessageLink(match[0]);
+    pieces.push(link ? <Fragment key={`${keyPrefix}-${match.index}`}><a href={link.href} target="_blank" rel="noopener noreferrer" className="cursor-pointer text-violet-300 underline decoration-violet-300/50 underline-offset-2 hover:text-violet-100" onClick={(event) => event.stopPropagation()}>{link.label}</a>{link.suffix}</Fragment> : match[0]);
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) pieces.push(text.slice(cursor));
+  return pieces;
+}
 
 function PublicProfileLinkCard({ publicId, onOpen }) {
   const [profile, setProfile] = useState(null);
@@ -77,6 +91,8 @@ function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, onPubl
     } else if (new RegExp(`^\\s*(?:https?:\\/\\/)?(?:www\\.)?fastlynox(?:\\.[a-z0-9-]+)*\\/invite\\/([a-z0-9_-]{3,32})\\s*$`, 'iu').test(token)) {
       const inviteMatch = token.match(/\/invite\/([a-z0-9_-]{3,32})\s*$/iu);
       pieces.push(<ServerInviteLinkCard key={key} inviteCode={inviteMatch?.[1]} onOpen={onInviteClick}/>);
+    } else if (/^(?:https?:\/\/|www\.)/iu.test(token)) {
+      pieces.push(<Fragment key={key}>{renderWebLinks(token, key)}</Fragment>);
     } else if (userMatch) {
       const profile = maps.users?.[userMatch[1]];
       pieces.push(profile
@@ -92,12 +108,12 @@ function renderInline(text, keyPrefix, maps, onChannelClick, onUserClick, onPubl
         : <span key={key} className="text-cyan-100">#kanal</span>);
     } else if (/^@/u.test(token)) {
       pieces.push(<span key={key} className={`rounded px-1 font-medium ${['@everyone', '@here'].includes(token.toLowerCase()) ? 'bg-amber-300/25 text-amber-100' : 'bg-violet-300/15 text-violet-100'}`}>{token}</span>);
-    } else if (token.startsWith('**')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">**</span><strong className="font-bold text-slate-100">{token.slice(2, -2)}</strong><span className="text-slate-400/40">**</span></Fragment> : <strong key={key} className="font-bold text-slate-100">{token.slice(2, -2)}</strong>);
-    else if (token.startsWith('__')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">__</span><u className="decoration-slate-300/70 underline-offset-2">{token.slice(2, -2)}</u><span className="text-slate-400/40">__</span></Fragment> : <u key={key} className="decoration-slate-300/70 underline-offset-2">{token.slice(2, -2)}</u>);
-    else if (token.startsWith('~~')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">~~</span><del className="text-slate-400">{token.slice(2, -2)}</del><span className="text-slate-400/40">~~</span></Fragment> : <del key={key} className="text-slate-400">{token.slice(2, -2)}</del>);
+    } else if (token.startsWith('**')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">**</span><strong className="font-bold text-slate-100">{renderWebLinks(token.slice(2, -2), key)}</strong><span className="text-slate-400/40">**</span></Fragment> : <strong key={key} className="font-bold text-slate-100">{renderWebLinks(token.slice(2, -2), key)}</strong>);
+    else if (token.startsWith('__')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">__</span><u className="decoration-slate-300/70 underline-offset-2">{renderWebLinks(token.slice(2, -2), key)}</u><span className="text-slate-400/40">__</span></Fragment> : <u key={key} className="decoration-slate-300/70 underline-offset-2">{renderWebLinks(token.slice(2, -2), key)}</u>);
+    else if (token.startsWith('~~')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">~~</span><del className="text-slate-400">{renderWebLinks(token.slice(2, -2), key)}</del><span className="text-slate-400/40">~~</span></Fragment> : <del key={key} className="text-slate-400">{renderWebLinks(token.slice(2, -2), key)}</del>);
     else if (token.startsWith('`')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">`</span><code className="rounded-md border border-white/[0.06] bg-black/25 px-1.5 py-0.5 font-mono text-[.9em] text-cyan-100">{token.slice(1, -1)}</code><span className="text-slate-400/40">`</span></Fragment> : <code key={key} className="rounded-md border border-white/[0.06] bg-black/25 px-1.5 py-0.5 font-mono text-[.9em] text-cyan-100">{token.slice(1, -1)}</code>);
-    else if (token.startsWith('*')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">*</span><em className="italic text-slate-200">{token.slice(1, -1)}</em><span className="text-slate-400/40">*</span></Fragment> : <em key={key} className="italic text-slate-200">{token.slice(1, -1)}</em>);
-    else if (token.startsWith('_')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">_</span><em className="italic text-slate-200">{token.slice(1, -1)}</em><span className="text-slate-400/40">_</span></Fragment> : <em key={key} className="italic text-slate-200">{token.slice(1, -1)}</em>);
+    else if (token.startsWith('*')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">*</span><em className="italic text-slate-200">{renderWebLinks(token.slice(1, -1), key)}</em><span className="text-slate-400/40">*</span></Fragment> : <em key={key} className="italic text-slate-200">{renderWebLinks(token.slice(1, -1), key)}</em>);
+    else if (token.startsWith('_')) pieces.push(showSyntax ? <Fragment key={key}><span className="text-slate-400/40">_</span><em className="italic text-slate-200">{renderWebLinks(token.slice(1, -1), key)}</em><span className="text-slate-400/40">_</span></Fragment> : <em key={key} className="italic text-slate-200">{renderWebLinks(token.slice(1, -1), key)}</em>);
     cursor = start + token.length;
   }
   if (cursor < text.length) pieces.push(text.slice(cursor));

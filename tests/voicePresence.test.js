@@ -54,3 +54,20 @@ test('self is only shown in the active channel and live participants remain visi
   assert.deepEqual(visible.a, []);
   assert.deepEqual(visible.b.map(member => member.id), ['self', 'new']);
 });
+
+test('connected room roster removes departed users immediately despite a fresh database lease', () => {
+  const now = Date.now();
+  const roster = { a: [{ id: 'self' }, { id: 'left', updated_at: new Date(now).toISOString() }], b: [{ id: 'other' }] };
+  const visible = visibleVoiceRoster(roster, { userId: 'self', channelId: 'a', participants: [{ id: 'self' }, { id: 'new' }], authoritative: true, now });
+  assert.deepEqual(visible.a.map(member => member.id), ['self', 'new']);
+  assert.deepEqual(visible.b.map(member => member.id), ['other']);
+  assert.equal(roster.a.length, 2);
+});
+
+test('joining/reconnecting retains a fresh fallback but failed queries cannot keep expired leases forever', () => {
+  const now = Date.now();
+  const roster = { a: [{ id: 'member', updated_at: new Date(now - 5000).toISOString() }] };
+  assert.equal(visibleVoiceRoster(roster, { channelId: 'a', authoritative: false, now }).a.length, 1);
+  assert.deepEqual(visibleVoiceRoster(roster, { now: now + 30_000 }).a, []);
+  assert.deepEqual(visibleVoiceRoster(roster, { channelId: 'a', participants: [], authoritative: true, now }).a, []);
+});

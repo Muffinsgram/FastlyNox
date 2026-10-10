@@ -3,7 +3,7 @@ import { clampMediaPan, zoomMedia } from '../../../lib/mediaZoom';
 
 const initialView = { scale: 1, x: 0, y: 0 };
 
-export function ZoomableMedia({ children, wheelZoom = false, clickZoom = false, zoom, onZoom, className = '' }) {
+export function ZoomableMedia({ children, fill = false, wheelZoom = false, clickZoom = false, zoom, onZoom, className = '' }) {
   const containerRef = useRef(null);
   const viewRef = useRef(initialView);
   const gestureRef = useRef(null);
@@ -31,7 +31,7 @@ export function ZoomableMedia({ children, wheelZoom = false, clickZoom = false, 
     element.addEventListener('wheel', wheel, { passive: false });
     return () => element.removeEventListener('wheel', wheel);
   }, [wheelZoom]);
-  return <div ref={containerRef} className={`relative overflow-hidden ${className}`} style={{ touchAction: view.scale > 1 ? 'none' : 'auto', cursor: view.scale > 1 ? 'grab' : clickZoom ? 'zoom-in' : 'default' }}
+  return <div ref={containerRef} className={`overflow-hidden ${className}`} style={{ position: fill ? 'absolute' : 'relative', inset: fill ? 0 : undefined, touchAction: view.scale > 1 ? 'none' : 'auto', cursor: view.scale > 1 ? 'grab' : clickZoom ? 'zoom-in' : 'default' }}
     onPointerDown={event => {
       if (event.button !== 0) return;
       gestureRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, origin: viewRef.current, moved: false };

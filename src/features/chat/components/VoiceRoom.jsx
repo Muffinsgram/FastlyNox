@@ -591,10 +591,10 @@ function VoiceParticipants({ serverId, channelId, initialParticipants = [], loca
         serverMuted: Boolean(moderationByUser[participant.identity]?.server_muted),
         serverDeafened: Boolean(moderationByUser[participant.identity]?.server_deafened),
       };
-    }), channelId);
+    }), channelId, { connected: connectionState === 'connected' });
   // rosterKey tracks live membership, mute, and speaking changes; profile updates refresh display names and avatars.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rosterKey, profiles, currentUser, moderationByUser, deafenedByUser, localDeafened, onParticipantsChange]);
+  }, [rosterKey, profiles, currentUser, moderationByUser, deafenedByUser, localDeafened, connectionState, channelId, onParticipantsChange]);
 
   const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
 
@@ -623,7 +623,7 @@ function VoiceParticipants({ serverId, channelId, initialParticipants = [], loca
               {viewerListFor === shareKey && <div className="mt-2 max-h-48 min-w-44 overflow-y-auto rounded-xl border border-white/15 bg-[#111722]/95 p-2 text-xs text-slate-200 shadow-xl"><p className="px-2 py-1 font-semibold text-violet-200">Yayını izleyenler</p>{viewers.length ? viewers.map(viewer => { const profile = viewer.isLocal ? currentUser : profileById.get(viewer.identity); return <div key={viewer.identity} className="flex items-center gap-2 px-2 py-1.5"><img src={getAvatarUrl(profile?.avatar_url, profile?.username || viewer.name)} alt="" className="h-6 w-6 rounded-full" /><span className="truncate">{profile?.username || viewer.name || 'Katılımcı'}{viewer.isLocal ? ' (sen)' : ''}</span></div>; }) : <p className="px-2 py-2 text-slate-400">Henüz izleyen yok.</p>}</div>}
             </div>
             {track.participant.isLocal || watchedScreenShares.has(`screen:${track.participant.identity}:${track.publication.trackSid}`)
-              ? <ZoomableMedia wheelZoom className="absolute inset-0"><VideoTrack trackRef={track} className="h-full w-full object-contain" /></ZoomableMedia>
+              ? <ZoomableMedia fill wheelZoom><VideoTrack trackRef={track} className="h-full w-full object-contain" /></ZoomableMedia>
               : <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[radial-gradient(ellipse_at_center,rgba(139,92,246,.14),transparent_55%)]"><span className="grid h-14 w-14 place-items-center rounded-2xl border border-violet-200/20 bg-violet-300/10 text-violet-100"><MonitorUp className="h-6 w-6" /></span><span className="text-sm font-semibold text-slate-200">{track.participant.name || track.participant.identity} yayın paylaşıyor</span><button type="button" onClick={() => watchScreenShare(track)} className="rounded-xl bg-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-950/40 transition hover:bg-violet-400">Yayını izle</button></div>}
             <button type="button" onClick={(event) => openShareMenu(event, track.participant)} aria-label="Yayın ses seçenekleri" title="Yayın ses seçenekleri · sağ tık" className="absolute bottom-3 right-3 flex items-center gap-2 rounded-xl border border-white/15 bg-[#111722]/90 px-3 py-2 text-xs text-slate-100 shadow-lg backdrop-blur-xl hover:bg-[#202839]">
               {track.participant.isLocal || mutedShares[track.participant.identity] || normalizeVoiceVolume(shareVolumes[track.participant.identity]) === 0 ? <VolumeX className="h-4 w-4 text-rose-200" /> : <Volume2 className="h-4 w-4 text-violet-200" />}
@@ -1479,7 +1479,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
 
   return (
     <div className={`${panelClass} ${isStageVisible ? '' : isDockExpanded ? '' : 'rounded-full'}`} data-lk-theme="default">
-      {(isStageVisible || isDockExpanded) && <div className="h-12 border-b border-white/5 flex items-center px-4 shrink-0 justify-between bg-fastcord-panel z-10 shadow-sm">
+      {(isStageVisible || isDockExpanded) && <div className="voice-room-header h-12 border-b border-white/5 flex items-center px-4 shrink-0 justify-between bg-fastcord-panel z-10 shadow-sm">
         <div className="flex items-center gap-3">
           <Volume2 className="w-5 h-5 text-emerald-400" />
           <span className="max-w-64 truncate font-bold text-slate-200">{channelName}</span>

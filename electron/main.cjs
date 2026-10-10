@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const { execFile } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
+const { isExternalLink } = require('./externalLinks.cjs');
 
 const APP_USER_MODEL_ID = 'com.muffinsgram.fastlynox';
 const TOAST_ACTIVATOR_CLSID = '{8D1E13D7-65F8-4F23-91B0-7F3D56D341A2}';
@@ -365,14 +366,14 @@ function createWindow() {
     publishWindowState();
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('https://') || url.startsWith('mailto:')) void shell.openExternal(url);
+    if (isExternalLink(url)) void shell.openExternal(url);
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const currentOrigin = mainWindow.webContents.getURL().startsWith('http://localhost:') ? 'http://localhost:' : null;
     if (currentOrigin ? !url.startsWith(currentOrigin) : !url.startsWith('file://')) {
       event.preventDefault();
-      if (url.startsWith('https://')) void shell.openExternal(url);
+      if (isExternalLink(url)) void shell.openExternal(url);
     }
   });
   mainWindow.on('close', (event) => {

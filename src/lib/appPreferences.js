@@ -1,10 +1,10 @@
 import { normalizeVoiceVolume } from './voicePlayback.js';
 import { DEFAULT_VOICE_AUDIO_SETTINGS } from './voiceAudio.js';
-import { getColorTheme, themeVariables } from './colorThemes.js';
+import { getColorTheme, getSurfaceStyle, surfaceVariables, themeVariables } from './colorThemes.js';
 
 const preferenceKey = (userId) => `fastcord:preferences:${encodeURIComponent(userId || '')}`;
 const preferenceCache = new WeakMap();
-const defaults = { launchAtStartup: true, pushToTalkEnabled: false, keybinds: { toggleMicrophone: 'Ctrl+Alt+KeyM', toggleDeafen: 'Ctrl+Alt+KeyD', pushToTalk: 'KeyV' }, doNotDisturb: false, desktopNotifications: true, notificationSound: true, notificationSoundVolume: 65, soundEffects: true, uiSoundVolume: 65, microphoneToggleSoundVolume: 55, headphoneToggleSoundVolume: 55, pinnedDMIds: [], hiddenDMIds: [], reduceMotion: false, accentTheme: 'violet', colorTheme: 'original', chatDensity: 'comfortable', searchShortcut: 'ctrl+k', mutedUserIds: [], mutedServerIds: [], mutedChannelIds: [], serverMuteUntil: {}, serverNotificationModes: {}, serverFolders: [], collapsedServerFolderIds: [], featuredServerIds: [], featuredServersConfigured: false, serverFolderIds: {}, voiceAudioSettings: DEFAULT_VOICE_AUDIO_SETTINGS, quietHoursEnabled: false, quietHoursStart: '22:00', quietHoursEnd: '08:00' };
+const defaults = { launchAtStartup: true, pushToTalkEnabled: false, keybinds: { toggleMicrophone: 'Ctrl+Alt+KeyM', toggleDeafen: 'Ctrl+Alt+KeyD', pushToTalk: 'KeyV' }, doNotDisturb: false, desktopNotifications: true, notificationSound: true, notificationSoundVolume: 65, soundEffects: true, uiSoundVolume: 65, microphoneToggleSoundVolume: 55, headphoneToggleSoundVolume: 55, pinnedDMIds: [], hiddenDMIds: [], reduceMotion: false, accentTheme: 'violet', colorTheme: 'original', surfaceStyle: 'auto', chatDensity: 'comfortable', searchShortcut: 'ctrl+k', mutedUserIds: [], mutedServerIds: [], mutedChannelIds: [], serverMuteUntil: {}, serverNotificationModes: {}, serverFolders: [], collapsedServerFolderIds: [], featuredServerIds: [], featuredServersConfigured: false, serverFolderIds: {}, voiceAudioSettings: DEFAULT_VOICE_AUDIO_SETTINGS, quietHoursEnabled: false, quietHoursStart: '22:00', quietHoursEnd: '08:00' };
 const accentPalettes = {
   violet: ['#e0e7ff', '#dbe2ff', '#becaff', '#9baaff', '#7185ff', '#5e71e8', '#4d5bd4', '#3730a3', '#312e81'],
   cyan: ['#ecfeff', '#cffafe', '#a5f3fc', '#67e8f9', '#06b6d4', '#0891b2', '#0e7490', '#155e75', '#164e63'],
@@ -17,6 +17,9 @@ export function applyAppPreferences(preferences = defaults) {
   const root = document.documentElement;
   const theme = getColorTheme(preferences.colorTheme);
   root.dataset.colorTheme = theme.id;
+  const surfaceStyle = getSurfaceStyle(theme.id, preferences.surfaceStyle || 'auto');
+  root.dataset.surfaceStyle = surfaceStyle.id;
+  Object.entries(surfaceVariables(surfaceStyle)).forEach(([name, value]) => root.style.setProperty(name, value));
   Object.entries(themeVariables(theme.id)).forEach(([name, value]) => root.style.setProperty(name, value));
   const palette = accentPalettes[preferences.accentTheme] || accentPalettes.violet;
   if (preferences.accentTheme !== 'auto' || theme.id === 'original') {

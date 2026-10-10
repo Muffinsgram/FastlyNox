@@ -1,4 +1,4 @@
-/* Theme overrides intentionally contain color properties only. */
+/* Surface styling never changes media dimensions, position, or transforms. */
 html[data-color-theme]:not([data-color-theme="original"]) {
   --theme-stroke: color-mix(in srgb, var(--theme-accent) 16%, transparent);
 }
@@ -16,6 +16,19 @@ html[data-color-theme]:not([data-color-theme="original"]) :is(.macos-rail, .maco
 }
 html[data-color-theme]:not([data-color-theme="original"]) :is(.macos-panel, .macos-chat-header) {
   background: color-mix(in srgb, var(--theme-panel) 92%, transparent) !important;
+}
+html[data-color-theme]:not([data-color-theme="original"]) :is(.bg-fastcord-panel, .voice-room-header) {
+  background: var(--theme-panel) !important;
+}
+html[data-color-theme]:not([data-color-theme="original"]) .bg-fastcord-sidebar {
+  background: var(--theme-sidebar) !important;
+}
+html[data-color-theme]:not([data-color-theme="original"]) .voice-room-header {
+  border-color: var(--theme-stroke);
+  color: #e2e8f0;
+}
+html[data-color-theme]:not([data-color-theme="original"]) .screen-share-card > :first-child {
+  background: linear-gradient(100deg, color-mix(in srgb, var(--theme-accent) 12%, var(--theme-panel)), var(--theme-panel));
 }
 html[data-color-theme]:not([data-color-theme="original"]) .macos-composer {
   background: color-mix(in srgb, var(--theme-surface) 80%, transparent) !important;
@@ -60,4 +73,21 @@ html[data-color-theme]:not([data-color-theme="original"]) :is(button, a).bg-viol
 }
 html[data-color-theme]:not([data-color-theme="original"]) [class*="bg-[#11151e]"] {
   background-color: var(--theme-panel);
+}
+
+html[data-surface-style]:not([data-surface-style="classic"]) :is(.theme-card, .macos-surface, .macos-composer, .fast-context-submenu, .screen-share-card:not(:fullscreen), .camera-stage-card:not(:fullscreen)) {
+  border-radius: var(--theme-radius);
+  box-shadow: var(--theme-shadow);
+  backdrop-filter: blur(var(--theme-blur));
+  -webkit-backdrop-filter: blur(var(--theme-blur));
+}
+html[data-surface-style="glass"] :is(.theme-card, .macos-surface, .macos-composer) {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--theme-accent) 7%, transparent), transparent 65%), color-mix(in srgb, var(--theme-panel) 84%, transparent) !important;
+  border-color: color-mix(in srgb, var(--theme-accent) 24%, transparent);
+}
+html[data-surface-style="soft"] .macos-surface {
+  background: linear-gradient(155deg, var(--theme-surface), var(--theme-panel));
+}
+html[data-surface-style="sharp"] :is(.theme-card, .macos-surface, .macos-composer) {
+  background: var(--theme-panel) !important;
 }

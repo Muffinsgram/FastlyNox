@@ -42,16 +42,18 @@ export function mergeVoicePresenceEvent(roster, eventType, row, profile = {}) {
   return next;
 }
 
-export function visibleVoiceRoster(roster, { userId, channelId, participants = [] } = {}) {
+export function visibleVoiceRoster(roster, { userId, channelId, participants = [], authoritative = false, now = Date.now() } = {}) {
   const next = {};
   const locations = new Map();
   for (const [id, members] of Object.entries(roster)) {
-    next[id] = members.filter(member => member.id !== userId || id === channelId);
+    next[id] = members.filter(member => (!member.updated_at || now - Date.parse(member.updated_at) <= 30_000) && (member.id !== userId || id === channelId));
     for (const member of next[id]) locations.set(member.id, id);
   }
   if (channelId) {
     const live = participants.filter(member => member.id === userId || !locations.has(member.id) || locations.get(member.id) === channelId);
-    const byId = new Map((next[channelId] || []).map(member => [member.id, member]));
+    // Once connected, LiveKit is the complete roster for this room. Merging
+    // old database leases here kept departed users visible in the sidebar.
+    const byId = new Map((authoritative ? [] : next[channelId] || []).map(member => [member.id, member]));
     for (const member of live) byId.set(member.id, member);
     next[channelId] = [...byId.values()];
   }

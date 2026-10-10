@@ -241,6 +241,7 @@ export default function App() {
   const voiceSessionRef = useRef(null);
   const [voiceParticipants, setVoiceParticipants] = useState([]);
   const [voiceParticipantsChannelId, setVoiceParticipantsChannelId] = useState(null);
+  const [voiceRosterConnected, setVoiceRosterConnected] = useState(false);
   const [voicePresenceByChannel, setVoicePresenceByChannel] = useState({});
   const voiceProfileCacheRef = useRef(new Map());
   const [voiceMemberMenuRequest, setVoiceMemberMenuRequest] = useState(null);
@@ -300,6 +301,7 @@ export default function App() {
         }
         if (presenceError) {
           console.warn('Ses kanalı katılımcıları alınamadı:', presenceError.message);
+          setVoicePresenceByChannel(current => visibleVoiceRoster(current));
           return; // Never replace a good roster with an empty one on query failure.
         }
         if (!alive || snapshotVersion !== eventVersion) { refreshQueued = true; return; }
@@ -332,6 +334,7 @@ export default function App() {
         if (snapshotVersion === eventVersion) setVoicePresenceByChannel(buildRoster(moderationResult.data || []));
       } catch (error) {
         console.warn('Ses kanalı roster yenilenemedi:', error);
+        if (alive) setVoicePresenceByChannel(current => visibleVoiceRoster(current));
       } finally {
         refreshing = false;
         if (refreshQueued && alive) { refreshQueued = false; queueRefresh(); }
@@ -367,9 +370,10 @@ export default function App() {
     const timer = window.setInterval(fireDueEventReminders, 15_000);
     return () => window.clearInterval(timer);
   }, []);
-  const handleVoiceParticipantsChange = useCallback((nextParticipants, channelId) => {
+  const handleVoiceParticipantsChange = useCallback((nextParticipants, channelId, { connected = false } = {}) => {
     if (channelId !== voiceSessionRef.current?.channelId) return;
     setVoiceParticipantsChannelId(channelId);
+    setVoiceRosterConnected(connected);
     setVoiceParticipants((current) => {
       const unchanged = current.length === nextParticipants.length && current.every((participant, index) => {
         const next = nextParticipants[index];
@@ -439,7 +443,7 @@ export default function App() {
     // clearing voiceSession made the leave button appear to lag or do nothing.
     setVoiceSession(null);
     setVoiceMemberMenuRequest(null);
-    setVoiceParticipants([]);
+    setVoiceParticipants([]); setVoiceRosterConnected(false);
     setVoiceNotice('');
     playUiSound(current?.kind === 'dm' ? 'callEnded' : 'leave', currentUserId);
     if (current?.kind === 'dm' && current.inviteId && currentUserId) {
@@ -478,7 +482,7 @@ export default function App() {
       if (current?.kind === 'dm' && current.inviteId === invite.id && ['declined', 'ended'].includes(invite.status)) {
         playUiSound(invite.status === 'declined' ? 'callDeclined' : 'callEnded', userId);
         setVoiceSession(null);
-        setVoiceParticipants([]);
+        setVoiceParticipants([]); setVoiceRosterConnected(false);
         setVoiceNotice(invite.status === 'declined' ? 'Arama reddedildi.' : 'Arama sona erdi.');
       }
       if (incomingCallInvite?.id === invite.id && invite.status !== 'ringing') setIncomingCallInvite(null);
@@ -574,7 +578,7 @@ export default function App() {
       // A sign-out must tear down the LiveKit room before another user can sign in.
       // eslint-disable-next-line react/set-state-in-effect
       setVoiceSession(null);
-      setVoiceParticipants([]);
+      setVoiceParticipants([]); setVoiceRosterConnected(false);
       if (loadedSessionUserId.current) {
         resetServers();
         resetChannelMessages();
@@ -633,7 +637,7 @@ export default function App() {
           channel = data;
         }
         if (!active || !channel || channel.type !== 'voice' || voiceSessionRef.current?.channelId !== current.channelId) return;
-        setVoiceParticipants([]);
+        setVoiceParticipants([]); setVoiceRosterConnected(false);
         setVoiceSession(previous => previous && previous.serverId === row.server_id ? { ...previous, channelId: channel.id, channelName: channel.name } : previous);
         openServer(row.server_id);
         setActiveChannel(row.channel_id);
@@ -697,6 +701,7 @@ export default function App() {
     userId: user?.id,
     channelId: voiceSession?.kind !== 'dm' && voiceSession?.serverId === activeServerId ? voiceSession?.channelId : null,
     participants: voiceParticipantsChannelId === voiceSession?.channelId ? voiceParticipants : [],
+    authoritative: voiceParticipantsChannelId === voiceSession?.channelId && voiceRosterConnected,
   });
   const voiceMemberChannels = Object.fromEntries(Object.entries(visibleVoicePresenceByChannel).flatMap(([channelId, participants]) => participants.map((participant) => [participant.id, voiceChannelNameById.get(channelId) || 'Ses kanalında'])));
   const canManageChannels = currentServerData?.owner_id === user?.id || currentServerData?.member_role === 'admin' || (serverCapabilities.serverId === activeServerId && serverCapabilities.manageChannels);
@@ -725,7 +730,7 @@ export default function App() {
           .then(({ error }) => { if (error) console.warn('Önceki ses kanalı durumu temizlenemedi:', error.message); });
       }
       setVoiceNotice('');
-      if (voiceSession?.channelId !== channel.id) setVoiceParticipants([]);
+      if (voiceSession?.channelId !== channel.id) { setVoiceParticipants([]); setVoiceRosterConnected(false); }
       setVoiceSession({ channelId: channel.id, channelName: channel.name, serverId: activeServerId });
     } else {
       setVoiceNotice('');
@@ -838,7 +843,7 @@ export default function App() {
     }
     const sourceChannelId = voiceSession?.channelId || member.sourceChannelId;
     if (sourceChannelId) void supabase.rpc('clear_server_voice_presence', { channel_uuid: sourceChannelId });
-    setVoiceParticipants([]);
+    setVoiceParticipants([]); setVoiceRosterConnected(false);
     setVoiceSession({ channelId: targetChannel.id, channelName: targetChannel.name, serverId: member.serverId });
     openServer(member.serverId);
     setActiveChannel(targetChannel.id);
