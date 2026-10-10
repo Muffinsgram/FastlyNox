@@ -4,9 +4,101 @@ import { useAuthStore } from './useAuthStore';
 import { getAppPreferences, isNotificationLocationMuted, shouldSuppressNotification } from '../lib/appPreferences';
 import { usePresenceStore } from './usePresenceStore';
 import { useDMChatStore } from './useDMChatStore';
+import { useFriendStore } from './useFriendStore';
+import { useServerStore } from './useServerStore';
 
 const toastTimers = new Map();
+const recentMessageToastKeys = new Map();
+const senderNameCache = new Map();
 let notificationAudioContext;
+
+function notificationMessagePreview(message, isDM = false) {
+  return (message?.content || '').trim().slice(0, 180) || (message?.image_url ? (isDM ? '🖼️ Fotoğraf' : '📎 Bir ek gönderdi.') : 'Yeni mesaj');
+}
+
+function hasRecentMessageToast(notification) {
+  const now = Date.now();
+  for (const [key, record] of recentMessageToastKeys) {
+    const timestamp = typeof record === 'number' ? record : record.createdAt;
+    if (now - timestamp > 15_000) recentMessageToastKeys.delete(key);
+  }
+  if (notification.type === 'dm_message' && notification.dm_channel_id && notification.sender_id) {
+    const createdAt = Date.parse(notification.created_at || '') || now;
+    const body = (notification.body || '').trim();
+    for (const [key, record] of recentMessageToastKeys) {
+      if (key.startsWith('dm:') && record.dmChannelId === notification.dm_channel_id && record.senderId === notification.sender_id
+        && Math.abs(record.createdAt - createdAt) < 8_000
+        && (record.body === body || record.body.startsWith(body) || body.startsWith(record.body))) return true;
+    }
+    const key = `dm:${notification.dm_channel_id}:${notification.sender_id}:${createdAt}:${body}`;
+    recentMessageToastKeys.set(key, { dmChannelId: notification.dm_channel_id, senderId: notification.sender_id, createdAt, body });
+    if (notification.message_id) recentMessageToastKeys.set(`dm-id:${notification.message_id}`, now);
+    return false;
+  }
+  if (!notification.message_id) return false;
+  const key = `server:${notification.message_id}`;
+  if (recentMessageToastKeys.has(key)) return true;
+  recentMessageToastKeys.set(key, now);
+  return false;
+}
+
+async function getSenderName(userId, fallback = 'Yeni mesaj') {
+  if (!userId) return fallback;
+  if (senderNameCache.has(userId)) return senderNameCache.get(userId);
+  const { data } = await supabase.from('profiles').select('username').eq('id', userId).maybeSingle();
+  const name = data?.username || fallback;
+  senderNameCache.set(userId, name);
+  return name;
+}
+
+async function showIncomingMessageToast(message, isDM, userId) {
+  if (!message?.id || !message.user_id || message.user_id === userId) return;
+  const preferences = getAppPreferences(userId);
+  const senderName = await getSenderName(message.user_id, isDM ? 'Yeni özel mesaj' : 'Yeni mesaj');
+  if (useAuthStore.getState().user?.id !== userId) return;
+  const toast = {
+    id: `incoming-message:${isDM ? 'dm' : 'server'}:${message.id}`,
+    message_id: message.id,
+    type: isDM ? 'dm_message' : 'server_message',
+    title: senderName,
+    body: notificationMessagePreview(message, isDM),
+    sender_id: message.user_id,
+    created_at: message.created_at || new Date().toISOString(),
+    is_ephemeral: true,
+  };
+  if (isDM) {
+    toast.dm_channel_id = message.dm_channel_id;
+    const dm = useFriendStore.getState().dmChannels.find((item) => item.id === message.dm_channel_id);
+    const sender = dm?.user1_id === message.user_id ? dm?.user1 : dm?.user2;
+    if (sender?.username) toast.title = senderName || sender.username;
+  } else {
+    toast.channel_id = message.channel_id;
+    const servers = useServerStore.getState().servers;
+    let server = null;
+    let channel = null;
+    for (const item of servers) {
+      const found = (item.categories || []).flatMap((category) => category.channels || []).find((candidate) => candidate.id === message.channel_id);
+      if (found) { server = item; channel = found; break; }
+    }
+    if (!channel && message.channel_id) {
+      const { data } = await supabase.from('channels').select('id,name,server_id').eq('id', message.channel_id).maybeSingle();
+      channel = data;
+      server = servers.find((item) => item.id === data?.server_id) || null;
+    }
+    if (channel?.server_id) toast.server_id = channel.server_id;
+    else if (server?.id) toast.server_id = server.id;
+    toast.title = `${senderName} · #${channel?.name || 'sunucu'}`;
+  }
+  if (shouldSuppressNotification(toast, preferences, { presenceIsDnd: usePresenceStore.getState().status === 'dnd' })) return;
+  const showedToast = useNotificationStore.getState().queueToast(toast);
+  if (!showedToast) return;
+  if (preferences.notificationSound) playNotificationSound(preferences.notificationSoundVolume);
+  const isAppFocused = document.visibilityState === 'visible' && document.hasFocus();
+  if (preferences.desktopNotifications && !isAppFocused && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    try { new Notification(toast.title, { body: toast.body }); }
+    catch { /* Keep the in-app toast available if the OS blocks a desktop popup. */ }
+  }
+}
 
 function playNotificationSound(volume = 65) {
   if (typeof window === 'undefined' || Number(volume) <= 0) return;
@@ -200,6 +292,18 @@ export const useNotificationStore = create((set, get) => ({
 
   setActiveDMChannel: (dmChannelId) => set({ activeDMChannelId: dmChannelId || null }),
 
+  queueToast: (notification) => {
+    if (!notification?.id || get().activeToasts.some((toast) => toast.id === notification.id)) return false;
+    if ((notification.type === 'dm_message' || notification.message_id) && hasRecentMessageToast(notification)) return false;
+    set((state) => ({ activeToasts: [...state.activeToasts, notification].slice(-3) }));
+    clearTimeout(toastTimers.get(notification.id));
+    toastTimers.set(notification.id, setTimeout(() => {
+      toastTimers.delete(notification.id);
+      set((state) => ({ activeToasts: state.activeToasts.filter((toast) => toast.id !== notification.id) }));
+    }, 5_000));
+    return true;
+  },
+
   subscribeToNotifications: () => {
     const user = useAuthStore.getState().user;
     if (!user) return;
@@ -212,6 +316,16 @@ export const useNotificationStore = create((set, get) => ({
     let readRefreshTimer;
     const subscription = supabase
       .channel(`public:notifications:user_id=eq.${user.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+      }, (payload) => { void showIncomingMessageToast(payload.new, false, user.id); })
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'dm_messages',
+      }, (payload) => { void showIncomingMessageToast(payload.new, true, user.id); })
       .on('postgres_changes', { 
         event: 'INSERT', 
         schema: 'public', 
@@ -239,42 +353,27 @@ export const useNotificationStore = create((set, get) => ({
           }, 100);
         }
         
-        // Show desktop notification if granted
         const preferences = getAppPreferences(user.id);
         const isOpenDM = Boolean(newNotif.dm_channel_id && get().activeDMChannelId === newNotif.dm_channel_id && document.visibilityState === 'visible' && document.hasFocus());
         const doNotDisturb = shouldSuppressNotification(newNotif, preferences, { presenceIsDnd: usePresenceStore.getState().status === 'dnd' });
         const countServerActivity = !isNotificationLocationMuted(newNotif, preferences);
         const isAppFocused = typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus();
-        if (!doNotDisturb && preferences.desktopNotifications && !isAppFocused && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        if (isOpenDM) void supabase.from('notifications').update({ is_read: true }).eq('id', newNotif.id).eq('user_id', user.id);
+        const notification = isOpenDM ? { ...newNotif, is_read: true } : newNotif;
+        const showedToast = !doNotDisturb && get().queueToast(notification);
+        if (showedToast && !isOpenDM && preferences.notificationSound) playNotificationSound(preferences.notificationSoundVolume);
+        if (showedToast && preferences.desktopNotifications && !isAppFocused && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
           try { new Notification(newNotif.title, { body: newNotif.body }); }
           catch { /* Keep in-app notification delivery working if the OS blocks a desktop popup. */ }
         }
 
-        if (!doNotDisturb && !isOpenDM && preferences.notificationSound) playNotificationSound(preferences.notificationSoundVolume);
-
-        if (isOpenDM) void supabase.from('notifications').update({ is_read: true }).eq('id', newNotif.id).eq('user_id', user.id);
-        const notification = isOpenDM ? { ...newNotif, is_read: true } : newNotif;
-
-        // Play a soft notification sound (if you had a sound file, you'd do new Audio('/ping.mp3').play())
-
-        // Add to state and queue an in-app toast
         set(state => ({
           notifications: [notification, ...state.notifications].slice(0, 30),
           unreadCount: state.unreadCount + (isOpenDM ? 0 : 1),
           dmUnreadCounts: notification.dm_channel_id && !isOpenDM ? { ...state.dmUnreadCounts, [notification.dm_channel_id]: (state.dmUnreadCounts[notification.dm_channel_id] || 0) + 1 } : state.dmUnreadCounts,
           serverUnreadCounts: countServerActivity && newNotif.server_id ? { ...state.serverUnreadCounts, [newNotif.server_id]: (state.serverUnreadCounts[newNotif.server_id] || 0) + 1 } : state.serverUnreadCounts,
           channelUnreadCounts: countServerActivity && newNotif.channel_id ? { ...state.channelUnreadCounts, [newNotif.channel_id]: (state.channelUnreadCounts[newNotif.channel_id] || 0) + 1 } : state.channelUnreadCounts,
-          activeToasts: doNotDisturb ? state.activeToasts : [...state.activeToasts, notification].slice(-3),
         }));
-
-        // Remove toast after 4 seconds
-        clearTimeout(toastTimers.get(newNotif.id));
-        if (!doNotDisturb) toastTimers.set(newNotif.id, setTimeout(() => {
-          toastTimers.delete(newNotif.id);
-          set(state => ({
-            activeToasts: state.activeToasts.filter(t => t.id !== newNotif.id)
-          }));
-        }, 4000));
       })
       .on('postgres_changes', {
         event: 'UPDATE',
@@ -324,6 +423,8 @@ export const useNotificationStore = create((set, get) => ({
     set({ activeSubscription: null, activeSubscriptionCleanup: null });
     toastTimers.forEach(clearTimeout);
     toastTimers.clear();
+    recentMessageToastKeys.clear();
+    senderNameCache.clear();
     set({ activeToasts: [] });
   }
 }));

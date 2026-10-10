@@ -979,7 +979,7 @@ export default function App() {
       {windowNotice && <div role="status" className="absolute right-3 top-12 z-[90] flex max-w-sm items-center gap-3 rounded-xl border border-white/10 bg-[#171b24]/95 px-4 py-3 text-xs text-slate-200 shadow-2xl backdrop-blur-xl"><span>{windowNotice}</span><button type="button" aria-label="Bildirimi kapat" onClick={() => setWindowNotice('')} className="text-slate-400 hover:text-white">×</button></div>}
 
       <NotificationManager onOpenNotification={(notification) => {
-        void markNotificationRead(notification.id);
+        if (!notification.is_ephemeral) void markNotificationRead(notification.id);
         if (notification.server_id && notification.channel_id) {
           openServer(notification.server_id);
           setActiveChannel(notification.channel_id);
