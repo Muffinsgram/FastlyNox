@@ -1,3 +1,4 @@
+import { useDMChatStore } from '../../../store/useDMChatStore';
 import React, { useEffect, useState } from 'react';
 import { Users, MessageSquare, Check, X, UserPlus, Plus, Megaphone, Clock3, Rss, Bookmark, Copy, Pin, PinOff, Trash2 } from 'lucide-react';
 import { useAuthStore } from '../../../store/useAuthStore';
@@ -84,6 +85,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
       const otherUser = dm.user1_id === user.id ? dm.user2 : dm.user1;
       const preferences = getAppPreferences(user?.id);
       if (preferences.hiddenDMIds.includes(dm.id)) saveAppPreferences(user.id, { ...preferences, hiddenDMIds: preferences.hiddenDMIds.filter((id) => id !== dm.id) });
+      useDMChatStore.getState().prefetchMessages(dm.id);
       setActiveDM({ id: dm.id, user: otherUser });
     }
   };
@@ -169,7 +171,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
              const unreadCount = dmUnreadCounts[dm.id] || 0;
              return (
                <div key={dm.id} onContextMenu={(event) => { event.preventDefault(); setDmContextMenu({ x: event.clientX, y: event.clientY, dm, otherUser }); }}>
-                 <button type="button" onClick={() => setActiveDM({ id: dm.id, user: otherUser })} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg group transition-all ${isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}>
+                 <button type="button" onPointerEnter={() => useDMChatStore.getState().prefetchMessages(dm.id)} onFocus={() => useDMChatStore.getState().prefetchMessages(dm.id)} onPointerDown={() => useDMChatStore.getState().prefetchMessages(dm.id)} onClick={() => setActiveDM({ id: dm.id, user: otherUser })} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg group transition-all ${isActive ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}>
                    <img src={getAvatarUrl(otherUser?.avatar_url, otherUser?.username)} className="w-8 h-8 rounded-full bg-slate-800 object-cover shrink-0" alt="avatar" />
                    <span className="min-w-0 flex-1 truncate text-left"><span className="block truncate text-sm font-medium">{otherUser?.username}</span>{dm.last_message && <span className="mt-0.5 flex min-w-0 items-center gap-2 text-[10px] text-slate-500"><span className="min-w-0 flex-1 truncate">{dmPreview(dm.last_message)}</span><time className="shrink-0 text-[9px] text-slate-600">{formatDMTime(dm.last_message.created_at)}</time></span>}</span>
                    {unreadCount > 0 && <span className="grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-violet-400 px-1 text-[9px] font-bold text-slate-950">{unreadCount > 99 ? '99+' : unreadCount}</span>}

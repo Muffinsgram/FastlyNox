@@ -1,6 +1,6 @@
 import { normalizeVoiceVolume } from './voicePlayback.js';
 import { DEFAULT_VOICE_AUDIO_SETTINGS } from './voiceAudio.js';
-import { getColorTheme, getSurfaceStyle, surfaceVariables, themeVariables } from './colorThemes.js';
+import { SURFACE_STYLES, getColorTheme, getSurfaceStyle, surfaceVariables, themeVariables } from './colorThemes.js';
 
 const preferenceKey = (userId) => `fastcord:preferences:${encodeURIComponent(userId || '')}`;
 const preferenceCache = new WeakMap();
@@ -19,9 +19,7 @@ export function applyAppPreferences(preferences = defaults) {
   root.dataset.colorTheme = theme.id;
   const surfaceStyle = getSurfaceStyle(theme.id, preferences.surfaceStyle || 'auto');
   root.dataset.surfaceStyle = surfaceStyle.id;
-  const selectedAccent = preferences.accentTheme !== 'auto' || theme.id === 'original'
-    ? (accentPalettes[preferences.accentTheme] || accentPalettes.violet)[4] : theme.accent;
-  Object.entries(surfaceVariables(surfaceStyle, { ...theme, accent: selectedAccent })).forEach(([name, value]) => root.style.setProperty(name, value));
+  Object.entries(surfaceVariables(surfaceStyle)).forEach(([name, value]) => root.style.setProperty(name, value));
   Object.entries(themeVariables(theme.id)).forEach(([name, value]) => root.style.setProperty(name, value));
   const palette = accentPalettes[preferences.accentTheme] || accentPalettes.violet;
   if (preferences.accentTheme !== 'auto' || theme.id === 'original') {
@@ -46,6 +44,7 @@ export function getAppPreferences(userId, storage = globalThis.localStorage) {
     const preferences = {
       ...defaults,
       ...saved,
+      surfaceStyle: saved.surfaceStyle === 'auto' || SURFACE_STYLES.some(style => style.id === saved.surfaceStyle) ? saved.surfaceStyle : 'auto',
       keybinds: {
         ...defaults.keybinds,
         ...(saved.keybinds && typeof saved.keybinds === 'object' && !Array.isArray(saved.keybinds) ? saved.keybinds : {}),

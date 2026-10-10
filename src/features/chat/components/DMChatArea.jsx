@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { getClipboardImage } from '../../../lib/clipboardImage';
 import React, { useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { Info, Plus, Loader2, Pencil, Trash2, Send, X, Reply, Forward, PanelRight, Phone, PhoneOff } from 'lucide-react';
@@ -22,11 +23,18 @@ import { COMMAND_HELP, resolveChatCommand } from '../../../lib/chatCommands';
 import { FormattedMessage } from './FormattedMessage';
 import { useUploadLimit } from '../../../hooks/useUploadLimit';
 
+const EMPTY_ARRAY = Object.freeze([]);
+
 export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser, onStartCall, incomingCallInvite, onAcceptCall, onDeclineCall, onInviteClick }) {
   const { user } = useAuthStore();
   const maxUploadBytes = useUploadLimit('attachments', user?.id);
-  const { messages, drafts, isLoading, setDraft, clearDraft, fetchMessages, subscribeToChannel, unsubscribe, sendMessage, editMessage, deleteMessage, toggleReaction } = useDMChatStore();
-  const input = drafts[activeChannelId] ?? readDraft(user?.id, `dm:${activeChannelId}`) ?? '';
+  const { channelMessages, draft, isLoading, setDraft, clearDraft, fetchMessages, subscribeToChannel, unsubscribe, sendMessage, editMessage, deleteMessage, toggleReaction } = useDMChatStore(useShallow(state => ({
+    channelMessages: state.messages[activeChannelId] || EMPTY_ARRAY,
+    draft: state.drafts[activeChannelId],
+    isLoading: Boolean(state.loadingByChannel[activeChannelId]),
+    setDraft: state.setDraft, clearDraft: state.clearDraft, fetchMessages: state.fetchMessages, subscribeToChannel: state.subscribeToChannel, unsubscribe: state.unsubscribe, sendMessage: state.sendMessage, editMessage: state.editMessage, deleteMessage: state.deleteMessage, toggleReaction: state.toggleReaction,
+  })));
+  const input = draft ?? readDraft(user?.id, `dm:${activeChannelId}`) ?? '';
   const chatScrollRef = useRef(null);
   const messageListRef = useRef(null);
   const shouldAutoScroll = useRef(true);
@@ -92,7 +100,6 @@ export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser,
     return () => { active = false; };
   }, [otherUser?.id, user?.id]);
 
-  const channelMessages = useMemo(() => messages[activeChannelId] || [], [messages, activeChannelId]);
   const currentUserId = user?.id;
   const currentUsername = user?.username?.toLowerCase() || '';
   const messageGroupSizes = useMemo(() => channelMessages.reduce((sizes, message, index) => {

@@ -1,6 +1,9 @@
 import { supabase } from './supabase';
 import { readFunctionError } from './edgeFunctions';
 import { createVoiceTokenRequests } from './voiceTokenRequests';
+import { createVoiceRoomPreparations } from './voiceRoomPreparation';
+import { getAppPreferences } from './appPreferences';
+import { getAudioPublishOptions } from './voiceAudio';
 
 let connectionWarmup;
 export function prepareVoiceConnection() {
@@ -66,13 +69,21 @@ async function requestLiveKitToken(channelId, { dmChannelId = null } = {}) {
 }
 
 const voiceTokens = createVoiceTokenRequests(requestLiveKitToken);
+const preparedRooms = createVoiceRoomPreparations(async userId => {
+  const { Room } = await import('livekit-client');
+  return new Room({ publishDefaults: getAudioPublishOptions(getAppPreferences(userId).voiceAudioSettings), webAudioMix: true, adaptiveStream: true, dynacast: true });
+}, (room, token) => room.prepareConnection(import.meta.env.VITE_LIVEKIT_URL, token));
 supabase.auth.onAuthStateChange((event) => {
-  if (event === 'SIGNED_OUT' || event === 'SIGNED_IN' || event === 'USER_UPDATED') voiceTokens.clear();
+  if (event === 'SIGNED_OUT' || event === 'SIGNED_IN' || event === 'USER_UPDATED') { voiceTokens.clear(); preparedRooms.clear(); }
 });
 
 export function prefetchVoiceToken(userId, channelId, dmChannelId = null) {
-  if (userId && channelId) voiceTokens.prefetch(userId, channelId, dmChannelId);
+  if (!userId || !channelId) return;
+  const token = voiceTokens.prefetch(userId, channelId, dmChannelId);
+  if (token && import.meta.env.VITE_LIVEKIT_URL) preparedRooms.prefetch(userId, channelId, dmChannelId, token);
 }
+
+export const takePreparedVoiceRoom = (userId, channelId, dmChannelId = null) => preparedRooms.take(userId, channelId, dmChannelId);
 
 export async function generateLiveKitToken(channelId, { dmChannelId = null } = {}) {
   const { data: { session } } = await supabase.auth.getSession();

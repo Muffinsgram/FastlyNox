@@ -228,6 +228,13 @@ export default function App() {
   useEffect(() => () => clearTimeout(voiceIntentTimer.current), [user?.id]);
   const prepareVoiceIntent = (channel, immediate = false) => {
     clearTimeout(voiceIntentTimer.current);
+    if (channel.nsfw && !sessionStorage.getItem('fastcord:nsfw-consent')) return;
+    if (channel.type === 'text') {
+      const prepare = () => useChatStore.getState().prefetchMessages(channel.id);
+      if (immediate) prepare();
+      else voiceIntentTimer.current = setTimeout(prepare, 60);
+      return;
+    }
     if (channel.type !== 'voice' || voiceSession?.channelId === channel.id || voiceSession?.kind === 'dm') return;
     if (channel.nsfw && !sessionStorage.getItem('fastcord:nsfw-consent')) return;
     const prepare = () => {
@@ -423,10 +430,11 @@ export default function App() {
       setVoiceNotice('Başka bir ses bağlantısındasın. Önce mevcut odadan veya aramadan ayrıl.');
       return false;
     }
+    prefetchVoiceToken(user?.id, channelId, channelId);
     setVoiceNotice('');
     setVoiceSession({ kind: 'dm', channelId, dmChannelId: channelId, channelName, peerId, inviteId, isCaller, serverId: null });
     return true;
-  }, [voiceSession]);
+  }, [voiceSession, user?.id]);
 
   const handleCallInviteAccepted = useCallback((inviteId) => {
     setIncomingCallInvite((current) => current?.id === inviteId ? null : current);

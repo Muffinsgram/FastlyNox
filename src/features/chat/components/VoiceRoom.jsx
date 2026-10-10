@@ -4,7 +4,7 @@ import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionQualityIndicator, use
 import '@livekit/components-styles';
 import { createLocalAudioTrack, DisconnectReason, Room as LiveKitClientRoom, RoomEvent, Track, supportsAudioOutputSelection } from 'livekit-client';
 import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Eye, Headphones, HeadphoneOff, Maximize2, MessageSquare, Mic, MicOff, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
-import { generateLiveKitToken } from '../../../lib/livekit';
+import { generateLiveKitToken, takePreparedVoiceRoom } from '../../../lib/livekit';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { useServerStore } from '../../../store/useServerStore';
 import { fetchProfile, fetchProfiles, getAvatarUrl } from '../../../lib/profileMedia';
@@ -1388,12 +1388,17 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
   const [voiceAudioSettings, setVoiceAudioSettings] = useState(() => ({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) }));
   // Keep the actual connection stable when audio settings change. Individual
   // microphone publications apply their new settings without rebuilding Room.
-  const room = useMemo(() => new LiveKitClientRoom({
+  const room = useMemo(() => takePreparedVoiceRoom(userId, channelId, dmChannelId) || new LiveKitClientRoom({
     publishDefaults: getAudioPublishOptions({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) }),
     webAudioMix: true, adaptiveStream: true, dynacast: true,
-  }), [channelId, userId, attempt]);
+  }), [channelId, dmChannelId, userId, attempt]);
 
   useLayoutEffect(() => () => closeVoiceRoom(room), [room]);
+  const leaveImmediately = useCallback(() => {
+    preparedMicrophoneRef.current?.dispose();
+    closeVoiceRoom(room);
+    void onLeave();
+  }, [room, onLeave]);
 
   useEffect(() => {
     setVoiceAudioSettings({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) });
@@ -1491,7 +1496,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           <p className="mt-2 text-xs leading-5 text-slate-400">{connectionError}</p>
           <div className="mt-4 flex justify-center gap-2">
             <button type="button" onClick={() => setAttempt((value) => value + 1)} className="inline-flex items-center gap-2 rounded-xl bg-violet-500 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-400"><RefreshCw className="h-3.5 w-3.5" /> Yeniden dene</button>
-            <button type="button" onClick={onLeave} className="inline-flex items-center gap-2 rounded-xl border border-rose-300/15 bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-500/25"><PhoneOff className="h-3.5 w-3.5" /> Odadan ayrıl</button>
+            <button type="button" onClick={leaveImmediately} className="inline-flex items-center gap-2 rounded-xl border border-rose-300/15 bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-500/25"><PhoneOff className="h-3.5 w-3.5" /> Odadan ayrıl</button>
           </div>
         </div>
       </div>
@@ -1550,7 +1555,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
               <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4"><VoiceParticipants serverId={serverId} channelId={channelId} initialParticipants={initialParticipants} localDeafened={localDeafened} outputVolume={voiceAudioSettings.outputVolume} onPresenceError={onPresenceError} onParticipantsChange={onParticipantsChange} contextMenuRequest={contextMenuRequest} onContextMenuRequestHandled={onContextMenuRequestHandled} /></div>
               {isStageVisible && showVoiceChat && <aside aria-label="Ses kanalı metin sohbeti" className="w-[min(360px,45%)] min-w-[280px] shrink-0 border-l border-white/[0.07] bg-[#0d1119]"><ChatArea activeChannelId={channelId} channelName={`${channelName} sohbeti`} /></aside>}
             </div>
-            <VoiceControls onLeave={onLeave} isDeafened={localDeafened} onDeafenedChange={setLocalDeafened} compact={!isStageVisible} expanded={isDockExpanded} onToggleExpand={() => setIsDockExpanded((value) => !value)} />
+            <VoiceControls onLeave={leaveImmediately} isDeafened={localDeafened} onDeafenedChange={setLocalDeafened} compact={!isStageVisible} expanded={isDockExpanded} onToggleExpand={() => setIsDockExpanded((value) => !value)} />
           </div>
           </ScreenViewingProvider>
         </LiveKitRoom>

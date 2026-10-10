@@ -1,3 +1,4 @@
+import { createMessageRequests } from '../lib/messageRequests';
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from './useAuthStore';
@@ -5,10 +6,13 @@ import { mergeFetchedMessages, mergeMessage, replaceOptimisticMessage } from '..
 import { appendReaction, MESSAGE_REACTIONS, removeReaction } from '../lib/messageReactions';
 import { writeDraft } from '../lib/draftStorage';
 
+const messageRequests = createMessageRequests();
+
 export const useChatStore = create((set, get) => ({
   messages: {},
   drafts: {},
   isLoading: false,
+  loadingByChannel: {},
   requestGeneration: 0,
   fetchRequests: {},
   messageEventVersions: {},
@@ -16,61 +20,77 @@ export const useChatStore = create((set, get) => ({
   activeSubscriptionCleanup: null,
   subscriptionToken: 0,
 
-  fetchMessages: async (channelId) => {
-    if (!channelId) return;
+  prefetchMessages: (channelId) => {
+    if (!channelId || get().messages[channelId]) return;
+    const key = JSON.stringify([get().requestGeneration, channelId]);
     const generation = get().requestGeneration;
-    const eventVersion = get().messageEventVersions[channelId] || 0;
-    const requestId = (get().fetchRequests[channelId] || 0) + 1;
-    const initialMessages = get().messages[channelId] || [];
-    const initialIds = new Set(initialMessages.map((message) => message.id));
-    set((state) => ({ isLoading: true, fetchRequests: { ...state.fetchRequests, [channelId]: requestId } }));
-    
-    const { data, error } = await supabase
-      .from('messages')
-      .select(`*, profiles:user_id ( id, username, avatar_url )`)
-      .eq('channel_id', channelId)
-      .order('created_at', { ascending: false })
-      .limit(100);
+    messageRequests.prefetch(key, () => generation === get().requestGeneration ? get().fetchMessages(channelId, true) : undefined);
+  },
 
-    if (generation !== get().requestGeneration || get().fetchRequests[channelId] !== requestId) return;
-    if (!error && data) {
-      const current = get().messages[channelId] || [];
-      const previousById = new Map(current.map((message) => [message.id, message]));
-      const fetched = data.reverse().map((message) => ({ ...message, reactions: previousById.get(message.id)?.reactions || [] }));
-      const arrivals = current.filter((message) => !initialIds.has(message.id) && !message.isOptimistic);
-      const pendingSends = current.filter((message) => message.isOptimistic);
-      const reconciled = mergeFetchedMessages([...arrivals, ...pendingSends], fetched);
-      // Show the message snapshot as soon as it arrives. Reactions can load in
-      // parallel afterwards and should not hold the whole chat behind another
-      // database round-trip.
-      set((state) => ({ messages: { ...state.messages, [channelId]: reconciled }, isLoading: false }));
-      if ((get().messageEventVersions[channelId] || 0) !== eventVersion) {
-        window.setTimeout(() => {
-          if (generation === get().requestGeneration) void get().fetchMessages(channelId);
-        }, 150);
-        return;
-      }
-      const messageIds = data.map((message) => message.id);
-      if (messageIds.length) {
-        const { data: reactions, error: reactionError } = await supabase.from('message_reactions')
-          .select('id, message_id, channel_id, user_id, emoji').eq('channel_id', channelId).in('message_id', messageIds);
-        if (generation !== get().requestGeneration || get().fetchRequests[channelId] !== requestId) return;
-        if (reactionError) console.warn('Kanal tepkileri eşitlenemedi:', reactionError.message);
-        else {
-          const reactionsByMessage = new Map();
-          (reactions || []).forEach((reaction) => reactionsByMessage.set(reaction.message_id, [...(reactionsByMessage.get(reaction.message_id) || []), reaction]));
-          set((state) => ({ messages: {
-            ...state.messages,
-            [channelId]: (state.messages[channelId] || []).map((message) => messageIds.includes(message.id)
-              ? { ...message, reactions: reactionsByMessage.get(message.id) || [] }
-              : message),
-          } }));
+  fetchMessages: (channelId, prepared = false) => {
+    if (!channelId) return Promise.resolve();
+    const load = async () => {
+      if (!channelId) return;
+      const generation = get().requestGeneration;
+      const eventVersion = get().messageEventVersions[channelId] || 0;
+      const requestId = (get().fetchRequests[channelId] || 0) + 1;
+      const initialMessages = get().messages[channelId] || [];
+      const initialIds = new Set(initialMessages.map((message) => message.id));
+      set((state) => ({ isLoading: !initialMessages.length, loadingByChannel: { ...state.loadingByChannel, [channelId]: !initialMessages.length }, fetchRequests: { ...state.fetchRequests, [channelId]: requestId } }));
+    
+      const { data, error } = await supabase
+        .from('messages')
+        .select(`*, profiles:user_id ( id, username, avatar_url )`)
+        .eq('channel_id', channelId)
+        .order('created_at', { ascending: false })
+        .limit(100);
+
+      if (generation !== get().requestGeneration || get().fetchRequests[channelId] !== requestId) return;
+      if (!error && data) {
+        const current = get().messages[channelId] || [];
+        const previousById = new Map(current.map((message) => [message.id, message]));
+        const fetched = data.reverse().map((message) => ({ ...message, reactions: previousById.get(message.id)?.reactions || [] }));
+        const arrivals = current.filter((message) => !initialIds.has(message.id) && !message.isOptimistic);
+        const pendingSends = current.filter((message) => message.isOptimistic);
+        const reconciled = mergeFetchedMessages([...arrivals, ...pendingSends], fetched);
+        // Show the message snapshot as soon as it arrives. Reactions can load in
+        // parallel afterwards and should not hold the whole chat behind another
+        // database round-trip.
+        set((state) => ({ messages: { ...state.messages, [channelId]: reconciled }, isLoading: false, loadingByChannel: { ...state.loadingByChannel, [channelId]: false } }));
+        if ((get().messageEventVersions[channelId] || 0) !== eventVersion) {
+          window.setTimeout(() => {
+            if (generation === get().requestGeneration) void get().fetchMessages(channelId);
+          }, 150);
+          return;
         }
-      }
-    } else {
-      console.error('Kanal mesajları yüklenemedi:', error?.message || 'Bilinmeyen veritabanı hatası');
-      set({ isLoading: false });
-    }
+        const messageIds = data.map((message) => message.id);
+        if (messageIds.length) {
+          const { data: reactions, error: reactionError } = await supabase.from('message_reactions')
+            .select('id, message_id, channel_id, user_id, emoji').eq('channel_id', channelId).in('message_id', messageIds);
+          if (generation !== get().requestGeneration || get().fetchRequests[channelId] !== requestId) return;
+          if (reactionError) console.warn('Kanal tepkileri eşitlenemedi:', reactionError.message);
+          else {
+            const reactionsByMessage = new Map();
+            (reactions || []).forEach((reaction) => reactionsByMessage.set(reaction.message_id, [...(reactionsByMessage.get(reaction.message_id) || []), reaction]));
+            set((state) => ({ messages: {
+              ...state.messages,
+              [channelId]: (state.messages[channelId] || []).map((message) => messageIds.includes(message.id)
+                ? { ...message, reactions: reactionsByMessage.get(message.id) || [] }
+                : message),
+            } }));
+          }
+        }
+      } else {
+        console.error('Kanal mesajları yüklenemedi:', error?.message || 'Bilinmeyen veritabanı hatası');
+        set((state) => ({ isLoading: false, loadingByChannel: { ...state.loadingByChannel, [channelId]: false } }));
+      }    };
+    const generation = get().requestGeneration;
+    const guardedLoad = () => load().catch(error => {
+      if (generation === get().requestGeneration) set(state => ({ isLoading: false, loadingByChannel: { ...state.loadingByChannel, [channelId]: false } }));
+      console.warn('Mesaj geçmişi yüklenemedi:', error?.message || error);
+    });
+    if (prepared) return guardedLoad();
+    return messageRequests.run(JSON.stringify([get().requestGeneration, channelId]), guardedLoad);
   },
 
   bumpMessageEvent: (channelId) => set((state) => ({ messageEventVersions: { ...state.messageEventVersions, [channelId]: (state.messageEventVersions[channelId] || 0) + 1 } })),
@@ -165,7 +185,7 @@ export const useChatStore = create((set, get) => ({
 
   reset: () => {
     get().unsubscribe();
-    set((state) => ({ messages: {}, drafts: {}, fetchRequests: {}, messageEventVersions: {}, isLoading: false, requestGeneration: state.requestGeneration + 1 }));
+    set((state) => ({ messages: {}, drafts: {}, loadingByChannel: {}, fetchRequests: {}, messageEventVersions: {}, isLoading: false, requestGeneration: state.requestGeneration + 1 }));
   },
 
   setDraft: (channelId, draft) => {

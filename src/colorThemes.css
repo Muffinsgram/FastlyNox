@@ -137,13 +137,3 @@ html[data-surface-style="sharp"] :is(.theme-card, .macos-surface, .macos-compose
 :is(html[data-surface-style="satin"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="satin"]) {
   background: linear-gradient(120deg, var(--theme-panel) 10%, color-mix(in srgb, var(--theme-secondary) 8%, var(--theme-panel)) 38%, color-mix(in srgb, var(--theme-accent) 5%, var(--theme-panel)) 55%, var(--theme-panel) 80%) !important;
 }
-
-/* The silhouette is painted behind content; no clipping of text or controls. */
-:is(html:is([data-surface-style="sweetheart"], [data-surface-style="heart-glass"], [data-surface-style="heart-pearl"], [data-surface-style="heart-lace"], [data-surface-style="heart-satin"], [data-surface-style="folded-paper"], [data-surface-style="comic-heart"]) :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="sweetheart"], [data-surface-preview="heart-glass"], [data-surface-preview="heart-pearl"], [data-surface-preview="heart-lace"], [data-surface-preview="heart-satin"], [data-surface-preview="folded-paper"], [data-surface-preview="comic-heart"]) {
-  background: var(--theme-artwork) center / 100% 100% no-repeat !important;
-  border-color: transparent;
-}
-:is(html[data-surface-style="rainbow-neon"] :is(.theme-card, .macos-surface, .macos-composer, .screen-share-card:not(:fullscreen), .camera-stage-card:not(:fullscreen)), [data-surface-preview="rainbow-neon"]) {
-  background: linear-gradient(var(--theme-panel), var(--theme-panel)) padding-box, conic-gradient(from 60deg, #bd73d4, #648cc4, #61a69f, #b4b96d, #c78285, #bd73d4) border-box !important;
-  border-color: transparent;
-}

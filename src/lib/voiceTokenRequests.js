@@ -16,10 +16,12 @@ export function createVoiceTokenRequests(request, now = Date.now) {
     prefetch(userId, channelId, dmChannelId = null) {
       const key = keyFor(userId, channelId, dmChannelId);
       for (const [id, entry] of prefetched) if (entry.expires <= now()) prefetched.delete(id);
-      if (prefetched.has(key) || prefetched.size >= 4) return;
+      if (prefetched.has(key)) return prefetched.get(key).promise;
+      if (prefetched.size >= 4) return null;
       const entry = { expires: now() + 15_000, promise: run(key, channelId, dmChannelId) };
       prefetched.set(key, entry);
       entry.promise.catch(() => { if (prefetched.get(key) === entry) prefetched.delete(key); });
+      return entry.promise;
     },
     join(userId, channelId, dmChannelId = null) {
       const key = keyFor(userId, channelId, dmChannelId);

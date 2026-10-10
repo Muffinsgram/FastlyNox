@@ -1,3 +1,4 @@
+import { useShallow } from 'zustand/react/shallow';
 import { getClipboardImage } from '../../../lib/clipboardImage';
 import React, { useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { Hash, Info, Plus, Loader2, Pencil, Trash2, Send, X, Reply, Forward, BarChart3, CalendarClock, MessageSquareText, ImagePlus, Copy, UserRound } from 'lucide-react';
@@ -32,8 +33,13 @@ const EMPTY_ARRAY = Object.freeze([]);
 export function ChatArea({ activeChannelId, channelName, onOpenChannelMention, onInviteClick }) {
   const { user } = useAuthStore();
   const maxUploadBytes = useUploadLimit('attachments', user?.id);
-  const { messages, drafts, isLoading, setDraft, clearDraft, fetchMessages, subscribeToChannel, unsubscribe, sendMessage, editMessage, deleteMessage, toggleReaction } = useChatStore();
-  const input = drafts[activeChannelId] ?? readDraft(user?.id, `server:${activeChannelId}`) ?? '';
+  const { channelMessages, draft, isLoading, setDraft, clearDraft, fetchMessages, subscribeToChannel, unsubscribe, sendMessage, editMessage, deleteMessage, toggleReaction } = useChatStore(useShallow(state => ({
+    channelMessages: state.messages[activeChannelId] || EMPTY_ARRAY,
+    draft: state.drafts[activeChannelId],
+    isLoading: Boolean(state.loadingByChannel[activeChannelId]),
+    setDraft: state.setDraft, clearDraft: state.clearDraft, fetchMessages: state.fetchMessages, subscribeToChannel: state.subscribeToChannel, unsubscribe: state.unsubscribe, sendMessage: state.sendMessage, editMessage: state.editMessage, deleteMessage: state.deleteMessage, toggleReaction: state.toggleReaction,
+  })));
+  const input = draft ?? readDraft(user?.id, `server:${activeChannelId}`) ?? '';
   const chatScrollRef = useRef(null);
   const messageListRef = useRef(null);
   const shouldAutoScroll = useRef(true);
@@ -111,7 +117,6 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention, o
     return () => { current = false; };
   }, [activeServerId, activeServer, user?.id]);
 
-  const channelMessages = useMemo(() => messages[activeChannelId] || [], [messages, activeChannelId]);
   const messageGroupSizes = useMemo(() => channelMessages.reduce((sizes, message, index) => {
     if (index === 0) return [1];
     const previous = channelMessages[index - 1];
