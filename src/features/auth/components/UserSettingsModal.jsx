@@ -35,7 +35,18 @@ function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalk
     let rightAltHeld = false;
     let rightAltUsedAsModifier = false;
     let rightCtrlHeld = false;
+    let rightCtrlUsedAsModifier = false;
     const capture = event => {
+      if (event.code === 'ControlRight' && event.type === 'keyup') {
+        event.preventDefault(); event.stopPropagation();
+        rightCtrlHeld = false;
+        if (!rightCtrlUsedAsModifier) {
+          const conflict = Object.entries(bindings).find(([key, binding]) => key !== recording && binding === 'CtrlRight');
+          if (conflict) setNotice('Bu tuş başka bir işlemde kullanılıyor.');
+          else { onChange({ ...bindings, [recording]: 'CtrlRight' }); setRecording(''); setNotice('Tuş ataması kaydedildi.'); }
+        }
+        return;
+      }
       if (event.code === 'AltRight' && event.type === 'keyup') {
         event.preventDefault(); event.stopPropagation();
         rightAltHeld = false;
@@ -53,8 +64,10 @@ function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalk
         event.preventDefault(); event.stopPropagation();
         if (event.key === 'Escape') { setRecording(''); return; }
         if (event.code === 'AltRight') { rightAltUsedAsModifier = false; return; }
+        if (event.code === 'ControlRight') { rightCtrlUsedAsModifier = false; return; }
         if (['Shift', 'Control', 'Alt', 'Meta', 'AltGraph'].includes(event.key) && event.code !== 'ControlRight') return;
         if (rightAltHeld || event.getModifierState?.('AltGraph')) rightAltUsedAsModifier = true;
+        if (rightCtrlHeld) rightCtrlUsedAsModifier = true;
         const altGraph = event.getModifierState?.('AltGraph');
         const baseKey = event.code === 'ControlRight' ? 'CtrlRight' : event.code === 'Fn' || event.key === 'Fn' ? 'Fn' : event.code;
         const chord = [(rightCtrlHeld && event.code !== 'ControlRight') ? 'CtrlRight' : event.ctrlKey && !altGraph && event.code !== 'ControlRight' && 'Ctrl', event.code === 'ControlRight' && 'CtrlRight', (rightAltHeld || altGraph) ? 'AltRight' : event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta', baseKey].filter(Boolean).join('+');
