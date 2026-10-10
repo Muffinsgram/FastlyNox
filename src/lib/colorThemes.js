@@ -1,3 +1,4 @@
+import { surfaceArtwork } from './surfaceArtwork.js';
 // Themes style surfaces without changing room dimensions or media colors.
 export const COLOR_THEMES = [
   { id: 'original', name: 'Fastlynox', description: 'Klasik gece mavisi', bg: '#0b0e14', sidebar: '#06080c', panel: '#0a0d12', surface: '#131822', accent: '#7185ff', secondary: '#06b6d4' },
@@ -52,6 +53,14 @@ export const SURFACE_STYLES = [
   { id: 'pearl', name: 'İnci', description: 'İpeksi yuvarlaklık, zarif inci çerçeve', radius: 28, blur: 0, shadow: 'inset 0 0 0 1px color-mix(in srgb, var(--theme-accent) 22%, transparent), inset 0 2px 4px rgba(255,255,255,.06), 0 4px 14px rgba(0,0,0,.12)' },
   { id: 'lace', name: 'Dantel', description: 'Minik noktalı, romantik çerçeveler', radius: 24, blur: 0, shadow: 'inset 0 0 0 4px var(--theme-panel), inset 0 0 0 5px color-mix(in srgb, var(--theme-accent) 12%, transparent), 0 5px 16px rgba(0,0,0,.12)' },
   { id: 'satin', name: 'Saten', description: 'Yumuşacık köşeler, hafif kumaş ışıltısı', radius: 26, corners: '26px 26px 18px 18px', blur: 0, shadow: 'inset 0 1px 0 rgba(255,255,255,.08), inset 0 -1px 0 color-mix(in srgb, var(--theme-accent) 15%, transparent), 0 6px 18px rgba(0,0,0,.14)' },
+  { id: 'sweetheart', name: 'Kalp', description: 'İki loblu, romantik kalp silueti', radius: 28, blur: 0, shadow: 'none' },
+  { id: 'heart-glass', name: 'Cam kalp', description: 'Parlak, cam gibi kalp yüzeyi', radius: 28, blur: 0, shadow: 'none' },
+  { id: 'heart-pearl', name: 'İnci kalp', description: 'Sedef ışıltılı zarif kalp', radius: 28, blur: 0, shadow: 'none' },
+  { id: 'heart-lace', name: 'Dantel kalp', description: 'İlmekli kenarlar, romantik kalp', radius: 28, blur: 0, shadow: 'none' },
+  { id: 'heart-satin', name: 'Saten kalp', description: 'Kumaş ışıltısı, yumuşak kalp', radius: 28, blur: 0, shadow: 'none' },
+  { id: 'folded-paper', name: 'Kâğıt kıvrımı', description: 'Çokgen kenarlar, origami katları', radius: 8, blur: 0, shadow: 'none' },
+  { id: 'rainbow-neon', name: 'Gökkuşağı neon', description: 'Çok renkli, ışıklı çerçeve', radius: 16, blur: 0, shadow: '0 0 14px color-mix(in srgb, var(--theme-accent) 20%, transparent)' },
+  { id: 'comic-heart', name: 'Pop kalp', description: 'Çizgi roman noktaları, kalp şekli', radius: 28, blur: 0, shadow: 'none' },
 ];
 
 export function getSurfaceStyle(themeId, override = 'auto') {
@@ -59,8 +68,8 @@ export function getSurfaceStyle(themeId, override = 'auto') {
   return SURFACE_STYLES.find((style) => style.id === id) || SURFACE_STYLES[0];
 }
 
-export function surfaceVariables(style) {
-  return { '--theme-radius': style.corners || `${style.radius}px`, '--theme-blur': `${style.blur}px`, '--theme-shadow': style.shadow };
+export function surfaceVariables(style, theme = COLOR_THEMES[0]) {
+  return { '--theme-radius': style.corners || `${style.radius}px`, '--theme-blur': `${style.blur}px`, '--theme-shadow': style.shadow, '--theme-artwork': surfaceArtwork(style.id, theme) };
 }
 
 export const getColorTheme = (id) => COLOR_THEMES.find((theme) => theme.id === id) || COLOR_THEMES[0];

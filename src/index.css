@@ -268,10 +268,8 @@ html.electron-desktop .macos-shell {
 }
 
 .macos-titlebar {
-  background: rgba(17, 20, 27, 0.82) !important;
-  border-color: rgba(255, 255, 255, 0.07) !important;
-  backdrop-filter: blur(28px) saturate(150%);
-  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  background: transparent !important;
+  border-color: transparent !important;
 }
 .windows-caption-button { border-radius: 0; }
 .windows-caption-button:hover { color: #fff; }

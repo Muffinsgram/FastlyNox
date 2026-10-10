@@ -19,7 +19,9 @@ export function applyAppPreferences(preferences = defaults) {
   root.dataset.colorTheme = theme.id;
   const surfaceStyle = getSurfaceStyle(theme.id, preferences.surfaceStyle || 'auto');
   root.dataset.surfaceStyle = surfaceStyle.id;
-  Object.entries(surfaceVariables(surfaceStyle)).forEach(([name, value]) => root.style.setProperty(name, value));
+  const selectedAccent = preferences.accentTheme !== 'auto' || theme.id === 'original'
+    ? (accentPalettes[preferences.accentTheme] || accentPalettes.violet)[4] : theme.accent;
+  Object.entries(surfaceVariables(surfaceStyle, { ...theme, accent: selectedAccent })).forEach(([name, value]) => root.style.setProperty(name, value));
   Object.entries(themeVariables(theme.id)).forEach(([name, value]) => root.style.setProperty(name, value));
   const palette = accentPalettes[preferences.accentTheme] || accentPalettes.violet;
   if (preferences.accentTheme !== 'auto' || theme.id === 'original') {

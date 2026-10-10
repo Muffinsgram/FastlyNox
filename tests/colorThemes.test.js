@@ -84,12 +84,13 @@ test('creative frames reset completely when changing styles and can use any pale
       applyAppPreferences({ colorTheme: 'atelier', accentTheme: 'auto', surfaceStyle: style.id });
       assert.equal(root.dataset.surfaceStyle, style.id);
       assert.equal(properties.get('--color-fastcord-bg'), getColorTheme('atelier').bg);
-      for (const [key, value] of Object.entries(surfaceVariables(style))) assert.equal(properties.get(key), value);
+      for (const [key, value] of Object.entries(surfaceVariables(style, getColorTheme('atelier')))) assert.equal(properties.get(key), value);
     }
     applyAppPreferences({ colorTheme: 'original', surfaceStyle: 'auto', accentTheme: 'auto' });
     assert.equal(root.dataset.surfaceStyle, 'classic');
     assert.equal(properties.get('--theme-radius'), '22px');
     assert.equal(properties.get('--theme-shadow'), SURFACE_STYLES[0].shadow);
+    assert.equal(properties.get('--theme-artwork'), 'none');
   } finally { globalThis.document = previous; }
 });
 

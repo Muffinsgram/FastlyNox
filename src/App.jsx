@@ -235,7 +235,7 @@ export default function App() {
       prefetchVoiceToken(user?.id, channel.id);
     };
     if (immediate) prepare();
-    else voiceIntentTimer.current = setTimeout(prepare, 180);
+    else voiceIntentTimer.current = setTimeout(prepare, 60);
   };
   const [incomingCallInvite, setIncomingCallInvite] = useState(null);
   const voiceSessionRef = useRef(null);
@@ -438,7 +438,8 @@ export default function App() {
 
   const currentUserId = user?.id;
   const handleLeaveVoice = useCallback(async () => {
-    const current = voiceSession;
+    const current = voiceSessionRef.current;
+    voiceSessionRef.current = null;
     // Tear down the local voice UI immediately. Waiting for the network before
     // clearing voiceSession made the leave button appear to lag or do nothing.
     setVoiceSession(null);
@@ -461,14 +462,10 @@ export default function App() {
         else delete next[current.channelId];
         return next;
       });
-      try {
-        const { error } = await supabase.rpc('clear_server_voice_presence', { channel_uuid: current.channelId });
-        if (error) console.warn('Ses kanalı durumu temizlenemedi:', error.message);
-      } catch (error) {
-        console.warn('Ses kanalı durumu temizlenemedi:', error);
-      }
+      // VoiceParticipants queues lease cleanup on unmount after its last
+      // heartbeat. A second unqueued delete here races rapid leave/rejoin.
     }
-  }, [voiceSession, currentUserId]);
+  }, [currentUserId]);
 
   useLayoutEffect(() => { voiceSessionRef.current = voiceSession; }, [voiceSession]);
 
@@ -718,6 +715,9 @@ export default function App() {
         setVoiceNotice('Ses kanalına geçmek için önce devam eden aramadan ayrıl.');
         return;
       }
+      // Start authorization now, before the lazy voice UI mounts. Keyboard,
+      // touch and programmatic selections also get the pointer-hover fast path.
+      prepareVoiceIntent(channel, true);
       if (voiceSession && voiceSession.channelId !== channel.id) {
         const previousChannelId = voiceSession.channelId;
         setVoicePresenceByChannel((previous) => {
@@ -726,8 +726,7 @@ export default function App() {
           if (!next[previousChannelId].length) delete next[previousChannelId];
           return next;
         });
-        void supabase.rpc('clear_server_voice_presence', { channel_uuid: previousChannelId })
-          .then(({ error }) => { if (error) console.warn('Önceki ses kanalı durumu temizlenemedi:', error.message); });
+        // Shared presence cleanup is owned by the old room's ordered queue.
       }
       setVoiceNotice('');
       if (voiceSession?.channelId !== channel.id) { setVoiceParticipants([]); setVoiceRosterConnected(false); }

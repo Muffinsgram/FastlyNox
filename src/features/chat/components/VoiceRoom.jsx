@@ -1,4 +1,4 @@
-import { Component, createContext, useContext, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Component, createContext, useContext, useCallback, useEffect, useLayoutEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionQualityIndicator, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
@@ -25,6 +25,7 @@ import { DEFAULT_VOICE_AUDIO_SETTINGS, getAudioCaptureOptions, getAudioPublishOp
 import { prepareMicrophone } from '../../../lib/preparedMicrophone';
 import { createVoicePresenceRecovery } from '../../../lib/voicePresenceRecovery';
 import { ZoomableMedia } from './ZoomableMedia';
+import { closeVoiceRoom } from '../../../lib/voiceRoomLifecycle';
 
 const ScreenViewingContext = createContext(null);
 function ScreenViewingProvider({ children }) {
@@ -406,15 +407,20 @@ function VoiceParticipants({ serverId, channelId, initialParticipants = [], loca
 
   useEffect(() => {
     let active = true;
+    if (connectionState !== 'connected') return () => { active = false; };
     if (!participantIds.length) { setProfiles([]); return () => { active = false; }; }
     fetchProfiles(participantIds).then((result) => { if (active) setProfiles(result); });
     return () => { active = false; };
   // The sorted key only changes when membership changes; participant track updates stay local.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [participantKey]);
+  }, [participantKey, connectionState]);
 
   useEffect(() => {
     if (!serverId || !channelId) { setModerationByUser({}); setDeafenedByUser({}); setCanModerateVoice({ mute: false, deafen: false, kick: false, ban: false, move: false }); return undefined; }
+    // These seven cosmetic/moderation requests must not compete with token
+    // authorization and WebRTC setup on the first join. Server token grants
+    // already enforce mute/deafen permissions before media can flow.
+    if (connectionState !== 'connected') return undefined;
     let active = true;
     void supabase.from('server_voice_moderation').select('user_id,server_muted,server_deafened').eq('channel_id', channelId)
       .then(({ data }) => { if (active) setModerationByUser(Object.fromEntries((data || []).map(row => [row.user_id, row]))); });
@@ -444,7 +450,7 @@ function VoiceParticipants({ serverId, channelId, initialParticipants = [], loca
         });
       }).subscribe();
     return () => { active = false; void supabase.removeChannel(subscription); };
-  }, [serverId, channelId]);
+  }, [serverId, channelId, connectionState]);
 
   useEffect(() => {
     if (!contextMenuRequest?.requestId) return;
@@ -739,6 +745,19 @@ function VoiceAudioSettings({ currentUserId }) {
   const room = useRoomContext();
   const { localParticipant, isMicrophoneEnabled, microphoneTrack } = useLocalParticipant();
   const [open, setOpen] = useState(false);
+  const popupRef = useRef(null);
+  const popupId = useId();
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOutside = (event) => {
+      if (event.button !== 0 || popupRef.current?.contains(event.target)) return;
+      // Select lists live in a portal outside the settings DOM subtree.
+      if (event.target.closest?.('[data-popup-owner]')?.dataset.popupOwner === popupId) return;
+      setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOutside, true);
+    return () => document.removeEventListener('pointerdown', closeOutside, true);
+  }, [open, popupId]);
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(currentUserId).voiceAudioSettings || {}) }));
   const [sensitivityDraft, setSensitivityDraft] = useState(settings.inputSensitivityDb);
   const [inputVolumeDraft, setInputVolumeDraft] = useState(settings.inputVolume);
@@ -958,15 +977,15 @@ function VoiceAudioSettings({ currentUserId }) {
   const inputOptions = [{ value: '', label: devices.audioinput[0]?.label ? `Varsayılan · ${devices.audioinput[0].label}` : 'Sistem varsayılanı' }, ...devices.audioinput.map((device, index) => ({ value: device.deviceId, label: device.label || `Mikrofon ${index + 1}` }))];
   const outputOptions = [{ value: '', label: devices.audiooutput[0]?.label ? `Varsayılan · ${devices.audiooutput[0].label}` : 'Sistem varsayılanı' }, ...devices.audiooutput.map((device, index) => ({ value: device.deviceId, label: device.label || `Hoparlör ${index + 1}` }))];
 
-  return <div className="relative">
+  return <div ref={popupRef} className="relative">
     <button type="button" aria-label="Ses ayarları" aria-expanded={open} title="Mikrofon, hoparlör ve ses kalitesi" onClick={() => { setOpen(value => !value); setMessage(''); }} className={`grid h-9 w-9 place-items-center rounded-xl border transition ${open ? 'border-cyan-200/25 bg-cyan-300/15 text-cyan-100' : 'border-white/10 bg-white/[0.07] text-slate-200 hover:bg-white/10'}`}><Settings2 className="h-4 w-4" /></button>
     {open && <section aria-label="Ses ayarları" className="absolute bottom-[calc(100%+12px)] right-0 z-[110] max-h-[min(76vh,760px)] w-[min(720px,calc(100vw-28px))] overflow-y-auto rounded-[24px] border border-cyan-100/15 bg-[linear-gradient(145deg,rgba(30,38,54,.99),rgba(13,18,28,.99))] p-4 shadow-[0_24px_80px_rgba(0,0,0,.65),0_0_30px_rgba(34,211,238,.08)] backdrop-blur-2xl sm:p-5">
       <header className="mb-3 flex items-start gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-200/10 text-cyan-100"><AudioLines className="h-4 w-4" /></span><div><h3 className="text-sm font-semibold text-white">Ses kalitesi</h3><p className="mt-0.5 text-[10px] text-slate-400">WebRTC mikrofon işleme ve cihaz tercihleri</p></div></header>
       <div className="space-y-3">
-        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Giden ses kalitesi</span><AnimatedSelect ariaLabel="Mikrofon yayın kalitesi" value={settings.audioQuality} onValueChange={value => void updateAudioQuality(value)} options={[{ value: 'speech', label: 'Konuşma · düşük internet kullanımı' }, { value: 'high', label: 'Yüksek kalite · daha çok internet' }]} disabled={busy !== ''} className="w-full" /></label>
-        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Mikrofon girişi</span><AnimatedSelect ariaLabel="Mikrofon girişi" value={settings.inputDeviceId} onValueChange={value => void changeDevice('audioinput', value)} options={inputOptions} disabled={busy !== ''} className="w-full" /></label>
-        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hoparlör / kulaklık</span><AnimatedSelect ariaLabel="Hoparlör veya kulaklık çıkışı" value={settings.outputDeviceId} onValueChange={value => void changeDevice('audiooutput', value)} options={outputOptions} disabled={busy !== '' || !supportsAudioOutputSelection()} className="w-full" /></label>
-        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor || 'rnnoise'} onValueChange={value => void updateCaptureSetting('noiseProcessor', value)} options={[{ value: 'krisp', label: 'Krisp · en güçlü filtre' }, { value: 'rnnoise', label: 'RNNoise · cihazda, çevrim dışı' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} disabled={busy !== ''} className="w-full" /></label>
+        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Giden ses kalitesi</span><AnimatedSelect popupOwner={popupId} ariaLabel="Mikrofon yayın kalitesi" value={settings.audioQuality} onValueChange={value => void updateAudioQuality(value)} options={[{ value: 'speech', label: 'Konuşma · düşük internet kullanımı' }, { value: 'high', label: 'Yüksek kalite · daha çok internet' }]} disabled={busy !== ''} className="w-full" /></label>
+        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Mikrofon girişi</span><AnimatedSelect popupOwner={popupId} ariaLabel="Mikrofon girişi" value={settings.inputDeviceId} onValueChange={value => void changeDevice('audioinput', value)} options={inputOptions} disabled={busy !== ''} className="w-full" /></label>
+        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hoparlör / kulaklık</span><AnimatedSelect popupOwner={popupId} ariaLabel="Hoparlör veya kulaklık çıkışı" value={settings.outputDeviceId} onValueChange={value => void changeDevice('audiooutput', value)} options={outputOptions} disabled={busy !== '' || !supportsAudioOutputSelection()} className="w-full" /></label>
+        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect popupOwner={popupId} ariaLabel="Gürültü filtresi" value={settings.noiseProcessor || 'rnnoise'} onValueChange={value => void updateCaptureSetting('noiseProcessor', value)} options={[{ value: 'krisp', label: 'Krisp · en güçlü filtre' }, { value: 'rnnoise', label: 'RNNoise · cihazda, çevrim dışı' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} disabled={busy !== ''} className="w-full" /></label>
         <div className="grid grid-cols-1 items-stretch gap-3 sm:grid-cols-2">
           {[['echoCancellation', 'Yankı engelleme', 'Hoparlörden mikrofona dönen sesi azaltır.', Volume2], ['noiseSuppression', 'Gürültü engelleme', 'Fan ve ortam gürültüsünü azaltır.', AudioLines]].map(([key, label, description, Icon]) => <div key={key} className="group flex min-h-[76px] items-center gap-3 rounded-2xl border border-white/[0.055] bg-white/[0.035] px-3.5 py-3 transition-colors hover:border-cyan-200/15 hover:bg-white/[0.05] sm:px-4"><span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl border transition-colors ${settings[key] ? 'border-cyan-200/10 bg-cyan-300/[0.11] text-cyan-100' : 'border-white/[0.06] bg-black/10 text-slate-500'}`}><Icon className="h-[17px] w-[17px]" /></span><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-slate-100">{label}</span><span className="mt-1 block text-[10px] leading-4 text-slate-500">{description}</span><span className={`mt-1.5 inline-flex items-center gap-1.5 text-[9px] font-semibold ${settings[key] ? 'text-emerald-200/80' : 'text-slate-500'}`}><span className={`h-1.5 w-1.5 rounded-full ${settings[key] ? 'bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,.45)]' : 'bg-slate-600'}`} />{settings[key] ? 'Etkin' : 'Kapalı'}</span></span><button type="button" role="switch" aria-checked={settings[key]} aria-label={label} disabled={busy !== ''} onClick={() => void updateCaptureSetting(key, !settings[key])} className={`relative h-6 w-11 shrink-0 rounded-full border p-[3px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#141b27] ${settings[key] ? 'border-cyan-200/40 bg-cyan-400/50' : 'border-white/10 bg-slate-800'} disabled:cursor-not-allowed disabled:opacity-50`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${settings[key] ? 'translate-x-5' : ''}`} /></button></div>)}
         </div>
@@ -1323,7 +1342,7 @@ function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, compa
   ];
 
   return (
-    <div className={`${compact ? 'shrink-0' : 'shrink-0 border-t border-white/[0.07] bg-[#0b0e14]/75 px-4 py-3 backdrop-blur-2xl'}`}>
+    <div className={`${compact ? 'shrink-0' : 'shrink-0 bg-transparent px-4 py-3'}`}>
       {controlError && <p role="alert" className="mx-auto mb-2 max-w-xl rounded-lg border border-rose-300/15 bg-rose-400/5 px-3 py-2 text-center text-xs text-rose-200">{controlError}</p>}
       <div className={`mx-auto flex items-center justify-center gap-1.5 rounded-full border border-white/10 bg-white/[0.055] p-1 shadow-[0_12px_36px_rgba(0,0,0,.28)] ${compact ? 'w-fit max-w-full' : 'max-w-3xl gap-2 rounded-2xl p-2'}`}>
     {controls.filter(({ key }) => !compact || expanded || key === 'mic' || key === 'deafen').map(({ key, label, active, icon: Icon, action }) => {
@@ -1373,6 +1392,8 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
     publishDefaults: getAudioPublishOptions({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) }),
     webAudioMix: true, adaptiveStream: true, dynacast: true,
   }), [channelId, userId, attempt]);
+
+  useLayoutEffect(() => () => closeVoiceRoom(room), [room]);
 
   useEffect(() => {
     setVoiceAudioSettings({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) });
@@ -1479,7 +1500,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
 
   return (
     <div className={`${panelClass} ${isStageVisible ? '' : isDockExpanded ? '' : 'rounded-full'}`} data-lk-theme="default">
-      {(isStageVisible || isDockExpanded) && <div className="voice-room-header h-12 border-b border-white/5 flex items-center px-4 shrink-0 justify-between bg-fastcord-panel z-10 shadow-sm">
+      {(isStageVisible || isDockExpanded) && <div className="voice-room-header h-12 flex items-center px-4 shrink-0 justify-between bg-transparent z-10">
         <div className="flex items-center gap-3">
           <Volume2 className="w-5 h-5 text-emerald-400" />
           <span className="max-w-64 truncate font-bold text-slate-200">{channelName}</span>

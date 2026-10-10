@@ -4,7 +4,7 @@ import { Check, ChevronDown } from 'lucide-react';
 
 const sameValue = (left, right) => String(left ?? '') === String(right ?? '');
 
-export function AnimatedSelect({ value, options, onValueChange, className = '', menuClassName = '', disabled = false, ariaLabel = 'Seçenek seç', placeholder = 'Seçim yap', align = 'left' }) {
+export function AnimatedSelect({ value, options, onValueChange, className = '', menuClassName = '', disabled = false, ariaLabel = 'Seçenek seç', placeholder = 'Seçim yap', align = 'left', popupOwner }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const [position, setPosition] = useState(null);
@@ -79,7 +79,7 @@ export function AnimatedSelect({ value, options, onValueChange, className = '', 
       <span className={`min-w-0 truncate ${selected ? 'text-slate-100' : 'text-slate-500'}`}>{selected?.label ?? placeholder}</span>
       <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition duration-200 group-hover:text-violet-200 ${open ? 'rotate-180 text-violet-200' : ''}`} />
     </button>
-    {open && position && createPortal(<div ref={menuRef} id={listId} role="listbox" aria-label={ariaLabel} className={`dropdown-surface fixed z-[900] max-h-[min(18rem,calc(100vh-1rem))] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[#111722]/95 p-1.5 shadow-[0_24px_80px_rgba(0,0,0,.7)] backdrop-blur-2xl ${menuClassName}`} style={{ left: position.left, top: position.top, width: position.width, transformOrigin: `${position.origin} ${align}` }}>
+    {open && position && createPortal(<div ref={menuRef} data-popup-owner={popupOwner} id={listId} role="listbox" aria-label={ariaLabel} className={`dropdown-surface fixed z-[900] max-h-[min(18rem,calc(100vh-1rem))] overflow-y-auto rounded-2xl border border-white/[0.12] bg-[#111722]/95 p-1.5 shadow-[0_24px_80px_rgba(0,0,0,.7)] backdrop-blur-2xl ${menuClassName}`} style={{ left: position.left, top: position.top, width: position.width, transformOrigin: `${position.origin} ${align}` }}>
       <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-violet-200/25 to-transparent" />
       {options.map((option, index) => {
         const isSelected = sameValue(option.value, value);
