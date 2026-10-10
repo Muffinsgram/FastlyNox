@@ -3,6 +3,7 @@ import { AudioLines, Bell, Headphones, Mic, Keyboard, Pencil, ShieldCheck, UserR
 import { useAuthStore } from '../../../store/useAuthStore';
 import { supabase } from '../../../lib/supabase';
 import { getAvatarUrl, getBannerUrl, removeProfileImage } from '../../../lib/profileMedia';
+import { buildProfilePatch, saveProfilePatch, profileUpdateError } from '../../../lib/profileUpdates';
 import { BannerEditorModal } from './BannerEditorModal';
 import { AvatarEditorModal } from './AvatarEditorModal';
 import { getAppPreferences, saveAppPreferences } from '../../../lib/appPreferences';
@@ -188,7 +189,7 @@ export function UserSettingsModal({ onClose }) {
     setIsSaving(true);
     setProfileMessage('');
     try {
-      const { error } = await supabase.from('profiles').update({
+      const patch = buildProfilePatch(user, {
         username: displayName,
         avatar_url: avatarChanged ? avatarUrl : user.avatar_url,
         banner_url: bannerChanged ? bannerUrl : (user.banner_url || null),
@@ -197,17 +198,16 @@ export function UserSettingsModal({ onClose }) {
         banner_zoom: bannerZoom,
         bio: bio.trim(),
         status_text: statusText.trim().slice(0, 80),
-        status_expires_at: statusText.trim() && statusDuration !== 'never' ? new Date(Date.now() + Number(statusDuration) * 60 * 60 * 1000).toISOString() : null,
-      }).eq('id', user.id);
-      if (error) throw error;
+      }, { avatarChanged, bannerChanged, statusDuration });
+      await saveProfilePatch(supabase, user.id, patch);
       await refreshProfile();
-      if (avatarChanged) await removeProfileImage(user.avatar_url);
-      if (bannerChanged) await removeProfileImage(user.banner_url);
+      if (Object.hasOwn(patch, 'avatar_url')) await removeProfileImage(user.avatar_url);
+      if (Object.hasOwn(patch, 'banner_url')) await removeProfileImage(user.banner_url);
       setAvatarChanged(false);
       setBannerChanged(false);
       setProfileMessage('Profilin güncellendi.');
     } catch (error) {
-      setProfileMessage(error instanceof Error ? error.message : 'Profil kaydedilemedi. Veritabanı profil migration’ını çalıştır.');
+      setProfileMessage(profileUpdateError(error));
     } finally { setIsSaving(false); }
   };
 
