@@ -123,3 +123,18 @@ html[data-surface-style="sharp"] :is(.theme-card, .macos-surface, .macos-compose
 :is(html[data-surface-style="ribbon"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="ribbon"]) {
   background: linear-gradient(100deg, color-mix(in srgb, var(--theme-accent) 7%, var(--theme-panel)), var(--theme-panel) 30%) !important;
 }
+:is(html[data-surface-style="petal"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="petal"]) {
+  background: radial-gradient(ellipse at top left, color-mix(in srgb, var(--theme-accent) 8%, var(--theme-panel)), transparent 65%), radial-gradient(ellipse at bottom right, color-mix(in srgb, var(--theme-secondary) 6%, var(--theme-panel)), var(--theme-panel) 75%) !important;
+}
+:is(html[data-surface-style="pearl"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="pearl"]) {
+  background: linear-gradient(150deg, color-mix(in srgb, var(--theme-secondary) 7%, var(--theme-panel)), var(--theme-panel) 45%, color-mix(in srgb, var(--theme-accent) 5%, var(--theme-panel))) !important;
+}
+:is(html[data-surface-style="lace"] :is(.theme-card, .macos-surface, .macos-composer, .screen-share-card:not(:fullscreen), .camera-stage-card:not(:fullscreen)), [data-surface-preview="lace"]) {
+  border-style: dotted;
+}
+:is(html[data-surface-style="lace"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="lace"]) {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--theme-accent) 4%, var(--theme-panel)), var(--theme-panel)) !important;
+}
+:is(html[data-surface-style="satin"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="satin"]) {
+  background: linear-gradient(120deg, var(--theme-panel) 10%, color-mix(in srgb, var(--theme-secondary) 8%, var(--theme-panel)) 38%, color-mix(in srgb, var(--theme-accent) 5%, var(--theme-panel)) 55%, var(--theme-panel) 80%) !important;
+}
