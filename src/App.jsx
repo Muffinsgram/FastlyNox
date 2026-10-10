@@ -166,6 +166,8 @@ export default function App() {
           activity_type: 'game',
           title: detected.title,
           details: detected.details || 'Oynuyor',
+          external_url: detected.steamAppId ? `https://store.steampowered.com/app/${detected.steamAppId}/` : null,
+          album_art_url: detected.steamAppId ? `https://cdn.akamai.steamstatic.com/steam/apps/${detected.steamAppId}/header.jpg` : null,
           started_at: previous?.title === detected.title ? previous.started_at : new Date().toISOString(),
           updated_at: new Date().toISOString(),
         }, { onConflict: 'user_id,activity_type' });
@@ -262,9 +264,9 @@ export default function App() {
       if (refreshing) { refreshQueued = true; return; }
       refreshing = true;
       try {
-        // Presence heartbeat runs every 12s. A 36s lease tolerates a missed
-        // packet while clearing disconnected users promptly.
-        const cutoff = new Date(Date.now() - 36_000).toISOString();
+        // Presence heartbeat runs every 12s. A 30s lease tolerates one missed
+        // packet while allowing the shorter fallback refresh to clear stale rows.
+        const cutoff = new Date(Date.now() - 30_000).toISOString();
         let { data: rows, error: presenceError } = await supabase.from('server_voice_presence')
           .select('channel_id,user_id,microphone_enabled,deafened,speaking,updated_at')
           .eq('server_id', activeServerId).in('channel_id', channelIds).gt('updated_at', cutoff);
@@ -329,7 +331,7 @@ export default function App() {
         if (channelIds.includes(changedChannel)) queueRefresh();
       })
       .subscribe((status) => { if (status === 'SUBSCRIBED') void refresh(); });
-    const fallbackRefresh = window.setInterval(() => void refresh(), 30_000);
+    const fallbackRefresh = window.setInterval(() => void refresh(), 10_000);
     return () => { alive = false; clearTimeout(timer); clearInterval(fallbackRefresh); void supabase.removeChannel(subscription); };
   }, [activeServerId, user?.id, activeVoiceChannelKey]);
 
@@ -404,8 +406,16 @@ export default function App() {
   const currentUserId = user?.id;
   const handleLeaveVoice = useCallback(async () => {
     const current = voiceSession;
+    // Tear down the local voice UI immediately. Waiting for the network before
+    // clearing voiceSession made the leave button appear to lag or do nothing.
+    setVoiceSession(null);
+    setVoiceMemberMenuRequest(null);
+    setVoiceParticipants([]);
+    setVoiceNotice('');
+    playUiSound(current?.kind === 'dm' ? 'callEnded' : 'leave', currentUserId);
     if (current?.kind === 'dm' && current.inviteId && currentUserId) {
-      await supabase.from('dm_call_invites').update({ status: 'ended' }).eq('id', current.inviteId);
+      void supabase.from('dm_call_invites').update({ status: 'ended' }).eq('id', current.inviteId)
+        .then(({ error }) => { if (error) console.warn('Arama durumu güncellenemedi:', error.message); });
     }
     if (current?.kind !== 'dm' && current?.channelId && currentUserId) {
       // Optimistically remove self, then clear shared presence before LiveKit teardown.
@@ -419,17 +429,12 @@ export default function App() {
         return next;
       });
       try {
-        const { error } = await supabase.rpc('clear_server_voice_presence', { channel_uuid: current.channelId });
-        if (error) console.warn('Ses kanalı durumu temizlenemedi:', error.message);
+        void supabase.rpc('clear_server_voice_presence', { channel_uuid: current.channelId })
+          .then(({ error }) => { if (error) console.warn('Ses kanalı durumu temizlenemedi:', error.message); });
       } catch (error) {
         console.warn('Ses kanalı durumu temizlenemedi:', error);
       }
     }
-    playUiSound(current?.kind === 'dm' ? 'callEnded' : 'leave', currentUserId);
-    setVoiceSession(null);
-    setVoiceMemberMenuRequest(null);
-    setVoiceParticipants([]);
-    setVoiceNotice('');
   }, [voiceSession, currentUserId]);
 
   useEffect(() => { voiceSessionRef.current = voiceSession; }, [voiceSession]);

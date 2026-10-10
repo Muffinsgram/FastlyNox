@@ -4,10 +4,12 @@ import { createPortal } from 'react-dom';
 import { fetchProfiles, getAvatarUrl, getBannerUrl } from '../../lib/profileMedia';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useFriendStore } from '../../store/useFriendStore';
+import { useServerStore } from '../../store/useServerStore';
 import { useDMChatStore } from '../../store/useDMChatStore';
 import { supabase } from '../../lib/supabase';
 import { getAppPreferences, saveAppPreferences } from '../../lib/appPreferences';
 import { RoleEmoji } from '../ui/RoleEmoji';
+import { AnimatedSelect } from '../ui/AnimatedSelect';
 
 const BADGE_ICONS = { staff: ShieldCheck, bug_hunter: Bug, early_supporter: Sparkles, community_builder: UsersRound, voice_pioneer: Headphones, creator: Palette, verified: BadgeCheck, server_owner: Crown };
 
@@ -39,6 +41,8 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
   const [socialLinks, setSocialLinks] = useState([]);
   const [connectionsNotice, setConnectionsNotice] = useState('');
   const [listenInviteNotice, setListenInviteNotice] = useState('');
+  const [connectionsTab, setConnectionsTab] = useState('friends');
+  const [mutualProfile, setMutualProfile] = useState(null);
   const friendship = friendships.find((item) => (item.requester_id === user?.id && item.addressee_id === profile?.id) || (item.addressee_id === user?.id && item.requester_id === profile?.id));
   const isPlatformStaff = session?.user?.app_metadata?.platform_staff === true || session?.user?.app_metadata?.platform_staff === 'true';
 
@@ -89,7 +93,7 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
   }, [profile?.id]);
 
   useEffect(() => {
-    if (!profile?.id || !user?.id || profile.id === user.id) {
+    if (!profile?.id || !user?.id) {
       setMutualFriends([]);
       setMutualServers([]);
       setProfileActivities([]);
@@ -110,6 +114,11 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
       if (active && !error) setSocialLinks(data || []);
     };
     const loadConnections = async () => {
+      if (profile.id === user.id) {
+        setMutualFriends([]);
+        setMutualServers([]);
+        return;
+      }
       const connectionsResult = await supabase.rpc('get_profile_connections', { target_user: profile.id });
       if (!active) return;
       if (connectionsResult.error) {
@@ -139,6 +148,16 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
       void supabase.removeChannel(channel);
     };
   }, [profile?.id, user?.id]);
+
+  const openMutualProfile = async (friendId) => {
+    const [friend] = await fetchProfiles([friendId]).catch(() => []);
+    if (friend) setMutualProfile(friend);
+  };
+
+  const openMutualServer = (serverId) => {
+    useServerStore.getState().openServer(serverId);
+    onClose?.();
+  };
 
   useEffect(() => {
     if (!profile?.id || !user?.id || profile.id === user.id) return;
@@ -260,8 +279,9 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
   if (!profile) return null;
 
   return createPortal((
+    <>
     <div className="fixed inset-0 z-[300] bg-black/60 flex items-center justify-center animate-in fade-in duration-200" onClick={onClose}>
-      <div className="relative max-h-[90vh] w-[min(25rem,calc(100vw-2rem))] overflow-x-hidden overflow-y-auto rounded-[26px] border border-white/10 bg-[#10151f]/95 shadow-[0_30px_100px_rgba(0,0,0,.65)] backdrop-blur-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="relative max-h-[92vh] w-[min(58rem,calc(100vw-2rem))] overflow-x-hidden overflow-y-auto rounded-[26px] border border-white/10 bg-[#10151f]/95 shadow-[0_30px_100px_rgba(0,0,0,.65)] backdrop-blur-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Banner */}
         <div className="relative h-32 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,rgba(139,92,246,.45),transparent_60%),linear-gradient(120deg,#151b28,#10141e)]">
           {getBannerUrl(profile.banner_url) && <img src={getBannerUrl(profile.banner_url)} alt="" className="h-full w-full object-cover" style={{ objectPosition: `${profile.banner_position_x ?? 50}% ${profile.banner_position_y ?? 50}%`, transform: `scale(${profile.banner_zoom ?? 1})`, transformOrigin: `${profile.banner_position_x ?? 50}% ${profile.banner_position_y ?? 50}%` }} />}
@@ -282,6 +302,8 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
         {/* Info */}
         <div className="pt-14 px-5 pb-6">
           <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(19rem,.95fr)]">
+            <div className="min-w-0">
             <h2 className="flex items-center gap-2 text-xl font-bold" style={serverRoles[0]?.gradient_color ? { backgroundImage: `linear-gradient(100deg, ${serverRoles[0].color}, ${serverRoles[0].gradient_color}, ${serverRoles[0].color})`, backgroundSize: '180% 100%', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' } : { color: serverRoles[0]?.color || '#fff' }}>
               {profile.username}
               {serverMemberRole === 'owner' && <Shield className="w-4 h-4 text-amber-500" />}
@@ -297,6 +319,8 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
             {safetyNotice && <p role="status" className="mt-2 text-[10px] text-violet-200">{safetyNotice}</p>}
             {followError && <p role="status" className="mt-2 text-[11px] text-amber-200">{followError}</p>}
             {profile.bio && <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-6 text-slate-300">{profile.bio}</p>}
+            </div>
+            <div className="min-w-0 space-y-3">
 
             {socialLinks.length > 0 && <section aria-label="Bağlantılı profiller" className="mt-4 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5"><h3 className="mb-2.5 text-[10px] font-black uppercase tracking-[.14em] text-slate-500">Bağlantılar</h3><div className="flex flex-wrap gap-2">{socialLinks.map((link) => {
               const social = { spotify: { name: 'Spotify', Icon: Music2 }, listenbrainz: { name: 'ListenBrainz', Icon: Radio }, steam: { name: 'Steam', Icon: Gamepad2 }, youtube: { name: 'YouTube', Icon: Video }, instagram: { name: 'Instagram', Icon: Camera } }[link.platform];
@@ -310,18 +334,21 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
               const isSpotify = activity.activity_type === 'spotify';
               const Icon = isMusic ? Music2 : Gamepad2;
               return <div key={activity.activity_type} className={`rounded-2xl border p-3 ${isMusic ? 'border-emerald-300/15 bg-emerald-300/[0.045]' : 'border-violet-300/15 bg-violet-300/[0.045]'}`}>
-                <div className="flex items-center gap-3">{isMusic && activity.album_art_url ? <img src={activity.album_art_url} alt="" className="h-10 w-10 shrink-0 rounded-xl object-cover" /> : <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${isMusic ? 'bg-emerald-300/10 text-emerald-200' : 'bg-violet-300/10 text-violet-200'}`}><Icon className="h-4 w-4" /></span>}<span className="min-w-0 flex-1"><span className="block text-[9px] font-bold uppercase tracking-[.15em] text-slate-500">{isSpotify ? 'Spotify dinliyor' : activity.activity_type === 'music' ? 'ListenBrainz dinliyor' : 'Şu anda oynuyor'}</span><span className="mt-1 block truncate text-xs font-bold text-slate-100">{activity.title}</span>{activity.details && <span className="mt-0.5 block truncate text-[10px] text-slate-400">{activity.details}</span>}</span>{isMusic && /^https:\/\//u.test(activity.external_url || '') && <a href={activity.external_url} target="_blank" rel="noreferrer" className="shrink-0 rounded-lg border border-emerald-200/15 px-2.5 py-1 text-[9px] font-semibold text-emerald-100 hover:bg-emerald-300/10">Parçayı aç</a>}{isSpotify && /^https:\/\/open\.spotify\.com\//u.test(activity.external_url || '') && <div className="flex shrink-0 flex-col gap-1"><button type="button" onClick={() => window.open(activity.external_url, '_blank', 'noopener,noreferrer')} className="rounded-lg border border-emerald-200/15 px-2.5 py-1 text-[9px] font-semibold text-emerald-100 hover:bg-emerald-300/10">Spotify’da aç</button>{user?.id !== profile.id && <button type="button" onClick={() => void sendListenInvite(activity)} className="rounded-lg border border-white/[0.08] px-2.5 py-1 text-[9px] font-semibold text-slate-300 hover:bg-white/[0.06]">Dinleme daveti</button>}</div>}</div>
+                <div className="flex items-center gap-3">{activity.album_art_url ? <img src={activity.album_art_url} alt="" onError={(event) => { event.currentTarget.style.display = 'none'; }} className="h-10 w-14 shrink-0 rounded-lg object-cover" /> : <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${isMusic ? 'bg-emerald-300/10 text-emerald-200' : 'bg-violet-300/10 text-violet-200'}`}><Icon className="h-4 w-4" /></span>}<span className="min-w-0 flex-1"><span className="block text-[9px] font-bold uppercase tracking-[.15em] text-slate-500">{isSpotify ? 'Spotify dinliyor' : activity.activity_type === 'music' ? 'ListenBrainz dinliyor' : 'Şu anda oynuyor'}</span><span className="mt-1 block truncate text-xs font-bold text-slate-100">{activity.title}</span>{activity.details && <span className="mt-0.5 block truncate text-[10px] text-slate-400">{activity.details}</span>}</span>{isMusic && /^https:\/\//u.test(activity.external_url || '') && <a href={activity.external_url} target="_blank" rel="noreferrer" className="shrink-0 rounded-lg border border-emerald-200/15 px-2.5 py-1 text-[9px] font-semibold text-emerald-100 hover:bg-emerald-300/10">Parçayı aç</a>}{!isMusic && /^https:\/\//u.test(activity.external_url || '') && <a href={activity.external_url} target="_blank" rel="noreferrer" className="shrink-0 rounded-lg border border-violet-200/15 px-2.5 py-1 text-[9px] font-semibold text-violet-100 hover:bg-violet-300/10">Oyunu gör</a>}{isSpotify && /^https:\/\/open\.spotify\.com\//u.test(activity.external_url || '') && <div className="flex shrink-0 flex-col gap-1"><button type="button" onClick={() => window.open(activity.external_url, '_blank', 'noopener,noreferrer')} className="rounded-lg border border-emerald-200/15 px-2.5 py-1 text-[9px] font-semibold text-emerald-100 hover:bg-emerald-300/10">Spotify’da aç</button>{user?.id !== profile.id && <button type="button" onClick={() => void sendListenInvite(activity)} className="rounded-lg border border-white/[0.08] px-2.5 py-1 text-[9px] font-semibold text-slate-300 hover:bg-white/[0.06]">Dinleme daveti</button>}</div>}</div>
               </div>;
             })}</section>}
             {listenInviteNotice && <p role="status" className="mt-1 text-[10px] leading-4 text-emerald-200">{listenInviteNotice}</p>}
 
             {(mutualFriends.length > 0 || mutualServers.length > 0 || connectionsNotice) && <section aria-label="Ortak bağlantılar" className="mt-4 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5">
               <div className="mb-3 flex items-center gap-2"><UsersRound className="h-3.5 w-3.5 text-violet-200" /><h3 className="text-[10px] font-black uppercase tracking-[.14em] text-slate-400">Ortak bağlantılar</h3></div>
-              {mutualFriends.length > 0 && <div className="mb-3"><p className="mb-2 text-[9px] font-bold uppercase tracking-wider text-slate-500">Ortak arkadaşlar · {mutualFriends.length}</p><div className="flex flex-wrap gap-1.5">{mutualFriends.slice(0, 8).map((friend) => <span key={friend.id} title={friend.username} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/[0.07] bg-black/15 py-1 pl-1 pr-2.5"><img src={getAvatarUrl(friend.avatar_url, friend.username)} alt="" className="h-5 w-5 rounded-full object-cover" /><span className="max-w-28 truncate text-[10px] font-semibold text-slate-300">{friend.username}</span></span>)}{mutualFriends.length > 8 && <span className="self-center text-[10px] text-slate-500">+{mutualFriends.length - 8}</span>}</div></div>}
-              {mutualServers.length > 0 && <div><p className="mb-2 text-[9px] font-bold uppercase tracking-wider text-slate-500">Ortak sunucular · {mutualServers.length}</p><div className="flex flex-wrap gap-1.5">{mutualServers.slice(0, 8).map((server) => <span key={server.connection_id} title={server.display_name} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/[0.07] bg-black/15 py-1 pl-1 pr-2.5">{server.icon_url ? <img src={server.icon_url} alt="" className="h-5 w-5 rounded-full object-cover" /> : <span className="grid h-5 w-5 place-items-center rounded-full bg-white/[0.07]"><Server className="h-3 w-3 text-slate-400" /></span>}<span className="max-w-28 truncate text-[10px] font-semibold text-slate-300">{server.display_name}</span></span>)}{mutualServers.length > 8 && <span className="self-center text-[10px] text-slate-500">+{mutualServers.length - 8}</span>}</div></div>}
+              <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl border border-white/[0.07] bg-black/20 p-1"><button type="button" onClick={() => setConnectionsTab('friends')} className={`rounded-lg px-2 py-2 text-[10px] font-semibold transition ${connectionsTab === 'friends' ? 'bg-violet-300/10 text-violet-100' : 'text-slate-500 hover:text-slate-200'}`}>Arkadaşlar <span className="ml-1 opacity-70">{mutualFriends.length}</span></button><button type="button" onClick={() => setConnectionsTab('servers')} className={`rounded-lg px-2 py-2 text-[10px] font-semibold transition ${connectionsTab === 'servers' ? 'bg-violet-300/10 text-violet-100' : 'text-slate-500 hover:text-slate-200'}`}>Sunucular <span className="ml-1 opacity-70">{mutualServers.length}</span></button></div>
+              {connectionsTab === 'friends' && (mutualFriends.length > 0 ? <div className="space-y-1">{mutualFriends.map((friend) => <button key={friend.id} type="button" onClick={() => void openMutualProfile(friend.id)} title={`${friend.username} profilini aç`} className="flex w-full items-center gap-2.5 rounded-xl border border-transparent px-2 py-2 text-left transition hover:border-white/[0.07] hover:bg-white/[0.045]"><img src={getAvatarUrl(friend.avatar_url, friend.username)} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" /><span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-200">{friend.username}</span><ExternalLink className="h-3.5 w-3.5 text-slate-600" /></button>)}</div> : <p className="rounded-xl bg-black/10 px-3 py-4 text-center text-[10px] text-slate-500">Ortak arkadaş bulunmuyor.</p>)}
+              {connectionsTab === 'servers' && (mutualServers.length > 0 ? <div className="space-y-1">{mutualServers.map((server) => <button key={server.connection_id} type="button" onClick={() => openMutualServer(server.connection_id)} title={`${server.display_name} sunucusuna git`} className="flex w-full items-center gap-2.5 rounded-xl border border-transparent px-2 py-2 text-left transition hover:border-white/[0.07] hover:bg-white/[0.045]">{server.icon_url ? <img src={server.icon_url} alt="" className="h-8 w-8 shrink-0 rounded-xl object-cover" /> : <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-white/[0.07]"><Server className="h-4 w-4 text-slate-400" /></span>}<span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-200">{server.display_name}</span><ExternalLink className="h-3.5 w-3.5 text-slate-600" /></button>)}</div> : <p className="rounded-xl bg-black/10 px-3 py-4 text-center text-[10px] text-slate-500">Ortak sunucu bulunmuyor.</p>)}
               {connectionsNotice && <p role="status" className="text-[10px] leading-4 text-amber-200">{connectionsNotice}</p>}
               {!mutualFriends.length && !mutualServers.length && !connectionsNotice && <p className="text-[10px] text-slate-500">Henüz ortak bağlantı yok.</p>}
             </section>}
+            </div>
+            </div>
             
             {serverId && <><div className="my-4 h-px w-full bg-white/10" /><section aria-label="Sunucu profili ve rolleri" className="mb-1 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5">
               <div className="mb-2.5 flex items-center justify-between gap-3"><h3 className="text-[10px] font-black uppercase tracking-[.14em] text-slate-500">{serverName || 'Sunucu'} profili</h3><span className="rounded-full border border-white/[0.07] bg-black/15 px-2 py-1 text-[9px] font-semibold text-slate-400">{serverMemberRole === 'owner' ? 'Sunucu sahibi' : serverMemberRole === 'admin' ? 'Yönetici' : 'Üye'}</span></div>
@@ -332,5 +359,7 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
         </div>
       </div>
     </div>
+    {mutualProfile && <UserProfileModal profile={mutualProfile} role={null} serverId={serverId} serverName={serverName} onClose={() => setMutualProfile(null)} />}
+    </>
   ), document.body);
 }
