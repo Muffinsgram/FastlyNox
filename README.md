@@ -244,7 +244,8 @@ Contributions and constructive feedback are welcome.
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=rect&height=120&color=0:7c3aed,100:09090f&section=footer" width="100%" />
+<img src="https://capsule-render.vercel.app/api?type=rect&height=220&color=0:09090f,50:312e81,100:7c3aed&text=FastlyNox&fontSize=68&fontColor=ffffff&fontAlignY=42&desc=Your%20community.%20Your%20conversations.&descAlignY=65&descSize=17&animation=fadeIn" width="100%" />
+
 
 ### 💜 FastlyNox
 
