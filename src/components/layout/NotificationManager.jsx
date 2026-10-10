@@ -32,7 +32,7 @@ export function NotificationManager({ onOpenNotification }) {
       {activeToasts.map((toast) => (
         <div key={toast.id} role="button" tabIndex={0} onClick={() => { onOpenNotification?.(toast); removeToast(toast.id); }} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpenNotification?.(toast); removeToast(toast.id); } }} className="pointer-events-auto w-80 cursor-pointer bg-[#11151E]/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl p-4 flex gap-4 animate-in slide-in-from-right-8 fade-in duration-300 hover:border-violet-300/25 focus:outline-none focus:ring-2 focus:ring-violet-300/50">
            <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${toast.type.startsWith('friend_') ? 'bg-emerald-500/15' : 'bg-violet-500/20'}`}>
-             {toast.type === 'dm_message' ? <MessageSquare className="w-5 h-5 text-violet-300" /> : toast.type === 'friend_request' ? <UserPlus className="w-5 h-5 text-emerald-300" /> : toast.type === 'friend_accepted' ? <UserCheck className="w-5 h-5 text-emerald-300" /> : <Bell className="w-5 h-5 text-violet-400" />}
+             {toast.type === 'dm_message' || toast.type === 'server_message' || toast.message_id ? <MessageSquare className="w-5 h-5 text-violet-300" /> : toast.type === 'friend_request' ? <UserPlus className="w-5 h-5 text-emerald-300" /> : toast.type === 'friend_accepted' ? <UserCheck className="w-5 h-5 text-emerald-300" /> : <Bell className="w-5 h-5 text-violet-400" />}
            </div>
            <div className="flex-1 flex flex-col min-w-0">
               <div className="flex items-start justify-between gap-2">
