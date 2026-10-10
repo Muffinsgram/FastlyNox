@@ -210,8 +210,11 @@ export const usePresenceStore = create((set, get) => ({
       ]);
       if (sessionError) {
         console.error('Presence bağlantısı kaydedilemedi:', sessionError.message);
-        set({ error: 'Çevrim içi durumun diğer cihazlara aktarılamadı. migration_realtime_sync_reliability.sql dosyasını kontrol et.' });
-      } else if (legacyError) console.warn('Eski uygulama sürümleri için durum yazılamadı:', legacyError.message);
+        set({ error: `Çevrim içi durumun diğer cihazlara aktarılamadı: ${sessionError.message}` });
+      } else {
+        set({ error: '' });
+        if (legacyError) console.warn('Eski uygulama sürümleri için durum yazılamadı:', legacyError.message);
+      }
     };
     void syncOwnSession(localStatus);
     void refreshSnapshot();
@@ -266,7 +269,7 @@ export const usePresenceStore = create((set, get) => ({
     ]);
     if (sessionError) {
       console.error('Presence durumu kaydedilemedi:', sessionError.message);
-      set({ error: 'Durum diğer cihazlara aktarılamadı. migration_realtime_sync_reliability.sql dosyasını çalıştır.' });
+      set({ error: `Durum diğer cihazlara aktarılamadı: ${sessionError.message}` });
       return { success: false, error: sessionError.message };
     }
     if (legacyError) console.warn('Eski uygulama sürümleri için durum yazılamadı:', legacyError.message);

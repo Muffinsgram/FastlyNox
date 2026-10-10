@@ -15,6 +15,13 @@ contextBridge.exposeInMainWorld('fastcordWindow', {
 
 contextBridge.exposeInMainWorld('fastlynoxDesktop', {
   getVersion: () => ipcRenderer.invoke('fastlynox:app-version'),
+  detectGameActivity: () => ipcRenderer.invoke('fastlynox:detect-game-activity'),
+  beginSpotifyOAuth: (request) => ipcRenderer.invoke('fastlynox:spotify-oauth-start', request),
+  onSpotifyOAuthCallback: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('fastlynox:spotify-oauth-callback', listener);
+    return () => ipcRenderer.removeListener('fastlynox:spotify-oauth-callback', listener);
+  },
   getAutoStart: () => ipcRenderer.invoke('fastlynox:get-auto-start'),
   setAutoStart: (enabled) => ipcRenderer.invoke('fastlynox:set-auto-start', Boolean(enabled)),
   checkForUpdates: () => ipcRenderer.invoke('fastlynox:check-update'),

@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, shell, Menu, Tray, desktopCapturer, session } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
+const http = require('node:http');
+const { execFile } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
@@ -10,6 +12,7 @@ let quitting = false;
 let startupPending = false;
 let startupTimeout;
 let selectedScreenSourceId = null;
+let spotifyOAuthServer;
 const startupPreferencePath = () => path.join(app.getPath('userData'), 'startup-preference.json');
 const startupShortcutPath = () => path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'Fastlynox.lnk');
 const loginItemOptions = () => ({ path: process.execPath, args: [] });
@@ -249,6 +252,85 @@ ipcMain.handle('fastlynox:window-control', (event, action) => {
 });
 
 ipcMain.handle('fastlynox:app-version', () => app.getVersion());
+ipcMain.handle('fastlynox:spotify-oauth-start', async (_event, request = {}) => {
+  const { clientId, state, codeChallenge } = request;
+  if (!/^[a-zA-Z0-9]{20,80}$/u.test(clientId || '') || !/^[a-zA-Z0-9_-]{40,64}$/u.test(state || '') || !/^[a-zA-Z0-9_-]{40,64}$/u.test(codeChallenge || '')) return null;
+  if (spotifyOAuthServer) { try { spotifyOAuthServer.close(); } catch { /* An earlier login flow has already ended. */ } }
+  return new Promise((resolve) => {
+    let completed = false;
+    let server;
+    const finish = (result) => {
+      if (completed) return;
+      completed = true;
+      clearTimeout(timeout);
+      if (spotifyOAuthServer === server) spotifyOAuthServer = null;
+      try { server?.close(); } catch { /* Socket already closed. */ }
+      resolve(result);
+    };
+    server = http.createServer((requestMessage, response) => {
+      const callback = new URL(requestMessage.url || '/', 'http://127.0.0.1');
+      if (requestMessage.method !== 'GET' || callback.pathname !== '/spotify-callback') {
+        response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Not found');
+        return;
+      }
+      const code = callback.searchParams.get('code');
+      const returnedState = callback.searchParams.get('state');
+      const denied = callback.searchParams.get('error');
+      const valid = returnedState === state && Boolean(code) && !denied;
+      response.writeHead(valid ? 200 : 400, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
+        .end(`<!doctype html><meta charset="utf-8"><title>Fastlynox</title><body style="background:#0b0e14;color:#e7eaf4;font:16px Segoe UI,sans-serif;display:grid;place-items:center;height:90vh"><p>${valid ? 'Spotify bağlandı. Bu pencereyi kapatıp Fastlynox’a dönebilirsin.' : 'Spotify bağlantısı tamamlanamadı. Fastlynox’a dönüp yeniden dene.'}</p></body>`);
+      if (returnedState === state && (code || denied) && mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('fastlynox:spotify-oauth-callback', { code, state: returnedState, error: denied || '' });
+      finish(null);
+    });
+    spotifyOAuthServer = server;
+    const timeout = setTimeout(() => finish(null), 5 * 60_000);
+    server.once('error', () => finish(null));
+    server.listen(0, '127.0.0.1', async () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') { finish(null); return; }
+      const redirectUri = `http://127.0.0.1:${address.port}/spotify-callback`;
+      const authorizationUrl = new URL('https://accounts.spotify.com/authorize');
+      authorizationUrl.search = new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: redirectUri, code_challenge_method: 'S256', code_challenge: codeChallenge, state, scope: 'user-read-currently-playing' }).toString();
+      try { await shell.openExternal(authorizationUrl.toString()); resolve({ redirectUri }); }
+      catch { finish(null); }
+    });
+  });
+});
+ipcMain.handle('fastlynox:detect-game-activity', async () => {
+  if (process.platform !== 'win32') return null;
+  const knownGames = new Map([
+    ['valorant-win64-shipping.exe', { title: 'VALORANT', details: 'Oynuyor' }],
+    ['league of legends.exe', { title: 'League of Legends', details: 'Oynuyor' }],
+    ['overwatch.exe', { title: 'Overwatch 2', details: 'Oynuyor' }],
+    ['fortniteclient-win64-shipping.exe', { title: 'Fortnite', details: 'Oynuyor' }],
+    ['cs2.exe', { title: 'Counter-Strike 2', details: 'Oynuyor' }],
+    ['minecraft.exe', { title: 'Minecraft', details: 'Oynuyor' }],
+    ['robloxplayerbeta.exe', { title: 'Roblox', details: 'Oynuyor' }],
+    ['rocketleague.exe', { title: 'Rocket League', details: 'Oynuyor' }],
+    ['gta5.exe', { title: 'Grand Theft Auto V', details: 'Oynuyor' }],
+    ['apex_legends.exe', { title: 'Apex Legends', details: 'Oynuyor' }],
+    ['tslgame.exe', { title: 'PUBG: BATTLEGROUNDS', details: 'Oynuyor' }],
+    ['dota2.exe', { title: 'Dota 2', details: 'Oynuyor' }],
+    ['rainbowsix.exe', { title: 'Tom Clancy’s Rainbow Six Siege', details: 'Oynuyor' }],
+    ['deadbydaylight-win64-shipping.exe', { title: 'Dead by Daylight', details: 'Oynuyor' }],
+    ['genshinimpact.exe', { title: 'Genshin Impact', details: 'Oynuyor' }],
+    ['starrail.exe', { title: 'Honkai: Star Rail', details: 'Oynuyor' }],
+    ['destiny2.exe', { title: 'Destiny 2', details: 'Oynuyor' }],
+    ['among us.exe', { title: 'Among Us', details: 'Oynuyor' }],
+    ['terraria.exe', { title: 'Terraria', details: 'Oynuyor' }],
+    ['eldenring.exe', { title: 'Elden Ring', details: 'Oynuyor' }],
+    ['palworld-win64-shipping.exe', { title: 'Palworld', details: 'Oynuyor' }],
+    ['stardew valley.exe', { title: 'Stardew Valley', details: 'Oynuyor' }],
+  ]);
+  return new Promise((resolve) => {
+    execFile('tasklist', ['/FO', 'CSV', '/NH'], { windowsHide: true, timeout: 4000, maxBuffer: 2 * 1024 * 1024 }, (error, stdout) => {
+      if (error || typeof stdout !== 'string') { resolve(null); return; }
+      const running = new Set([...stdout.matchAll(/^\s*"([^"]+)"/gmu)].map((match) => match[1].toLowerCase()));
+      const game = [...knownGames].find(([processName]) => running.has(processName));
+      resolve(game ? { ...game[1], processName: game[0] } : null);
+    });
+  });
+});
 ipcMain.handle('fastlynox:get-auto-start', () => isAutoStartEnabled());
 ipcMain.handle('fastlynox:set-auto-start', (_event, enabled) => applyAutoStart(enabled));
 ipcMain.handle('fastlynox:is-maximized', (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() || false);

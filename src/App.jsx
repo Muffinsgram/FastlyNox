@@ -23,6 +23,7 @@ import { applyAppPreferences, getAppPreferences } from './lib/appPreferences';
 import { playUiSound } from './lib/uiSounds';
 import { supabase } from './lib/supabase';
 import { fireDueEventReminders } from './lib/eventReminders';
+import { completeSpotifyAuthorization, failSpotifyAuthorization, fetchListenBrainzActivity, fetchSpotifyActivity, hasSpotifyConnection } from './lib/spotifyActivity';
 import { usePresenceStore } from './store/usePresenceStore';
 import { ActionContextMenu } from './components/layout/ActionContextMenu';
 import { SharedProfilePage } from './components/layout/SharedProfilePage';
@@ -30,6 +31,7 @@ import { ServerViewBoundary } from './components/layout/ServerViewBoundary';
 import { NsfwConsentModal } from './components/layout/NsfwConsentModal';
 import { MarketingLanding } from './components/layout/MarketingLanding';
 import { ServerInviteModal } from './components/layout/ServerInviteModal';
+import { UserProfileModal } from './components/layout/UserProfileModal';
 
 const CreateServerModal = lazy(() => import('./features/servers/components/CreateServerModal').then((module) => ({ default: module.CreateServerModal })));
 const ServerSettingsModal = lazy(() => import('./features/servers/components/ServerSettingsModal').then((module) => ({ default: module.ServerSettingsModal })));
@@ -61,6 +63,119 @@ export default function App() {
 
   useEffect(() => {
     applyAppPreferences(getAppPreferences(user?.id));
+  }, [user?.id]);
+
+  useEffect(() => {
+    let active = true;
+    const complete = async (code, state, error = '') => {
+      if (error) { failSpotifyAuthorization(state, 'Spotify erişim izni verilmedi.'); return; }
+      try { await completeSpotifyAuthorization(code, state); }
+      catch (error) {
+        if (!active) return;
+        console.warn('Spotify bağlantısı tamamlanamadı:', error?.message || error);
+        window.dispatchEvent(new CustomEvent('fastlynox:spotify-error', { detail: { message: error?.message || 'Spotify bağlantısı tamamlanamadı.' } }));
+      }
+    };
+    const params = new URLSearchParams(window.location.search);
+    if (window.location.pathname === '/spotify-callback' && params.has('code')) void complete(params.get('code'), params.get('state'));
+    else if (params.has('error') && window.location.pathname === '/spotify-callback') {
+      failSpotifyAuthorization(params.get('state'), 'Spotify erişim izni verilmedi.');
+      history.replaceState({}, '', '/');
+    }
+    const unsubscribe = window.fastlynoxDesktop?.onSpotifyOAuthCallback?.(({ code, state, error }) => { void complete(code, state, error); });
+    return () => { active = false; unsubscribe?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (!user?.id) return undefined;
+    let active = true;
+    let running = false;
+    const syncSpotifyActivity = async () => {
+      if (!active || running) return;
+      running = true;
+      try {
+        let activityType = 'spotify';
+        let activity = hasSpotifyConnection(user.id) ? await fetchSpotifyActivity(user.id) : null;
+        if (!activity) {
+          const { data: listenBrainz } = await supabase.from('user_social_links').select('profile_url').eq('user_id', user.id).eq('platform', 'listenbrainz').maybeSingle();
+          if (listenBrainz?.profile_url) {
+            activity = await fetchListenBrainzActivity(listenBrainz.profile_url);
+            activityType = 'music';
+          }
+        }
+        if (!active) return;
+        if (!activity) {
+          await supabase.from('user_profile_activities').delete().eq('user_id', user.id).eq('activity_type', 'spotify');
+          await supabase.from('user_profile_activities').delete().eq('user_id', user.id).eq('activity_type', 'music');
+          return;
+        }
+        const { data: previous } = await supabase.from('user_profile_activities').select('title,details,spotify_uri,started_at').eq('user_id', user.id).eq('activity_type', activityType).maybeSingle();
+        const sameTrack = previous && (activityType === 'spotify' && previous.spotify_uri === activity.spotify_uri || previous.title === activity.title && previous.details === activity.details);
+        await supabase.from('user_profile_activities').upsert({
+          user_id: user.id,
+          activity_type: activityType,
+          title: activity.title,
+          details: activity.details,
+          external_url: activity.external_url,
+          album_art_url: activity.album_art_url,
+          spotify_uri: activity.spotify_uri || null,
+          started_at: sameTrack ? previous.started_at : new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,activity_type' });
+        const inactiveType = activityType === 'spotify' ? 'music' : 'spotify';
+        await supabase.from('user_profile_activities').delete().eq('user_id', user.id).eq('activity_type', inactiveType);
+      } catch (error) {
+        console.warn('Spotify dinleme durumu eşitlenemedi:', error?.message || error);
+      } finally { running = false; }
+    };
+    const handleSpotifyChange = (event) => {
+      if (!event.detail?.userId || event.detail.userId === user.id) void syncSpotifyActivity();
+    };
+    window.addEventListener('fastlynox:spotify-updated', handleSpotifyChange);
+    void syncSpotifyActivity();
+    const timer = window.setInterval(() => { void syncSpotifyActivity(); }, 15_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener('fastlynox:spotify-updated', handleSpotifyChange);
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || !window.fastlynoxDesktop?.detectGameActivity) return undefined;
+    let alive = true;
+    let lastActivityKey = '__initial__';
+    let running = false;
+    const syncGameActivity = async () => {
+      if (running || !alive) return;
+      running = true;
+      try {
+        const enabled = getAppPreferences(user.id).gameDetectionEnabled === true;
+        const detected = enabled ? await window.fastlynoxDesktop.detectGameActivity() : null;
+        if (!alive) return;
+        const activityKey = detected ? `${detected.title}|${detected.details || ''}` : null;
+        const activityChanged = activityKey !== lastActivityKey;
+        lastActivityKey = activityKey;
+        if (!activityKey) {
+          if (activityChanged) await supabase.from('user_profile_activities').delete().eq('user_id', user.id).eq('activity_type', 'game');
+          return;
+        }
+        const { data: previous } = await supabase.from('user_profile_activities').select('title,details,started_at').eq('user_id', user.id).eq('activity_type', 'game').maybeSingle();
+        await supabase.from('user_profile_activities').upsert({
+          user_id: user.id,
+          activity_type: 'game',
+          title: detected.title,
+          details: detected.details || 'Oynuyor',
+          started_at: previous?.title === detected.title ? previous.started_at : new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,activity_type' });
+      } catch (error) {
+        console.warn('Oyun etkinliği eşitlenemedi:', error?.message || error);
+      } finally { running = false; }
+    };
+    void syncGameActivity();
+    const timer = window.setInterval(() => { void syncGameActivity(); }, 15_000);
+    return () => { alive = false; window.clearInterval(timer); };
   }, [user?.id]);
 
   useEffect(() => {
@@ -109,6 +224,8 @@ export default function App() {
   const [voicePresenceByChannel, setVoicePresenceByChannel] = useState({});
   const voiceProfileCacheRef = useRef(new Map());
   const [voiceMemberMenuRequest, setVoiceMemberMenuRequest] = useState(null);
+  const [draggedVoiceMember, setDraggedVoiceMember] = useState(null);
+  const [selectedVoiceProfile, setSelectedVoiceProfile] = useState(null);
   const [voiceNotice, setVoiceNotice] = useState('');
   const [windowNotice, setWindowNotice] = useState('');
   const [nsfwPromptChannel, setNsfwPromptChannel] = useState(null);
@@ -598,6 +715,7 @@ export default function App() {
 
   const handleCategoryDrop = async (targetCategoryId) => {
     if (!canManageChannels) return;
+    if (draggedVoiceMember) return;
     if (draggedCategoryId && draggedCategoryId !== targetCategoryId) {
       const categoryIds = (currentServerData.categories || []).map((category) => category.id);
       const from = categoryIds.indexOf(draggedCategoryId);
@@ -616,6 +734,43 @@ export default function App() {
     setDropTargetCategoryId(null);
     setDraggedChannelId(null);
     setDropTargetChannelId(null);
+  };
+
+  const handleVoiceMemberDrop = async (member, targetChannel) => {
+    if (!member || targetChannel?.type !== 'voice' || targetChannel.id === member.sourceChannelId || targetChannel.server_id && targetChannel.server_id !== member.serverId) return;
+    if (member.userId !== user?.id) {
+      setVoiceNotice('Başka bir üyeyi taşımak için ses kanalında üyeye sağ tıklayıp taşıma yetkisini kullan.');
+      setDraggedVoiceMember(null);
+      return;
+    }
+    if (voiceSession?.kind === 'dm') {
+      setVoiceNotice('Sunucu ses kanalına geçmeden önce özel aramadan ayrıl.');
+      setDraggedVoiceMember(null);
+      return;
+    }
+    const { data: canConnect, error } = await supabase.rpc('has_channel_permission', { channel_uuid: targetChannel.id, permission_key: 'connect' });
+    if (error || !canConnect) {
+      setVoiceNotice(error ? 'Hedef ses kanalına erişim doğrulanamadı.' : 'Bu ses kanalına bağlanma iznin yok.');
+      setDraggedVoiceMember(null);
+      return;
+    }
+    if (targetChannel.nsfw && !sessionStorage.getItem('fastcord:nsfw-consent')) {
+      setNsfwPromptChannel(targetChannel);
+      setDraggedVoiceMember(null);
+      return;
+    }
+    const sourceChannelId = voiceSession?.channelId || member.sourceChannelId;
+    if (sourceChannelId) {
+      const { error: clearError } = await supabase.rpc('clear_server_voice_presence', { channel_uuid: sourceChannelId });
+      if (clearError) console.warn('Eski ses odası katılımcı kaydı temizlenemedi:', clearError.message);
+    }
+    setVoiceSession({ channelId: targetChannel.id, channelName: targetChannel.name, serverId: member.serverId });
+    openServer(member.serverId);
+    setActiveChannel(targetChannel.id);
+    setLayout('server');
+    setVoiceNotice(`${targetChannel.name} ses kanalına taşındın.`);
+    playUiSound('move', user?.id);
+    setDraggedVoiceMember(null);
   };
 
   const deleteChannelFromMenu = async (channel) => {
@@ -726,9 +881,9 @@ export default function App() {
                               onContextMenu={(event) => { event.preventDefault(); setManagementContext({ kind: 'channel', channel: ch, x: event.clientX, y: event.clientY }); }}
                               draggable={canReorderChannels}
                               onDragStart={(event) => { if (canReorderChannels) { setDraggedChannelId(ch.id); event.dataTransfer.setData('text/plain', ch.id); event.dataTransfer.effectAllowed = 'move'; } }}
-                              onDragOver={(event) => { if (canReorderChannels && draggedChannelId && draggedChannelId !== ch.id) { event.preventDefault(); setDropTargetChannelId(ch.id); } }}
-                              onDrop={(event) => { event.preventDefault(); void handleChannelDrop(cat.id, ch.id); }}
-                              onDragEnd={() => { setDraggedChannelId(null); setDropTargetChannelId(null); setDropTargetCategoryId(null); }}
+                              onDragOver={(event) => { if (draggedVoiceMember && ch.type === 'voice' && draggedVoiceMember.sourceChannelId !== ch.id) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDropTargetChannelId(ch.id); } else if (canReorderChannels && draggedChannelId && draggedChannelId !== ch.id) { event.preventDefault(); setDropTargetChannelId(ch.id); } }}
+                              onDrop={(event) => { event.preventDefault(); if (draggedVoiceMember && ch.type === 'voice') { event.stopPropagation(); void handleVoiceMemberDrop(draggedVoiceMember, { ...ch, server_id: activeServerId }); } else void handleChannelDrop(cat.id, ch.id); }}
+                              onDragEnd={() => { setDraggedChannelId(null); setDraggedVoiceMember(null); setDropTargetChannelId(null); setDropTargetCategoryId(null); }}
                               className={`group/channel relative ${dropTargetChannelId === ch.id ? 'rounded-md border-t-2 border-violet-300' : 'border-t-2 border-transparent'} ${draggedChannelId === ch.id ? 'opacity-45' : ''}`}
                             >
                               <button 
@@ -747,7 +902,8 @@ export default function App() {
                                 <div aria-label={`${ch.name} ses kanalındaki kişiler`} className="ml-7 mt-1 space-y-1 pb-1">
                                   {(voicePresenceByChannel[ch.id] || (voiceSession?.channelId === ch.id ? voiceParticipants : [])).map((presence) => {
                                     const participant = voiceSession?.channelId === ch.id ? voiceParticipants.find((item) => item.id === presence.id) || presence : presence;
-                                    return <div key={participant.id} title="Sağ tık: ses ve üye işlemleri" onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (voiceSession?.channelId === ch.id) setVoiceMemberMenuRequest({ participantId: participant.id, x: event.clientX, y: event.clientY, requestId: Date.now() }); }} className="flex min-w-0 cursor-context-menu items-center gap-2 rounded-lg px-1.5 py-1 text-[11px] text-slate-400 transition hover:bg-white/[0.045] hover:text-slate-200">
+                                    const isSelf = participant.id === user?.id;
+                                    return <div key={participant.id} draggable={isSelf && voiceSession?.channelId === ch.id} title={isSelf ? 'Sürükleyip başka ses kanalına bırak · tıkla: profil' : 'Tıkla: profili görüntüle · sağ tık: ses seçenekleri'} onClick={(event) => { event.stopPropagation(); void fetchProfiles([participant.id]).then((profiles) => { const profile = profiles[0] || { id: participant.id, username: participant.username, avatar_url: participant.avatar_url }; setSelectedVoiceProfile(profile); }); }} onDragStart={(event) => { if (!isSelf || voiceSession?.channelId !== ch.id) { event.preventDefault(); return; } event.stopPropagation(); event.dataTransfer.setData('application/x-fastlynox-voice-member', participant.id); event.dataTransfer.effectAllowed = 'move'; setDraggedVoiceMember({ userId: participant.id, username: participant.username, sourceChannelId: ch.id, serverId: activeServerId }); }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (voiceSession?.channelId === ch.id) setVoiceMemberMenuRequest({ participantId: participant.id, x: event.clientX, y: event.clientY, requestId: Date.now() }); }} className={`flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-[11px] text-slate-400 transition hover:bg-white/[0.045] hover:text-slate-200 ${isSelf && voiceSession?.channelId === ch.id ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${draggedVoiceMember?.userId === participant.id ? 'opacity-40' : ''}`}>
                                       <img src={getAvatarUrl(participant.avatar_url, participant.username)} alt="" className={`h-5 w-5 shrink-0 rounded-full object-cover ${participant.speaking ? 'ring-2 ring-emerald-400/90' : ''}`} />
                                       <span className="min-w-0 flex-1 truncate">{participant.username}</span>
                                       {participant.speaking && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.7)]" aria-label="Konuşuyor" />}
@@ -846,6 +1002,7 @@ export default function App() {
       </Suspense>
       {nsfwPromptChannel && <NsfwConsentModal channelName={nsfwPromptChannel.name} onCancel={() => setNsfwPromptChannel(null)} onContinue={() => { const channel = nsfwPromptChannel; sessionStorage.setItem('fastcord:nsfw-consent', '1'); setNsfwPromptChannel(null); handleChannelSelect(channel); }} />}
       {inviteDialogCode && <ServerInviteModal inviteCode={inviteDialogCode} authenticated onClose={() => { setInviteDialogCode(null); if (window.location.pathname.startsWith('/invite/')) window.history.replaceState(null, '', '/'); }} onJoin={handleJoinInvite} />}
+      {selectedVoiceProfile && <UserProfileModal profile={selectedVoiceProfile} role={null} serverId={activeServerId} serverName={currentServerData?.name || ''} onClose={() => setSelectedVoiceProfile(null)} />}
       <ActionContextMenu position={managementContext} items={managementMenuItems} onClose={() => setManagementContext(null)} label={managementContext?.kind === 'category' ? 'Kategori işlemleri' : 'Kanal işlemleri'} />
     </div>
   );

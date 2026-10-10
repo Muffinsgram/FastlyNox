@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AudioLines, Bell, Headphones, Mic, Keyboard, Pencil, ShieldCheck, UserRound, X, Accessibility, Volume2, Crown, Settings2, Palette, MessageSquareText, LockKeyhole, Play } from 'lucide-react';
+import { AudioLines, Bell, Headphones, Mic, Keyboard, Pencil, ShieldCheck, UserRound, X, Accessibility, Volume2, Crown, Settings2, Palette, MessageSquareText, LockKeyhole, Play, Gamepad2, Music2 } from 'lucide-react';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { supabase } from '../../../lib/supabase';
 import { getAvatarUrl, getBannerUrl, removeProfileImage } from '../../../lib/profileMedia';
@@ -8,6 +8,7 @@ import { AvatarEditorModal } from './AvatarEditorModal';
 import { getAppPreferences, saveAppPreferences } from '../../../lib/appPreferences';
 import { FastlynoxPlusPanel } from './FastlynoxPlusPanel';
 import { FastlynoxAdminPanel } from './FastlynoxAdminPanel';
+import { ConnectionsSettingsPanel } from './ConnectionsSettingsPanel';
 import { PrivacySettingsPanel } from './PrivacySettingsPanel';
 import { AnimatedSelect } from '../../../components/ui/AnimatedSelect';
 import { ServerNotificationSettings } from './ServerNotificationSettings';
@@ -178,14 +179,16 @@ export function UserSettingsModal({ onClose }) {
     ['profile', 'Profil', <UserRound key="profile-icon" className="h-4 w-4" />],
     ['account', 'Güvenlik', <ShieldCheck key="security-icon" className="h-4 w-4" />],
     ['preferences', 'Tercihler', <Accessibility key="preferences-icon" className="h-4 w-4" />],
+    ['connections', 'Bağlantılar', <Music2 key="connections-icon" className="h-4 w-4" />],
+    ['activity', 'Etkinlik', <Music2 key="activity-icon" className="h-4 w-4" />],
     ['sound', 'Ses', <AudioLines key="sound-icon" className="h-4 w-4" />],
     ['keybinds', 'Tuş atamaları', <Keyboard key="keybinds-icon" className="h-4 w-4" />],
     ['privacy', 'Gizlilik', <LockKeyhole key="privacy-icon" className="h-4 w-4" />],
     ['plus', 'Fastlynox Plus', <Crown key="plus-icon" className="h-4 w-4" />],
     ...(isPlatformStaff ? [['admin', 'Yönetim', <Settings2 key="admin-icon" className="h-4 w-4" />]] : []),
   ];
-  const tabTitle = { profile: 'Profilini kişiselleştir', account: 'Hesap güvenliği', preferences: 'Bildirim ve görünüm', sound: 'Ses ayarları', keybinds: 'Tuş atamaları', privacy: 'Gizlilik ve güvenlik', plus: 'Fastlynox Plus', admin: 'Platform yönetimi' }[activeTab];
-  const tabDescription = { profile: 'Profil fotoğrafını, banner’ını ve kendini nasıl tanıttığını düzenle.', account: 'E-posta adresini ve parolanı yönet.', preferences: 'Bildirim yoğunluğunu ve animasyonları kendine göre ayarla.', sound: 'Mikrofonunu, ses çıkışını ve uygulama seslerini yönet.', keybinds: 'Mikrofon, kulaklık ve bas-konuş kontrollerine kısayol ata.', privacy: 'DM izinlerini, görünürlüğünü ve engellediğin hesapları yönet.', plus: 'Planını, özelliklerini ve yükleme sınırlarını görüntüle.', admin: 'Kullanıcıları, rozetleri, planları ve yükleme sınırlarını yönet.' }[activeTab];
+  const tabTitle = { profile: 'Profilini kişiselleştir', account: 'Hesap güvenliği', preferences: 'Bildirim ve görünüm', connections: 'Hesap bağlantıların', activity: 'Oyun etkinliği', sound: 'Ses ayarları', keybinds: 'Tuş atamaları', privacy: 'Gizlilik ve güvenlik', plus: 'Fastlynox Plus', admin: 'Platform yönetimi' }[activeTab];
+  const tabDescription = { profile: 'Profil fotoğrafını, banner’ını ve kendini nasıl tanıttığını düzenle.', account: 'E-posta adresini ve parolanı yönet.', preferences: 'Bildirim yoğunluğunu ve animasyonları kendine göre ayarla.', connections: 'Spotify, Steam, YouTube ve Instagram profil bağlantılarını yönet.', activity: 'Oynadığın oyunları profilde göster veya gizle.', sound: 'Mikrofonunu, ses çıkışını ve uygulama seslerini yönet.', keybinds: 'Mikrofon, kulaklık ve bas-konuş kontrollerine kısayol ata.', privacy: 'DM izinlerini, görünürlüğünü ve engellediğin hesapları yönet.', plus: 'Planını, özelliklerini ve yükleme sınırlarını görüntüle.', admin: 'Kullanıcıları, rozetleri, planları ve yükleme sınırlarını yönet.' }[activeTab];
 
   return (
     <div className="fixed inset-0 z-[200] flex animate-in fade-in duration-200 bg-[#070a10]/80 p-3 backdrop-blur-xl sm:p-6" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -241,6 +244,12 @@ export function UserSettingsModal({ onClose }) {
               <PreferenceRow icon={<Accessibility className="h-4 w-4" />} title="Hareketi azalt" description="Arayüz geçişlerini ve dikkat dağıtan animasyonları azalt." checked={preferences.reduceMotion} onChange={(value) => updatePreference('reduceMotion', value)} />
               <p className="px-1 pt-2 text-xs text-slate-500">Bu tercihler bu cihaz ve tarayıcıda saklanır.</p>
             </section>
+          ) : activeTab === 'connections' ? (
+            <ConnectionsSettingsPanel userId={user?.id} />
+          ) : activeTab === 'activity' ? (
+            <div className="max-w-2xl space-y-4">
+              <PreferenceRow icon={<Gamepad2 className="h-4 w-4" />} title="Oyun etkinliğini paylaş" description="Windows masaüstü uygulamasında bilinen oyunları algıla ve profilde göster. Bu ayar kapalıyken oyun taraması yapılmaz." checked={preferences.gameDetectionEnabled === true} onChange={(value) => updatePreference('gameDetectionEnabled', value)} />
+            </div>
           ) : activeTab === 'sound' ? (
             <section className="max-w-2xl space-y-3">
               <VoiceSettingsPanel value={preferences.voiceAudioSettings || {}} onChange={(value) => updatePreference('voiceAudioSettings', value)} />

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { UserPlus, UserRoundCheck, X, Shield, Copy, ExternalLink, Bug, BadgeCheck, UsersRound, Headphones, Palette, Sparkles, Crown, ShieldCheck, LoaderCircle, Ban, VolumeX, Volume2 } from 'lucide-react';
+import { UserPlus, UserRoundCheck, X, Shield, Copy, ExternalLink, Bug, BadgeCheck, UsersRound, Headphones, Palette, Sparkles, Crown, ShieldCheck, LoaderCircle, Ban, VolumeX, Volume2, Gamepad2, Music2, Server, Video, Camera, Radio } from 'lucide-react';
 import { createPortal } from 'react-dom';
-import { getAvatarUrl, getBannerUrl } from '../../lib/profileMedia';
+import { fetchProfiles, getAvatarUrl, getBannerUrl } from '../../lib/profileMedia';
 import { useAuthStore } from '../../store/useAuthStore';
 import { useFriendStore } from '../../store/useFriendStore';
+import { useDMChatStore } from '../../store/useDMChatStore';
 import { supabase } from '../../lib/supabase';
 import { getAppPreferences, saveAppPreferences } from '../../lib/appPreferences';
 import { RoleEmoji } from '../ui/RoleEmoji';
@@ -14,6 +15,8 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
   const { user, session } = useAuthStore();
   const friendships = useFriendStore((state) => state.friendships);
   const sendFriendRequestToUser = useFriendStore((state) => state.sendFriendRequestToUser);
+  const getOrCreateDM = useFriendStore((state) => state.getOrCreateDM);
+  const sendDMMessage = useDMChatStore((state) => state.sendMessage);
   const [friendActionBusy, setFriendActionBusy] = useState(false);
   const [friendActionNotice, setFriendActionNotice] = useState('');
   const [isFollowing, setIsFollowing] = useState(false);
@@ -30,6 +33,12 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
   const [safetyNotice, setSafetyNotice] = useState('');
   const [serverMemberRole, setServerMemberRole] = useState(role || null);
   const [serverRoles, setServerRoles] = useState([]);
+  const [mutualFriends, setMutualFriends] = useState([]);
+  const [mutualServers, setMutualServers] = useState([]);
+  const [profileActivities, setProfileActivities] = useState([]);
+  const [socialLinks, setSocialLinks] = useState([]);
+  const [connectionsNotice, setConnectionsNotice] = useState('');
+  const [listenInviteNotice, setListenInviteNotice] = useState('');
   const friendship = friendships.find((item) => (item.requester_id === user?.id && item.addressee_id === profile?.id) || (item.addressee_id === user?.id && item.requester_id === profile?.id));
   const isPlatformStaff = session?.user?.app_metadata?.platform_staff === true || session?.user?.app_metadata?.platform_staff === 'true';
 
@@ -78,6 +87,58 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
     });
     return () => { active = false; };
   }, [profile?.id]);
+
+  useEffect(() => {
+    if (!profile?.id || !user?.id || profile.id === user.id) {
+      setMutualFriends([]);
+      setMutualServers([]);
+      setProfileActivities([]);
+      setSocialLinks([]);
+      setConnectionsNotice('');
+      return undefined;
+    }
+    let active = true;
+    const loadActivity = async () => {
+      const { data, error } = await supabase.from('user_profile_activities')
+        .select('activity_type,title,details,external_url,album_art_url,spotify_uri,started_at,updated_at')
+        .eq('user_id', profile.id)
+        .gt('updated_at', new Date(Date.now() - 30_000).toISOString());
+      if (active && !error) setProfileActivities(data || []);
+    };
+    const loadSocialLinks = async () => {
+      const { data, error } = await supabase.from('user_social_links').select('platform,profile_url,visibility').eq('user_id', profile.id);
+      if (active && !error) setSocialLinks(data || []);
+    };
+    const loadConnections = async () => {
+      const connectionsResult = await supabase.rpc('get_profile_connections', { target_user: profile.id });
+      if (!active) return;
+      if (connectionsResult.error) {
+        setConnectionsNotice('Ortak arkadaş ve sunucu bilgileri için migration_profile_social_activity.sql dosyasını Supabase SQL Editor’da çalıştır.');
+      } else {
+        setConnectionsNotice('');
+        const rows = connectionsResult.data || [];
+        const friendIds = rows.filter((item) => item.connection_type === 'friend').map((item) => item.connection_id);
+        const [friends, servers] = await Promise.all([
+          fetchProfiles(friendIds).catch(() => []),
+          Promise.resolve(rows.filter((item) => item.connection_type === 'server')),
+        ]);
+        if (!active) return;
+        setMutualFriends(friends);
+        setMutualServers(servers);
+      }
+    };
+    void loadConnections();
+    void loadActivity();
+    void loadSocialLinks();
+    const channel = supabase.channel(`profile-activity:${profile.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_profile_activities', filter: `user_id=eq.${profile.id}` }, () => { void loadActivity(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_social_links', filter: `user_id=eq.${profile.id}` }, () => { void loadSocialLinks(); })
+      .subscribe();
+    return () => {
+      active = false;
+      void supabase.removeChannel(channel);
+    };
+  }, [profile?.id, user?.id]);
 
   useEffect(() => {
     if (!profile?.id || !user?.id || profile.id === user.id) return;
@@ -138,6 +199,18 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
     onClose?.();
   };
 
+  const sendListenInvite = async (activity) => {
+    if (!user?.id || !profile?.id || !activity.external_url || !/^https:\/\/open\.spotify\.com\//u.test(activity.external_url)) return;
+    setListenInviteNotice('Dinleme daveti gönderiliyor…');
+    const dm = await getOrCreateDM(profile.id);
+    if (!dm?.id) { setListenInviteNotice('Bu kullanıcıya özel mesaj gönderilemedi.'); return; }
+    const result = await sendDMMessage(dm.id, `🎧 Birlikte dinleyelim mi?\n${activity.title}${activity.details ? ` — ${activity.details}` : ''}\n${activity.external_url}`);
+    if (result.success) {
+      setListenInviteNotice('Spotify bağlantısı özel mesajla gönderildi. İkiniz de parçayı kendi Spotify uygulamanızda açabilirsiniz.');
+      window.dispatchEvent(new CustomEvent('fastlynox:open-dm', { detail: { userId: profile.id } }));
+    } else setListenInviteNotice('Dinleme daveti gönderilemedi. ' + (result.error || ''));
+  };
+
   const toggleBlock = async () => {
     if (!user?.id || !profile?.id || user.id === profile.id) return;
     setSafetyNotice('');
@@ -188,7 +261,7 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
 
   return createPortal((
     <div className="fixed inset-0 z-[300] bg-black/60 flex items-center justify-center animate-in fade-in duration-200" onClick={onClose}>
-      <div className="relative w-[min(25rem,calc(100vw-2rem))] overflow-hidden rounded-[26px] border border-white/10 bg-[#10151f]/95 shadow-[0_30px_100px_rgba(0,0,0,.65)] backdrop-blur-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="relative max-h-[90vh] w-[min(25rem,calc(100vw-2rem))] overflow-x-hidden overflow-y-auto rounded-[26px] border border-white/10 bg-[#10151f]/95 shadow-[0_30px_100px_rgba(0,0,0,.65)] backdrop-blur-2xl" onClick={(e) => e.stopPropagation()}>
         {/* Banner */}
         <div className="relative h-32 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,rgba(139,92,246,.45),transparent_60%),linear-gradient(120deg,#151b28,#10141e)]">
           {getBannerUrl(profile.banner_url) && <img src={getBannerUrl(profile.banner_url)} alt="" className="h-full w-full object-cover" style={{ objectPosition: `${profile.banner_position_x ?? 50}% ${profile.banner_position_y ?? 50}%`, transform: `scale(${profile.banner_zoom ?? 1})`, transformOrigin: `${profile.banner_position_x ?? 50}% ${profile.banner_position_y ?? 50}%` }} />}
@@ -224,6 +297,31 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
             {safetyNotice && <p role="status" className="mt-2 text-[10px] text-violet-200">{safetyNotice}</p>}
             {followError && <p role="status" className="mt-2 text-[11px] text-amber-200">{followError}</p>}
             {profile.bio && <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-6 text-slate-300">{profile.bio}</p>}
+
+            {socialLinks.length > 0 && <section aria-label="Bağlantılı profiller" className="mt-4 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5"><h3 className="mb-2.5 text-[10px] font-black uppercase tracking-[.14em] text-slate-500">Bağlantılar</h3><div className="flex flex-wrap gap-2">{socialLinks.map((link) => {
+              const social = { spotify: { name: 'Spotify', Icon: Music2 }, listenbrainz: { name: 'ListenBrainz', Icon: Radio }, steam: { name: 'Steam', Icon: Gamepad2 }, youtube: { name: 'YouTube', Icon: Video }, instagram: { name: 'Instagram', Icon: Camera } }[link.platform];
+              if (!social || !/^https:\/\//u.test(link.profile_url || '')) return null;
+              const SocialIcon = social.Icon;
+              return <a key={link.platform} href={link.profile_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl border border-white/[0.08] bg-black/15 px-3 py-2 text-[10px] font-semibold text-slate-300 transition hover:border-violet-200/20 hover:bg-white/[0.06] hover:text-white"><SocialIcon className="h-3.5 w-3.5 text-violet-200" />{social.name}<ExternalLink className="h-3 w-3 text-slate-600" /></a>;
+            })}</div></section>}
+
+            {profileActivities.length > 0 && <section aria-label="Kullanıcı etkinliği" className="mt-4 space-y-2">{profileActivities.map((activity) => {
+              const isMusic = activity.activity_type === 'spotify' || activity.activity_type === 'music';
+              const isSpotify = activity.activity_type === 'spotify';
+              const Icon = isMusic ? Music2 : Gamepad2;
+              return <div key={activity.activity_type} className={`rounded-2xl border p-3 ${isMusic ? 'border-emerald-300/15 bg-emerald-300/[0.045]' : 'border-violet-300/15 bg-violet-300/[0.045]'}`}>
+                <div className="flex items-center gap-3">{isMusic && activity.album_art_url ? <img src={activity.album_art_url} alt="" className="h-10 w-10 shrink-0 rounded-xl object-cover" /> : <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${isMusic ? 'bg-emerald-300/10 text-emerald-200' : 'bg-violet-300/10 text-violet-200'}`}><Icon className="h-4 w-4" /></span>}<span className="min-w-0 flex-1"><span className="block text-[9px] font-bold uppercase tracking-[.15em] text-slate-500">{isSpotify ? 'Spotify dinliyor' : activity.activity_type === 'music' ? 'ListenBrainz dinliyor' : 'Şu anda oynuyor'}</span><span className="mt-1 block truncate text-xs font-bold text-slate-100">{activity.title}</span>{activity.details && <span className="mt-0.5 block truncate text-[10px] text-slate-400">{activity.details}</span>}</span>{isMusic && /^https:\/\//u.test(activity.external_url || '') && <a href={activity.external_url} target="_blank" rel="noreferrer" className="shrink-0 rounded-lg border border-emerald-200/15 px-2.5 py-1 text-[9px] font-semibold text-emerald-100 hover:bg-emerald-300/10">Parçayı aç</a>}{isSpotify && /^https:\/\/open\.spotify\.com\//u.test(activity.external_url || '') && <div className="flex shrink-0 flex-col gap-1"><button type="button" onClick={() => window.open(activity.external_url, '_blank', 'noopener,noreferrer')} className="rounded-lg border border-emerald-200/15 px-2.5 py-1 text-[9px] font-semibold text-emerald-100 hover:bg-emerald-300/10">Spotify’da aç</button>{user?.id !== profile.id && <button type="button" onClick={() => void sendListenInvite(activity)} className="rounded-lg border border-white/[0.08] px-2.5 py-1 text-[9px] font-semibold text-slate-300 hover:bg-white/[0.06]">Dinleme daveti</button>}</div>}</div>
+              </div>;
+            })}</section>}
+            {listenInviteNotice && <p role="status" className="mt-1 text-[10px] leading-4 text-emerald-200">{listenInviteNotice}</p>}
+
+            {(mutualFriends.length > 0 || mutualServers.length > 0 || connectionsNotice) && <section aria-label="Ortak bağlantılar" className="mt-4 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5">
+              <div className="mb-3 flex items-center gap-2"><UsersRound className="h-3.5 w-3.5 text-violet-200" /><h3 className="text-[10px] font-black uppercase tracking-[.14em] text-slate-400">Ortak bağlantılar</h3></div>
+              {mutualFriends.length > 0 && <div className="mb-3"><p className="mb-2 text-[9px] font-bold uppercase tracking-wider text-slate-500">Ortak arkadaşlar · {mutualFriends.length}</p><div className="flex flex-wrap gap-1.5">{mutualFriends.slice(0, 8).map((friend) => <span key={friend.id} title={friend.username} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/[0.07] bg-black/15 py-1 pl-1 pr-2.5"><img src={getAvatarUrl(friend.avatar_url, friend.username)} alt="" className="h-5 w-5 rounded-full object-cover" /><span className="max-w-28 truncate text-[10px] font-semibold text-slate-300">{friend.username}</span></span>)}{mutualFriends.length > 8 && <span className="self-center text-[10px] text-slate-500">+{mutualFriends.length - 8}</span>}</div></div>}
+              {mutualServers.length > 0 && <div><p className="mb-2 text-[9px] font-bold uppercase tracking-wider text-slate-500">Ortak sunucular · {mutualServers.length}</p><div className="flex flex-wrap gap-1.5">{mutualServers.slice(0, 8).map((server) => <span key={server.connection_id} title={server.display_name} className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/[0.07] bg-black/15 py-1 pl-1 pr-2.5">{server.icon_url ? <img src={server.icon_url} alt="" className="h-5 w-5 rounded-full object-cover" /> : <span className="grid h-5 w-5 place-items-center rounded-full bg-white/[0.07]"><Server className="h-3 w-3 text-slate-400" /></span>}<span className="max-w-28 truncate text-[10px] font-semibold text-slate-300">{server.display_name}</span></span>)}{mutualServers.length > 8 && <span className="self-center text-[10px] text-slate-500">+{mutualServers.length - 8}</span>}</div></div>}
+              {connectionsNotice && <p role="status" className="text-[10px] leading-4 text-amber-200">{connectionsNotice}</p>}
+              {!mutualFriends.length && !mutualServers.length && !connectionsNotice && <p className="text-[10px] text-slate-500">Henüz ortak bağlantı yok.</p>}
+            </section>}
             
             {serverId && <><div className="my-4 h-px w-full bg-white/10" /><section aria-label="Sunucu profili ve rolleri" className="mb-1 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5">
               <div className="mb-2.5 flex items-center justify-between gap-3"><h3 className="text-[10px] font-black uppercase tracking-[.14em] text-slate-500">{serverName || 'Sunucu'} profili</h3><span className="rounded-full border border-white/[0.07] bg-black/15 px-2 py-1 text-[9px] font-semibold text-slate-400">{serverMemberRole === 'owner' ? 'Sunucu sahibi' : serverMemberRole === 'admin' ? 'Yönetici' : 'Üye'}</span></div>
