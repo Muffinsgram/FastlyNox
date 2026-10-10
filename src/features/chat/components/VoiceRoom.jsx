@@ -23,6 +23,7 @@ import { getScreenShareCaptureOptions, getScreenSharePublishOptions, supportsOwn
 import { prepareMicrophoneProcessing, syncNoiseProcessor } from '../../../lib/microphoneNoiseProcessor';
 import { DEFAULT_VOICE_AUDIO_SETTINGS, getAudioCaptureOptions, getAudioPublishOptions } from '../../../lib/voiceAudio';
 import { prepareMicrophone } from '../../../lib/preparedMicrophone';
+import { createVoicePresenceRecovery } from '../../../lib/voicePresenceRecovery';
 
 const ScreenViewingContext = createContext(null);
 function ScreenViewingProvider({ children }) {
@@ -231,6 +232,8 @@ function VoiceParticipants({ serverId, channelId, initialParticipants = [], loca
   const isSpeaking = speakingParticipants.some(participant => participant.identity === currentUser?.id);
   const voiceStateRef = useRef({ microphoneEnabled: false, deafened: false, speaking: false });
   const presenceWarningShown = useRef(false);
+  const [presenceRecovery] = useState(() => createVoicePresenceRecovery());
+  const presenceRetryTimer = useRef(null);
   const presenceRequestRef = useRef(null);
   const presenceQueuedRef = useRef(false);
   const presenceActiveRef = useRef(true);
@@ -308,7 +311,8 @@ function VoiceParticipants({ serverId, channelId, initialParticipants = [], loca
   const publishVoicePresence = () => {
     // LiveKit can move the room before React receives the new channel. Never
     // let its old heartbeat put the member back in the source channel.
-    if (!presenceActiveRef.current || !serverId || !channelId || !currentUser?.id || connectionState !== 'connected' || room.name !== channelId) return;
+    if (!presenceActiveRef.current || !serverId || !channelId || !currentUser?.id || connectionState !== 'connected' || room.state !== 'connected' || room.name !== channelId) return;
+    if (!presenceRecovery.canAttempt()) return;
     if (presenceRequestRef.current) { presenceQueuedRef.current = true; return; }
     presenceRequestRef.current = queueVoicePresence(currentUser.id, () => presenceActiveRef.current && room.name === channelId ? supabase.rpc('set_server_voice_presence', {
       server_uuid: serverId,
@@ -317,14 +321,31 @@ function VoiceParticipants({ serverId, channelId, initialParticipants = [], loca
       is_deafened: voiceStateRef.current.deafened,
       is_speaking: voiceStateRef.current.speaking,
     }) : { error: null }).then(({ error }) => {
+      if (!presenceActiveRef.current || room.name !== channelId) return;
       if (error) {
-        if (!presenceWarningShown.current) {
+        const failure = presenceRecovery.failed(error);
+        clearTimeout(presenceRetryTimer.current);
+        if (failure.transient) presenceRetryTimer.current = setTimeout(publishVoicePresence, failure.delay);
+        if (failure.notify && !presenceWarningShown.current && presenceActiveRef.current) {
           presenceWarningShown.current = true;
-          const migrationMissing = /set_server_voice_presence|schema cache|function.*not found/i.test(error.message);
-          onPresenceError?.(migrationMissing ? 'Ses kanalı durumu için migration_voice_speaking_presence.sql dosyasını Supabase SQL Editor’da çalıştır.' : `Ses durumu yayınlanamadı: ${error.message}`);
+          onPresenceError?.(failure.message);
         }
-      } else presenceWarningShown.current = false;
-    }).catch(error => console.warn('Ses durumu gönderilemedi:', error)).finally(() => {
+      } else {
+        presenceRecovery.succeeded();
+        clearTimeout(presenceRetryTimer.current);
+        if (presenceWarningShown.current && presenceActiveRef.current) onPresenceError?.('');
+        presenceWarningShown.current = false;
+      }
+    }).catch(error => {
+      if (!presenceActiveRef.current || room.name !== channelId) return;
+      const failure = presenceRecovery.failed(error);
+      clearTimeout(presenceRetryTimer.current);
+      if (failure.transient) presenceRetryTimer.current = setTimeout(publishVoicePresence, failure.delay);
+      if (failure.notify && !presenceWarningShown.current && presenceActiveRef.current) {
+        presenceWarningShown.current = true;
+        onPresenceError?.(failure.message);
+      }
+    }).finally(() => {
       presenceRequestRef.current = null;
       if (presenceQueuedRef.current) { presenceQueuedRef.current = false; publishVoicePresence(); }
     });
@@ -345,6 +366,7 @@ function VoiceParticipants({ serverId, channelId, initialParticipants = [], loca
     presenceActiveRef.current = true;
     return () => {
       presenceActiveRef.current = false;
+      clearTimeout(presenceRetryTimer.current);
       if (serverId && channelId && currentUser?.id) {
         // Drain the last write before removing the lease; otherwise an old
         // in-flight heartbeat can recreate it after the move.

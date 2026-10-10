@@ -1045,7 +1045,7 @@ export default function App() {
             isStageVisible={voiceSession.kind === 'dm' ? layout === 'home' : layout === 'server' && activeServerId === voiceSession.serverId && activeChannelId === voiceSession.channelId}
             onReturn={() => { playUiSound('move', user?.id); if (voiceSession.kind === 'dm') setLayout('home'); else { openServer(voiceSession.serverId); setActiveChannel(voiceSession.channelId); setLayout('server'); } }}
             onParticipantsChange={handleVoiceParticipantsChange}
-            onPresenceError={(message) => setVoiceNotice((current) => current || message)}
+            onPresenceError={(message) => setVoiceNotice(current => !message && current.startsWith('Ses durumu') ? '' : current || message)}
             onLeave={() => { void handleLeaveVoice(); }}
           />
         </Suspense>
