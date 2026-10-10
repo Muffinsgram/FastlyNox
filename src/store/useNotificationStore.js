@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuthStore } from './useAuthStore';
 import { getAppPreferences, isNotificationLocationMuted, shouldSuppressNotification } from '../lib/appPreferences';
 import { usePresenceStore } from './usePresenceStore';
+import { useDMChatStore } from './useDMChatStore';
 
 const toastTimers = new Map();
 let notificationAudioContext;
@@ -220,6 +221,23 @@ export const useNotificationStore = create((set, get) => ({
         const newNotif = payload.new;
         if (get().notifications.some((notification) => notification.id === newNotif.id)) return;
         set((state) => ({ notificationEventVersion: state.notificationEventVersion + 1 }));
+
+        // The DM notification is inserted in the same database transaction as
+        // its message. It provides a second realtime signal if the chat stream
+        // misses the message while this conversation is open.
+        if (newNotif.dm_channel_id) {
+          window.setTimeout(() => {
+            if (get().activeDMChannelId !== newNotif.dm_channel_id) return;
+            const dmStore = useDMChatStore.getState();
+            const notificationTime = Date.parse(newNotif.created_at || '') || Date.now();
+            const alreadyVisible = (dmStore.messages[newNotif.dm_channel_id] || []).some((message) =>
+              message.user_id === newNotif.sender_id
+              && Math.abs(notificationTime - (Date.parse(message.created_at || '') || 0)) < 1_500
+              && (newNotif.body === '🖼️ Fotoğraf' ? Boolean(message.image_url) : (message.content || '').startsWith(newNotif.body || ''))
+            );
+            if (!alreadyVisible) void dmStore.fetchMessages(newNotif.dm_channel_id);
+          }, 100);
+        }
         
         // Show desktop notification if granted
         const preferences = getAppPreferences(user.id);
@@ -271,7 +289,10 @@ export const useNotificationStore = create((set, get) => ({
         readRefreshTimer = setTimeout(() => void get().fetchNotifications(), 120);
       })
       .subscribe((status) => {
-        if (status !== 'SUBSCRIBED') return;
+        if (status !== 'SUBSCRIBED') {
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') console.warn('Bildirim Realtime bağlantı sorunu:', status);
+          return;
+        }
         // Recover any notifications created while the realtime connection was
         // unavailable without doing a periodic full-table poll.
         if (subscribedOnce) void get().fetchNotifications();
