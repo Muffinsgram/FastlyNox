@@ -72,7 +72,6 @@ export const useFriendStore = create((set, get) => ({
   subscribeToFriendships: (userId) => {
     if (!userId) return () => {};
     let refreshTimer;
-    const recoveryTimer = window.setInterval(() => { if (document.visibilityState === 'visible') void get().fetchFriendships(); }, 45_000);
     const refresh = () => {
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => { void get().fetchFriendships(); }, 100);
@@ -84,11 +83,11 @@ export const useFriendStore = create((set, get) => ({
     const channel = supabase.channel(`friendships:${userId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships', filter: `requester_id=eq.${userId}` }, onFriendshipEvent)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships', filter: `addressee_id=eq.${userId}` }, onFriendshipEvent)
-      .subscribe((status) => {
+      .subscribe((status, error) => {
         if (status === 'SUBSCRIBED') {
           refresh();
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.warn('Arkadaşlık senkronu yeniden bağlanıyor:', status);
+          console.warn('Arkadaşlık senkronu bağlantı sorunu:', status, error?.message || error || 'Sunucu ayrıntı göndermedi');
         }
       });
     const handleOnline = () => refresh();
@@ -99,7 +98,6 @@ export const useFriendStore = create((set, get) => ({
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       clearTimeout(refreshTimer);
-      clearInterval(recoveryTimer);
       window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibility);
       void supabase.removeChannel(channel);
@@ -280,21 +278,19 @@ export const useFriendStore = create((set, get) => ({
           return { dmChannels: state.dmChannels.map((channel) => channel.id === channelId ? { ...channel, last_message: message } : channel).sort((left, right) => new Date(right.last_message?.created_at || right.created_at) - new Date(left.last_message?.created_at || left.created_at)) };
         });
       })
-      .subscribe((status) => {
+      .subscribe((status, error) => {
         if (status === 'SUBSCRIBED') {
           refresh();
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          console.warn('DM aktivite kanalı bağlantı sorunu:', status);
+          console.warn('DM aktivite kanalı bağlantı sorunu:', status, error?.message || error || 'Sunucu ayrıntı göndermedi');
         }
       });
     const refreshOnReconnect = () => refresh();
-    const recoveryTimer = window.setInterval(refresh, 45_000);
     const refreshOnVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
     window.addEventListener('online', refreshOnReconnect);
     document.addEventListener('visibilitychange', refreshOnVisibility);
     const cleanup = () => {
       clearTimeout(refreshTimer);
-      clearInterval(recoveryTimer);
       window.removeEventListener('online', refreshOnReconnect);
       document.removeEventListener('visibilitychange', refreshOnVisibility);
       void supabase.removeChannel(subscription);

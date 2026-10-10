@@ -164,9 +164,9 @@ export const useDMChatStore = create((set, get) => ({
         if (!isCurrent()) return;
         set((state) => ({ messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id, messages.map((message) => message.id === payload.old.message_id ? removeReaction(message, payload.old) : message)])) }));
       })
-      .subscribe((status) => {
+      .subscribe((status, error) => {
         if (status === 'SUBSCRIBED' && isCurrent()) void get().fetchMessages(channelId);
-        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') console.warn(`DM mesaj kanalı bağlantı sorunu (${channelId}):`, status);
+        else if (isCurrent() && (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')) console.warn(`DM mesaj kanalı bağlantı sorunu (${channelId}):`, status, error?.message || error || 'Sunucu ayrıntı göndermedi');
       });
 
     const refreshWhenConnected = () => { if (isCurrent() && document.visibilityState === 'visible') void get().fetchRecentMessages(channelId); };

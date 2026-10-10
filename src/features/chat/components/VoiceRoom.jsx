@@ -831,6 +831,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const [isDeafened, setIsDeafened] = useState(false);
   const [pendingControl, setPendingControl] = useState('');
   const [controlError, setControlError] = useState('');
+  const [effectiveKeybinds, setEffectiveKeybinds] = useState(null);
   const [microphoneBeforeDeafen, setMicrophoneBeforeDeafen] = useState(false);
   const [soundboardOpen, setSoundboardOpen] = useState(false);
   const [screenSources, setScreenSources] = useState([]);
@@ -945,7 +946,8 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     if (!microphoneTestActiveRef.current && !microphoneTestRestoreRef.current) playUiSound('headphonesOff', currentUserId);
   }), [toggle, isDeafened, microphoneBeforeDeafen, localParticipant, voiceAudioSettings, isMicrophoneEnabled, onDeafenedChange, currentUserId]);
 
-  const keybinds = useMemo(() => ({ toggleMicrophone: 'Ctrl+Shift+KeyM', toggleDeafen: 'Ctrl+Shift+KeyD', pushToTalk: 'KeyV', ...(voiceKeyPreferences.keybinds || {}) }), [voiceKeyPreferences.keybinds]);
+  const keybinds = useMemo(() => ({ toggleMicrophone: 'Ctrl+Alt+KeyM', toggleDeafen: 'Ctrl+Alt+KeyD', pushToTalk: 'KeyV', ...(voiceKeyPreferences.keybinds || {}) }), [voiceKeyPreferences.keybinds]);
+  const activeKeybinds = effectiveKeybinds ? { ...keybinds, ...effectiveKeybinds } : keybinds;
   const pushToTalkEnabled = Boolean(voiceKeyPreferences.pushToTalkEnabled);
   const voiceInputRef = useRef({});
   const pushHeldRef = useRef(false);
@@ -955,8 +957,8 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const deafenActionRef = useRef(toggleDeafen);
   useLayoutEffect(() => {
     deafenActionRef.current = toggleDeafen;
-    voiceInputRef.current = { localParticipant, keybinds, pushToTalkEnabled, isDeafened, isMicrophoneEnabled, pendingControl, voiceAudioSettings, onDeafenedChange, currentUserId, toggleMicrophone: () => toggle('mic', async () => { const enabled = !isMicrophoneEnabled; await localParticipant.setMicrophoneEnabled(enabled, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings)); playUiSound(enabled ? 'microphoneOn' : 'microphoneOff', currentUserId); }) };
-  }, [localParticipant, keybinds, pushToTalkEnabled, isDeafened, isMicrophoneEnabled, pendingControl, voiceAudioSettings, onDeafenedChange, currentUserId, toggleDeafen, toggle]);
+    voiceInputRef.current = { localParticipant, keybinds: activeKeybinds, pushToTalkEnabled, isDeafened, isMicrophoneEnabled, pendingControl, voiceAudioSettings, onDeafenedChange, currentUserId, toggleMicrophone: () => toggle('mic', async () => { const enabled = !isMicrophoneEnabled; await localParticipant.setMicrophoneEnabled(enabled, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings)); playUiSound(enabled ? 'microphoneOn' : 'microphoneOff', currentUserId); }) };
+  }, [localParticipant, activeKeybinds, pushToTalkEnabled, isDeafened, isMicrophoneEnabled, pendingControl, voiceAudioSettings, onDeafenedChange, currentUserId, toggleDeafen, toggle]);
   useEffect(() => {
     const desktop = window.fastlynoxDesktop;
     if (!desktop?.onVoiceHotkey) return undefined;
@@ -977,12 +979,22 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     const desktop = window.fastlynoxDesktop;
     if (!desktop?.setVoiceKeybinds || !desktop?.setVoiceHotkeysEnabled) return undefined;
     let active = true;
+    setEffectiveKeybinds(null);
+    setControlError('');
     void desktop.setVoiceKeybinds(keybinds)
       .then(() => desktop.setVoiceHotkeysEnabled(connectionState === 'connected'))
-      .then((registered) => {
-        if (active && connectionState === 'connected' && !registered) setControlError('Arka plan ses kısayollarından biri başka bir uygulama tarafından kullanılıyor veya desteklenmiyor.');
+      .then((result) => {
+        if (!active || connectionState !== 'connected') return;
+        const codes = { Control: 'Ctrl', Super: 'Meta', M: 'KeyM', D: 'KeyD', F9: 'F9', F10: 'F10', F8: 'F8', F7: 'F7', F6: 'F6', F5: 'F5' };
+        const effective = Object.fromEntries(Object.entries(result?.bindings || {}).map(([action, accelerator]) => [action, accelerator.split('+').map(part => codes[part] || part).join('+')]));
+        setEffectiveKeybinds(effective);
+        if (!result?.success) setControlError('Ses kısayolları kaydedilemedi. Ayarlar > Tuş atamaları bölümünden daha az kullanılan bir kombinasyon seç.');
+        else if (Object.entries(effective).some(([action, binding]) => binding !== keybinds[action])) {
+          const names = { toggleMicrophone: 'Mikrofon', toggleDeafen: 'Kulaklık' };
+          setControlError(`Bir kısayol çakıştığı için kullanılabilir yedek atandı: ${Object.entries(effective).filter(([action, binding]) => binding !== keybinds[action]).map(([action, binding]) => `${names[action] || action}: ${binding}`).join(' · ')}`);
+        }
       })
-      .catch(() => { if (active) setControlError('Arka plan ses kısayolları kaydedilemedi.'); });
+      .catch(() => { if (active) setControlError('Arka plan ses kısayolları kaydedilemedi. Ayarlar > Tuş atamaları bölümünden başka bir kombinasyon seç.'); });
     return () => { active = false; void desktop.setVoiceHotkeysEnabled(false); };
   }, [keybinds, connectionState]);
   useEffect(() => {

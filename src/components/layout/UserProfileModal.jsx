@@ -289,20 +289,20 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
         <div className="grid max-h-[92vh] grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,1.08fr)_minmax(20rem,.92fr)] lg:overflow-hidden">
         <section className="min-w-0 lg:max-h-[92vh] lg:overflow-y-auto">
         {/* Banner lives with the profile instead of stretching over the shared-info panel. */}
-        <div className="relative h-36 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,rgba(139,92,246,.45),transparent_60%),linear-gradient(120deg,#151b28,#10141e)] sm:h-40">
+        <div className="relative z-0 isolate h-36 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,rgba(139,92,246,.45),transparent_60%),linear-gradient(120deg,#151b28,#10141e)] sm:h-40">
           {getBannerUrl(profile.banner_url) && <><img src={getBannerUrl(profile.banner_url)} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full scale-110 object-cover opacity-35 blur-2xl" /><img src={getBannerUrl(profile.banner_url)} alt="" className="relative z-[1] h-full w-full object-cover" style={{ objectPosition: `${profile.banner_position_x ?? 50}% ${profile.banner_position_y ?? 50}%` }} /></>}
           <div className="absolute inset-0 bg-gradient-to-t from-[#10151f]/70 via-transparent to-black/10" />
         </div>
 
         {/* Avatar */}
-        <div className="px-5 relative">
-          <div className="absolute -top-12 left-5 h-24 w-24 rounded-[26px] border-[5px] border-[#10151f] bg-slate-800 shadow-xl">
+        <div className="relative z-20 h-0 px-5">
+          <div className="absolute -top-12 left-5 h-24 w-24 rounded-[26px] border-[5px] border-[#10151f] bg-slate-800 shadow-xl ring-1 ring-black/20">
             <img src={getAvatarUrl(profile.avatar_url, profile.username)} alt={`${profile.username} avatar`} className="h-full w-full rounded-[21px] object-cover" />
           </div>
         </div>
 
         {/* Info */}
-        <div className="px-5 pb-5 pt-14">
+        <div className="relative z-10 px-5 pb-5 pt-14">
             <div className="min-w-0">
             <h2 className="flex items-center gap-2 text-xl font-bold" style={serverRoles[0]?.gradient_color ? { backgroundImage: `linear-gradient(100deg, ${serverRoles[0].color}, ${serverRoles[0].gradient_color}, ${serverRoles[0].color})`, backgroundSize: '180% 100%', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' } : { color: serverRoles[0]?.color || '#fff' }}>
               {profile.username}

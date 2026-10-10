@@ -16,7 +16,7 @@ import { useNotificationStore } from '../../../store/useNotificationStore';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { playUiSound } from '../../../lib/uiSounds';
 
-const DEFAULT_KEYBINDS = { toggleMicrophone: 'Ctrl+Shift+KeyM', toggleDeafen: 'Ctrl+Shift+KeyD', pushToTalk: 'KeyV' };
+const DEFAULT_KEYBINDS = { toggleMicrophone: 'Ctrl+Alt+KeyM', toggleDeafen: 'Ctrl+Alt+KeyD', pushToTalk: 'KeyV' };
 
 function formatKeybind(binding) {
   if (!binding) return 'Atanmamış';

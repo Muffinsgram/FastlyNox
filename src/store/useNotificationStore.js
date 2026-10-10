@@ -288,9 +288,9 @@ export const useNotificationStore = create((set, get) => ({
         clearTimeout(readRefreshTimer);
         readRefreshTimer = setTimeout(() => void get().fetchNotifications(), 120);
       })
-      .subscribe((status) => {
+      .subscribe((status, error) => {
         if (status !== 'SUBSCRIBED') {
-          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') console.warn('Bildirim Realtime bağlantı sorunu:', status);
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') console.warn('Bildirim Realtime bağlantı sorunu:', status, error?.message || error || 'Sunucu ayrıntı göndermedi');
           return;
         }
         // Recover any notifications created while the realtime connection was
