@@ -114,6 +114,7 @@ class InputThresholdProcessor {
         numberOfInputs: 1,
         numberOfOutputs: 1,
         outputChannelCount: [1],
+        processorOptions: { sampleRate: this.context.sampleRate },
         parameterData: { thresholdDb: this.thresholdDb },
       });
       this.destination = this.context.createMediaStreamDestination();

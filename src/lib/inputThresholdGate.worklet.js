@@ -3,8 +3,11 @@ class FastlynoxInputThreshold extends AudioWorkletProcessor {
     return [{ name: 'thresholdDb', defaultValue: -100, minValue: -100, maxValue: 0, automationRate: 'k-rate' }];
   }
 
-  constructor() {
+  constructor(options) {
     super();
+    // AudioWorklet globals are not consistently exposed by every renderer;
+    // pass the owning AudioContext's rate explicitly from the main thread.
+    this.sampleRate = Number(options?.processorOptions?.sampleRate) || 48000;
     this.gain = 0;
     this.envelope = 0;
     this.hangoverFrames = 0;
@@ -26,15 +29,15 @@ class FastlynoxInputThreshold extends AudioWorkletProcessor {
     const rms = sampleCount ? Math.sqrt(sum / sampleCount) : 0;
     const frameCount = output[0]?.length || 128;
     const envelopeTime = rms > this.envelope ? 0.012 : 0.075;
-    const envelopeCoefficient = Math.exp(-frameCount / (sampleRate * envelopeTime));
+    const envelopeCoefficient = Math.exp(-frameCount / (this.sampleRate * envelopeTime));
     this.envelope = envelopeCoefficient * this.envelope + (1 - envelopeCoefficient) * rms;
     const openThreshold = threshold;
     const closeThreshold = threshold * 0.58;
     if (!this.isOpen && this.envelope >= openThreshold) {
       this.isOpen = true;
-      this.hangoverFrames = Math.round(sampleRate * 0.28);
+      this.hangoverFrames = Math.round(this.sampleRate * 0.28);
     } else if (this.isOpen && this.envelope >= closeThreshold) {
-      this.hangoverFrames = Math.round(sampleRate * 0.28);
+      this.hangoverFrames = Math.round(this.sampleRate * 0.28);
     } else if (this.hangoverFrames > 0) {
       this.hangoverFrames = Math.max(0, this.hangoverFrames - frameCount);
     } else {
@@ -42,7 +45,7 @@ class FastlynoxInputThreshold extends AudioWorkletProcessor {
     }
 
     const targetGain = this.isOpen || this.hangoverFrames > 0 ? 1 : 0;
-    const rampFrames = Math.round(sampleRate * (targetGain > this.gain ? 0.012 : 0.065));
+    const rampFrames = Math.round(this.sampleRate * (targetGain > this.gain ? 0.012 : 0.065));
     const gainStep = frameCount / Math.max(1, rampFrames);
     this.gain += Math.min(gainStep, Math.max(-gainStep, targetGain - this.gain));
     for (let channelIndex = 0; channelIndex < output.length; channelIndex += 1) {

@@ -268,6 +268,12 @@ function setSplashStatus(message) {
   void splashWindow.webContents.executeJavaScript(`document.getElementById('status').textContent=${escaped}`).catch(() => {});
 }
 
+function setSplashProgress(percent) {
+  if (!splashWindow || splashWindow.isDestroyed()) return;
+  const value = Math.max(0, Math.min(100, Number(percent) || 0));
+  void splashWindow.webContents.executeJavaScript(`(()=>{const line=document.querySelector('.line');if(!line)return;if(!document.getElementById('splash-progress-style')){const style=document.createElement('style');style.id='splash-progress-style';style.textContent='.line.determinate:after{width:var(--progress,0%);animation:none}';document.head.append(style)}line.classList.add('determinate');line.style.setProperty('--progress',${JSON.stringify(`${value}%`)})})()`).catch(() => {});
+}
+
 function finishStartup() {
   if (!startupPending) return;
   startupPending = false;
@@ -470,6 +476,8 @@ app.whenReady().then(() => {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.allowPrerelease = false;
+  // Keep NSIS blockmap updates enabled so only changed installer blocks download.
+  autoUpdater.disableDifferentialDownload = false;
   autoUpdater.on('checking-for-update', () => { publishUpdateStatus({ state: 'checking' }); setSplashStatus('Güncellemeler kontrol ediliyor…'); });
   autoUpdater.on('update-available', (info) => {
     publishUpdateStatus({ state: 'available', version: info.version });
@@ -481,7 +489,13 @@ app.whenReady().then(() => {
     }, 120_000);
   });
   autoUpdater.on('update-not-available', (info) => { publishUpdateStatus({ state: 'current', version: info.version }); setSplashStatus('Uygulama hazır.'); finishStartup(); });
-  autoUpdater.on('download-progress', (progress) => publishUpdateStatus({ state: 'downloading', version: lastUpdateStatus.version, percent: Math.round(progress.percent), transferred: progress.transferred, total: progress.total }));
+  autoUpdater.on('download-progress', (progress) => {
+    const percent = Math.round(progress.percent);
+    const bytesPerSecond = Math.max(0, Number(progress.bytesPerSecond) || 0);
+    publishUpdateStatus({ state: 'downloading', version: lastUpdateStatus.version, percent, transferred: progress.transferred, total: progress.total, bytesPerSecond });
+    setSplashProgress(percent);
+    setSplashStatus(`Güncelleme indiriliyor · %${percent} · ${Math.round(bytesPerSecond / 1024)} KB/sn`);
+  });
   autoUpdater.on('update-downloaded', (info) => {
     publishUpdateStatus({ state: 'downloaded', version: info.version });
     setSplashStatus('Güncelleme tamamlandı, yeniden başlatılıyor…');
