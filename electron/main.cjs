@@ -409,7 +409,7 @@ ipcMain.handle('fastlynox:check-update', checkForUpdates);
 ipcMain.handle('fastlynox:install-update', () => {
   if (!app.isPackaged || lastUpdateStatus.state !== 'downloaded') return false;
   quitting = true;
-  autoUpdater.quitAndInstall(false, true);
+  autoUpdater.quitAndInstall(true, true);
   return true;
 });
 ipcMain.handle('fastlynox:list-screen-sources', async () => {
@@ -485,7 +485,7 @@ app.whenReady().then(() => {
     publishUpdateStatus({ state: 'downloaded', version: info.version });
     setSplashStatus('Güncelleme tamamlandı, yeniden başlatılıyor…');
     quitting = true;
-    autoUpdater.quitAndInstall(false, true);
+    autoUpdater.quitAndInstall(true, true);
   });
   autoUpdater.on('error', (error) => {
     publishUpdateStatus({ state: 'error', message: error?.message || 'Güncelleme kontrol edilemedi.' });

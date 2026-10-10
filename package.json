@@ -1,7 +1,7 @@
 {
   "name": "fastlynox-app",
   "private": true,
-  "version": "1.0.24",
+  "version": "1.0.25",
   "description": "Fastlynox desktop chat and voice application",
   "author": "Muffinsgram",
   "type": "module",
@@ -71,9 +71,10 @@
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
+      "allowElevation": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     },
