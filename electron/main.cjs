@@ -10,6 +10,7 @@ let quitting = false;
 let startupPending = false;
 let startupTimeout;
 let selectedScreenSourceId = null;
+const startupPreferencePath = () => path.join(app.getPath('userData'), 'startup-preference.json');
 let selectedScreenShareAudio = false;
 let lastUpdateStatus = { state: 'idle' };
 
@@ -204,6 +205,16 @@ ipcMain.handle('fastlynox:window-control', (event, action) => {
 });
 
 ipcMain.handle('fastlynox:app-version', () => app.getVersion());
+ipcMain.handle('fastlynox:get-auto-start', () => app.isPackaged ? app.getLoginItemSettings({ path: process.execPath }).openAtLogin : false);
+ipcMain.handle('fastlynox:set-auto-start', (_event, enabled) => {
+  if (!app.isPackaged || typeof enabled !== 'boolean') return false;
+  try {
+    app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath, name: 'Fastlynox' });
+    fs.mkdirSync(path.dirname(startupPreferencePath()), { recursive: true });
+    fs.writeFileSync(startupPreferencePath(), JSON.stringify({ enabled }), 'utf8');
+    return app.getLoginItemSettings({ path: process.execPath }).openAtLogin === enabled;
+  } catch { return false; }
+});
 ipcMain.handle('fastlynox:is-maximized', (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() || false);
 ipcMain.handle('fastlynox:check-update', checkForUpdates);
 ipcMain.handle('fastlynox:install-update', () => {
@@ -233,6 +244,15 @@ ipcMain.on('fastlynox:renderer-ready', (event) => {
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return;
   app.setAppUserModelId('com.muffinsgram.fastlynox');
+  if (app.isPackaged) {
+    let startupPreference;
+    try { startupPreference = JSON.parse(fs.readFileSync(startupPreferencePath(), 'utf8')).enabled; } catch { startupPreference = true; }
+    try {
+      app.setLoginItemSettings({ openAtLogin: startupPreference !== false, path: process.execPath, name: 'Fastlynox' });
+      fs.mkdirSync(path.dirname(startupPreferencePath()), { recursive: true });
+      fs.writeFileSync(startupPreferencePath(), JSON.stringify({ enabled: startupPreference !== false }), 'utf8');
+    } catch (error) { console.warn('Otomatik başlatma ayarı uygulanamadı.', error); }
+  }
   app.setAsDefaultProtocolClient('fastlynox');
   createTray();
   const initialDeepLink = process.argv.find((argument) => argument.startsWith('fastlynox://'));

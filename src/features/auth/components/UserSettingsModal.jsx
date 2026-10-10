@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { AudioLines, Bell, Headphones, Mic, Pencil, ShieldCheck, UserRound, X, Accessibility, Volume2, Crown, Settings2, Palette, MessageSquareText, LockKeyhole, Play } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AudioLines, Bell, Headphones, Mic, Keyboard, Pencil, ShieldCheck, UserRound, X, Accessibility, Volume2, Crown, Settings2, Palette, MessageSquareText, LockKeyhole, Play } from 'lucide-react';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { supabase } from '../../../lib/supabase';
 import { getAvatarUrl, getBannerUrl, removeProfileImage } from '../../../lib/profileMedia';
@@ -14,6 +14,49 @@ import { ServerNotificationSettings } from './ServerNotificationSettings';
 import { useNotificationStore } from '../../../store/useNotificationStore';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { playUiSound } from '../../../lib/uiSounds';
+
+const DEFAULT_KEYBINDS = { toggleMicrophone: 'Ctrl+Shift+KeyM', toggleDeafen: 'Ctrl+Shift+KeyD', pushToTalk: 'KeyV' };
+
+function formatKeybind(binding) {
+  if (!binding) return 'Atanmamış';
+  return binding.split('+').map(part => part.startsWith('Key') ? part.slice(3) : part.startsWith('Digit') ? part.slice(5) : part).join(' + ');
+}
+
+function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalkChange, launchAtStartup, onLaunchAtStartupChange }) {
+  const [recording, setRecording] = useState('');
+  const [notice, setNotice] = useState('');
+  const [launchError, setLaunchError] = useState('');
+  const bindings = useMemo(() => ({ ...DEFAULT_KEYBINDS, ...value }), [value]);
+  useEffect(() => { if (!window.fastlynoxDesktop?.setAutoStart) return; void window.fastlynoxDesktop.setAutoStart(launchAtStartup !== false).then(ok => setLaunchError(ok ? '' : 'Otomatik başlatma ayarı uygulanamadı.')).catch(() => setLaunchError('Otomatik başlatma ayarı uygulanamadı.')); }, [launchAtStartup]);
+  useEffect(() => {
+    if (!recording) return undefined;
+    const capture = event => {
+      event.preventDefault(); event.stopPropagation();
+      if (event.key === 'Escape') { setRecording(''); return; }
+      if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return;
+      const chord = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta', event.code].filter(Boolean).join('+');
+      const conflict = Object.entries(bindings).find(([key, binding]) => key !== recording && binding === chord);
+      if (conflict) { setNotice('Bu tuş başka bir işlemde kullanılıyor.'); return; }
+      onChange({ ...bindings, [recording]: chord }); setRecording(''); setNotice('Tuş ataması kaydedildi.');
+    };
+    window.addEventListener('keydown', capture, true);
+    return () => window.removeEventListener('keydown', capture, true);
+  }, [recording, onChange, bindings]);
+  const rows = [
+    ['toggleMicrophone', 'Mikrofonu aç / kapat', 'Ses odasındayken mikrofon durumunu değiştir.'],
+    ['toggleDeafen', 'Kulaklığı aç / kapat', 'Gelen sesleri ve mikrofonu kapatıp aç.'],
+    ['pushToTalk', 'Bas-konuş', 'Tuşa basılıyken konuş; bırakınca mikrofonu eski durumuna döndür.'],
+  ];
+  return <section className="max-w-2xl space-y-3">
+    <div className="rounded-2xl border border-violet-200/10 bg-violet-300/[0.04] p-4 text-xs leading-5 text-slate-300">Bir atamaya tıkla, ardından istediğin tuş bileşimini bas. <kbd className="rounded border border-white/10 bg-black/20 px-1.5 py-0.5">Esc</kbd> ile vazgeçebilirsin.</div>
+    <PreferenceRow icon={<Mic className="h-4 w-4" />} title="Bas-konuş modu" description="Mikrofon, atadığın tuşa basılı tuttuğun sürece açılır." checked={Boolean(pushToTalkEnabled)} onChange={onPushToTalkChange} />
+    {rows.map(([key, title, description]) => <div key={key} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><span><span className="block text-sm font-semibold text-white">{title}</span><span className="mt-1 block text-xs text-slate-400">{description}</span></span><button type="button" onClick={() => { setNotice(''); setRecording(key); }} className={`min-w-36 rounded-xl border px-3 py-2 text-xs font-semibold transition ${recording === key ? 'border-violet-200/30 bg-violet-300/15 text-violet-100 animate-pulse' : 'border-white/10 bg-white/[0.05] text-slate-200 hover:bg-white/10'}`}>{recording === key ? 'Bir tuşa bas…' : formatKeybind(bindings[key])}</button></div>)}
+    <PreferenceRow icon={<Settings2 className="h-4 w-4" />} title="Bilgisayar açılınca başlat" description="Fastlynox Windows oturum açılışında çalışır." checked={launchAtStartup !== false} onChange={onLaunchAtStartupChange} />
+    {launchError && <p role="status" className="px-2 text-xs text-rose-200">{launchError}</p>}
+    {notice && <p role="status" className="px-2 text-xs text-violet-200">{notice}</p>}
+    {!window.fastlynoxDesktop && <p className="px-2 text-[10px] text-slate-500">Masaüstü otomatik başlatma yalnızca kurulu uygulamada kullanılabilir.</p>}
+  </section>;
+}
 
 export function UserSettingsModal({ onClose }) {
   const { user, session, signOut, refreshProfile } = useAuthStore();
@@ -40,6 +83,20 @@ export function UserSettingsModal({ onClose }) {
   const [preferences, setPreferences] = useState(() => getAppPreferences(user?.id));
   const [notificationPermission, setNotificationPermission] = useState(() => typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
   const refreshNotificationCounts = useNotificationStore((state) => state.fetchNotifications);
+  useEffect(() => {
+    let active = true;
+    void window.fastlynoxDesktop?.getAutoStart?.().then(enabled => {
+      if (!active || typeof enabled !== 'boolean') return;
+      setPreferences(current => ({ ...current, launchAtStartup: enabled }));
+      const stored = getAppPreferences(user?.id);
+      saveAppPreferences(user?.id, { ...stored, launchAtStartup: enabled });
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [user?.id]);
+  useEffect(() => {
+    if (activeTab !== 'keybinds' || !window.fastlynoxDesktop?.setAutoStart) return;
+    void window.fastlynoxDesktop.setAutoStart(preferences.launchAtStartup !== false).catch(() => {});
+  }, [activeTab, preferences.launchAtStartup]);
 
   const enableDesktopNotifications = async () => {
     if (typeof Notification === 'undefined') { setNotificationPermission('unsupported'); return; }
@@ -110,12 +167,13 @@ export function UserSettingsModal({ onClose }) {
     ['account', 'Güvenlik', <ShieldCheck key="security-icon" className="h-4 w-4" />],
     ['preferences', 'Tercihler', <Accessibility key="preferences-icon" className="h-4 w-4" />],
     ['sound', 'Ses', <AudioLines key="sound-icon" className="h-4 w-4" />],
+    ['keybinds', 'Tuş atamaları', <Keyboard key="keybinds-icon" className="h-4 w-4" />],
     ['privacy', 'Gizlilik', <LockKeyhole key="privacy-icon" className="h-4 w-4" />],
     ['plus', 'Fastlynox Plus', <Crown key="plus-icon" className="h-4 w-4" />],
     ...(isPlatformStaff ? [['admin', 'Yönetim', <Settings2 key="admin-icon" className="h-4 w-4" />]] : []),
   ];
-  const tabTitle = { profile: 'Profilini kişiselleştir', account: 'Hesap güvenliği', preferences: 'Bildirim ve görünüm', sound: 'Ses ayarları', privacy: 'Gizlilik ve güvenlik', plus: 'Fastlynox Plus', admin: 'Platform yönetimi' }[activeTab];
-  const tabDescription = { profile: 'Profil fotoğrafını, banner’ını ve kendini nasıl tanıttığını düzenle.', account: 'E-posta adresini ve parolanı yönet.', preferences: 'Bildirim yoğunluğunu ve animasyonları kendine göre ayarla.', sound: 'Mikrofonunu, ses çıkışını ve uygulama seslerini yönet.', privacy: 'DM izinlerini, görünürlüğünü ve engellediğin hesapları yönet.', plus: 'Planını, özelliklerini ve yükleme sınırlarını görüntüle.', admin: 'Kullanıcıları, rozetleri, planları ve yükleme sınırlarını yönet.' }[activeTab];
+  const tabTitle = { profile: 'Profilini kişiselleştir', account: 'Hesap güvenliği', preferences: 'Bildirim ve görünüm', sound: 'Ses ayarları', keybinds: 'Tuş atamaları', privacy: 'Gizlilik ve güvenlik', plus: 'Fastlynox Plus', admin: 'Platform yönetimi' }[activeTab];
+  const tabDescription = { profile: 'Profil fotoğrafını, banner’ını ve kendini nasıl tanıttığını düzenle.', account: 'E-posta adresini ve parolanı yönet.', preferences: 'Bildirim yoğunluğunu ve animasyonları kendine göre ayarla.', sound: 'Mikrofonunu, ses çıkışını ve uygulama seslerini yönet.', keybinds: 'Mikrofon, kulaklık ve bas-konuş kontrollerine kısayol ata.', privacy: 'DM izinlerini, görünürlüğünü ve engellediğin hesapları yönet.', plus: 'Planını, özelliklerini ve yükleme sınırlarını görüntüle.', admin: 'Kullanıcıları, rozetleri, planları ve yükleme sınırlarını yönet.' }[activeTab];
 
   return (
     <div className="fixed inset-0 z-[200] flex animate-in fade-in duration-200 bg-[#070a10]/80 p-3 backdrop-blur-xl sm:p-6" role="dialog" aria-modal="true" aria-labelledby="settings-title">
@@ -182,6 +240,15 @@ export function UserSettingsModal({ onClose }) {
               <PreferenceRow icon={<Volume2 className="h-4 w-4" />} title="Arayüz ses efektleri" description="Ses odasına girme, ayrılma, geri dönme ve arama seslerini etkinleştir." checked={preferences.soundEffects} onChange={(value) => updatePreference('soundEffects', value)} />
               <p className="px-1 pt-2 text-xs text-slate-500">Ses ve cihaz tercihleri bu cihazda saklanır.</p>
             </section>
+          ) : activeTab === 'keybinds' ? (
+            <KeybindSettingsPanel
+              value={preferences.keybinds || {}}
+              onChange={value => updatePreference('keybinds', value)}
+              pushToTalkEnabled={preferences.pushToTalkEnabled}
+              onPushToTalkChange={value => updatePreference('pushToTalkEnabled', value)}
+              launchAtStartup={preferences.launchAtStartup}
+              onLaunchAtStartupChange={value => updatePreference('launchAtStartup', value)}
+            />
           ) : activeTab === 'plus' ? (
             <FastlynoxPlusPanel userId={user?.id} />
           ) : activeTab === 'privacy' ? (
@@ -203,7 +270,70 @@ function PreferenceRow({ icon, title, description, checked, onChange }) {
 
 function VoiceSettingsPanel({ value, onChange }) {
   const [devices, setDevices] = useState({ audioinput: [], audiooutput: [] });
-  const settings = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'rnnoise', autoGainControl: true, voiceIsolation: false, ...value };
+  const [micTest, setMicTest] = useState({ active: false, level: 0, error: '' });
+  const micTestRef = useRef(null);
+  const finishMicTestRef = useRef(() => {});
+  const settings = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, ...value };
+
+  const finishMicTest = useCallback((session = micTestRef.current) => {
+    if (!session || micTestRef.current !== session) return;
+    micTestRef.current = null;
+    window.clearInterval(session.interval);
+    window.clearTimeout(session.timeout);
+    session.stream?.getTracks().forEach(track => track.stop());
+    try { session.source?.disconnect(); } catch { /* Already disconnected. */ }
+    try { session.analyser?.disconnect(); } catch { /* Already disconnected. */ }
+    if (session.context && session.context.state !== 'closed') void session.context.close().catch(() => {});
+    setMicTest(current => ({ ...current, active: false, level: 0 }));
+    window.dispatchEvent(new CustomEvent('fastlynox:microphone-test', { detail: { active: false } }));
+  }, []);
+  useEffect(() => { finishMicTestRef.current = finishMicTest; }, [finishMicTest]);
+  useEffect(() => () => finishMicTestRef.current(), []);
+
+  const startMicTest = useCallback(async () => {
+    if (micTestRef.current) { finishMicTestRef.current(); return; }
+    const session = { stream: null, context: null, source: null, analyser: null, interval: null, timeout: null };
+    micTestRef.current = session;
+    setMicTest({ active: true, level: 0, error: '' });
+    window.dispatchEvent(new CustomEvent('fastlynox:microphone-test', { detail: { active: true } }));
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('Bu cihazda mikrofon erişimi kullanılamıyor.');
+      const audio = {
+        deviceId: settings.inputDeviceId ? { exact: settings.inputDeviceId } : undefined,
+        echoCancellation: Boolean(settings.echoCancellation),
+        noiseSuppression: Boolean(settings.noiseSuppression),
+        autoGainControl: Boolean(settings.autoGainControl),
+      };
+      const stream = await navigator.mediaDevices.getUserMedia({ audio });
+      if (micTestRef.current !== session) { stream.getTracks().forEach(track => track.stop()); return; }
+      session.stream = stream;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) throw new Error('Mikrofon seviye ölçeri bu cihazda desteklenmiyor.');
+      session.context = new AudioContextClass();
+      await session.context.resume();
+      session.source = session.context.createMediaStreamSource(stream);
+      session.analyser = session.context.createAnalyser();
+      session.analyser.fftSize = 512;
+      session.source.connect(session.analyser);
+      const samples = new Float32Array(session.analyser.fftSize);
+      session.interval = window.setInterval(() => {
+        if (micTestRef.current !== session) return;
+        session.analyser.getFloatTimeDomainData(samples);
+        let sum = 0;
+        for (const sample of samples) sum += sample * sample;
+        const rms = Math.sqrt(sum / samples.length);
+        const level = Math.min(100, Math.round(Math.max(0, (20 * Math.log10(rms || 0.00001) + 60) * 1.65)));
+        setMicTest(current => current.level === level ? current : { ...current, level });
+      }, 80);
+      session.timeout = window.setTimeout(() => finishMicTest(session), 10000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Mikrofon testi başlatılamadı.';
+      if (micTestRef.current === session) {
+        finishMicTest(session);
+        setMicTest({ active: false, level: 0, error: message });
+      }
+    }
+  }, [finishMicTest, settings.inputDeviceId, settings.echoCancellation, settings.noiseSuppression, settings.autoGainControl]);
 
   useEffect(() => {
     let active = true;
@@ -231,10 +361,19 @@ function VoiceSettingsPanel({ value, onChange }) {
       <label><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400"><Mic className="mr-1 inline h-3 w-3" />Mikrofon</span><AnimatedSelect ariaLabel="Varsayılan mikrofon" value={settings.inputDeviceId} onValueChange={deviceId => update('inputDeviceId', deviceId)} options={makeOptions('audioinput')} className="w-full" /></label>
       <label><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400"><Headphones className="mr-1 inline h-3 w-3" />Ses çıkışı</span><AnimatedSelect ariaLabel="Varsayılan hoparlör" value={settings.outputDeviceId} onValueChange={deviceId => update('outputDeviceId', deviceId)} options={makeOptions('audiooutput')} className="w-full" /></label>
     </div>
-    <label className="mt-3 block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor} onValueChange={value => update('noiseProcessor', value)} options={[{ value: 'rnnoise', label: 'RNNoise · gelişmiş gürültü engelleme' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} className="w-full" /></label>
+    <label className="mt-3 block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor} onValueChange={value => update('noiseProcessor', value)} options={[{ value: 'krisp', label: 'Krisp · en güçlü filtre' }, { value: 'rnnoise', label: 'RNNoise · cihazda, çevrim dışı' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} className="w-full" /></label>
     <div className="mt-3 grid gap-2 sm:grid-cols-2">
       {[["echoCancellation", 'Yankı engelleme', 'Hoparlör yankısını azalt'], ["noiseSuppression", 'Gürültü engelleme', 'Arka plan sesini azalt'], ["autoGainControl", 'Ses seviyesini dengele', 'Mikrofon seviyesini otomatik ayarla']].map(([key, title, description]) => <PreferenceRow key={key} icon={<AudioLines className="h-4 w-4" />} title={title} description={description} checked={Boolean(settings[key])} onChange={checked => update(key, checked)} />)}
     </div>
-    <p className="mt-3 text-[10px] leading-4 text-slate-500">RNNoise cihazında çalışarak klavye, fan ve ortam gürültüsünü azaltır. Açık ses odasında tercihler anında uygulanır. Müzik için gürültü engellemeyi kapatabilirsin.</p>
+    <div className="mt-3 rounded-2xl border border-white/[0.08] bg-[#0b1019]/70 p-3.5">
+      <div className="flex items-center gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-300/[0.09] text-cyan-100"><Mic className="h-4 w-4" /></span>
+        <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-slate-100">Mikrofon testi</p><p className="mt-1 text-[10px] leading-4 text-slate-400">Konuşarak giriş seviyeni kontrol et. Ses kaydedilmez ve hoparlöre verilmez.</p></div>
+        <button type="button" onClick={() => void startMicTest()} className={`shrink-0 rounded-xl px-3 py-2 text-[11px] font-semibold transition ${micTest.active ? 'border border-rose-300/20 bg-rose-400/10 text-rose-100 hover:bg-rose-400/15' : 'bg-cyan-200/10 text-cyan-100 hover:bg-cyan-200/15'}`}>{micTest.active ? 'Testi bitir' : 'Test et'}</button>
+      </div>
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.07]" role="meter" aria-label="Mikrofon giriş seviyesi" aria-valuemin={0} aria-valuemax={100} aria-valuenow={micTest.level}><div className={`h-full rounded-full transition-[width] duration-100 ${micTest.level > 82 ? 'bg-amber-300' : 'bg-gradient-to-r from-cyan-400 to-emerald-300'}`} style={{ width: `${micTest.level}%` }} /></div>
+      <div className="mt-1.5 flex justify-between text-[9px] text-slate-500"><span>{micTest.error || (micTest.active ? 'Konuş; test 10 saniye içinde otomatik biter.' : 'Hazır')}</span><span>{micTest.active ? `${micTest.level}%` : ''}</span></div>
+    </div>
+    <p className="mt-3 text-[10px] leading-4 text-slate-500">Krisp, uyumlu LiveKit Cloud bağlantısında daha güçlü filtre uygular. İlk kullanımda model indirilir; desteklenmiyorsa RNNoise yedeğine geçer.</p>
   </section>;
 }

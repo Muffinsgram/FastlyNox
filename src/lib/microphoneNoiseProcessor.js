@@ -91,8 +91,30 @@ export function syncNoiseProcessor(track, settings) {
   const operation = (updates.get(track) || Promise.resolve()).catch(() => {}).then(async () => {
     if (track.mediaStreamTrack.readyState === 'ended') return;
     const enabled = settings.noiseSuppression && settings.noiseProcessor !== 'standard';
-    if (enabled && !track.getProcessor()) await track.setProcessor(new MicrophoneNoiseProcessor());
-    if (!enabled && track.getProcessor()?.name === 'fastlynox-rnnoise') await track.stopProcessor();
+    const current = track.getProcessor();
+    if (!enabled) {
+      if (current?.name === 'fastlynox-rnnoise' || current?.name === 'livekit-noise-filter') await track.stopProcessor();
+      return;
+    }
+    const target = settings.noiseProcessor === 'krisp' ? 'livekit-noise-filter' : 'fastlynox-rnnoise';
+    if (current?.name === target) return;
+    if (current) await track.stopProcessor();
+    if (target === 'livekit-noise-filter') {
+      try {
+        const { KrispNoiseFilter, isKrispNoiseFilterSupported } = await import('@livekit/krisp-noise-filter');
+        if (!isKrispNoiseFilterSupported()) throw new Error('Bu cihaz Krisp filtresini desteklemiyor.');
+        const processor = KrispNoiseFilter({ quality: 'high', useBVC: false, bufferOverflowMs: 140, bufferDropMs: 300, onBufferDrop: warnFallback });
+        await track.setProcessor(processor);
+        await processor.setEnabled(true);
+        window.dispatchEvent(new CustomEvent('fastlynox:noise-quality', { detail: 'krisp' }));
+        return;
+      } catch (error) {
+        console.warn('Krisp etkinleştirilemedi; RNNoise yedeği kullanılıyor.', error);
+        window.dispatchEvent(new CustomEvent('fastlynox:noise-fallback', { detail: 'rnnoise' }));
+      }
+    }
+    await track.setProcessor(new MicrophoneNoiseProcessor());
+    window.dispatchEvent(new CustomEvent('fastlynox:noise-quality', { detail: 'rnnoise' }));
   });
   updates.set(track, operation);
   return operation;

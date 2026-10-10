@@ -414,3 +414,14 @@ html.electron-desktop .macos-shell {
   width: 100%;
   height: 100%;
 }
+
+.voice-mini-dock,
+.voice-mini-dock [data-lk-theme="default"],
+.voice-mini-dock .lk-room-container,
+.voice-mini-dock .lk-control-bar {
+  background-color: #11151e !important;
+  background-image: none !important;
+  --lk-bg: #11151e;
+  --lk-control-bg: transparent;
+}
+.voice-mini-dock [data-lk-theme="default"] { border-radius: inherit; }

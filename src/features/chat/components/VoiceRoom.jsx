@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useRef, useState } from 'react';
+import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
@@ -17,7 +17,7 @@ import { getVoicePlayback, normalizeVoiceVolume } from '../../../lib/voicePlayba
 import { getScreenShareCaptureOptions, getScreenSharePublishOptions, supportsOwnAudioExclusion } from '../../../lib/screenCapture';
 import { syncNoiseProcessor } from '../../../lib/microphoneNoiseProcessor';
 
-const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'rnnoise', autoGainControl: true, voiceIsolation: false };
+const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false };
 
 function getAudioCaptureOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
   return {
@@ -461,12 +461,12 @@ function VoiceAudioSettings({ currentUserId }) {
   const connectionState = useConnectionState();
   const localMicrophoneTrack = microphoneTrack?.track;
   useEffect(() => {
-    if (!localMicrophoneTrack || connectionState !== 'connected') return;
+    if (!localMicrophoneTrack || connectionState !== 'connected' || !isMicrophoneEnabled) return;
     void syncNoiseProcessor(localMicrophoneTrack, { noiseSuppression: settings.noiseSuppression, noiseProcessor: settings.noiseProcessor }).catch(() => setMessage('Gelişmiş filtre uygulanamadı; standart filtre kullanılacak.'));
-  }, [localMicrophoneTrack, connectionState, settings.noiseSuppression, settings.noiseProcessor]);
+  }, [localMicrophoneTrack, connectionState, isMicrophoneEnabled, settings.noiseSuppression, settings.noiseProcessor]);
 
   useEffect(() => {
-    const notify = () => setMessage('Gelişmiş filtre açılamadı; standart gürültü engelleme kullanılıyor.');
+    const notify = event => setMessage(event?.detail === 'rnnoise' ? 'Krisp kullanılamadı; RNNoise yedeği etkin.' : 'Gelişmiş filtre açılamadı; standart gürültü engelleme kullanılıyor.');
     window.addEventListener('fastlynox:noise-fallback', notify);
     return () => window.removeEventListener('fastlynox:noise-fallback', notify);
   }, []);
@@ -523,7 +523,7 @@ function VoiceAudioSettings({ currentUserId }) {
       settingsRef.current = next;
       setSettings(next);
       const microphoneTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-      if (microphoneTrack?.restartTrack) {
+      if (isMicrophoneEnabled && microphoneTrack?.restartTrack) {
         const apply = async () => {
           if (previous.audioQuality !== next.audioQuality) {
             await localParticipant.unpublishTrack(microphoneTrack, false);
@@ -532,6 +532,7 @@ function VoiceAudioSettings({ currentUserId }) {
           }
           const captureKeys = ['inputDeviceId', 'echoCancellation', 'noiseSuppression', 'noiseProcessor', 'autoGainControl', 'voiceIsolation'];
           if (captureKeys.some(key => previous[key] !== next[key])) await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
+          if (previous.noiseSuppression !== next.noiseSuppression || previous.noiseProcessor !== next.noiseProcessor) await syncNoiseProcessor(microphoneTrack, next);
         };
         apply().catch((error) => setMessage(error instanceof Error ? error.message : 'Mikrofon ayarı uygulanamadı.'));
       }
@@ -550,8 +551,9 @@ function VoiceAudioSettings({ currentUserId }) {
     setBusy(key);
     try {
       const microphoneTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-      if (microphoneTrack?.restartTrack) {
+      if (isMicrophoneEnabled && microphoneTrack?.restartTrack) {
         await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
+        await syncNoiseProcessor(microphoneTrack, next);
       }
       persist(next);
       setMessage(isMicrophoneEnabled ? 'Mikrofon ayarı uygulandı.' : 'Mikrofonu açtığında ayar uygulanacak.');
@@ -614,13 +616,13 @@ function VoiceAudioSettings({ currentUserId }) {
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Giden ses kalitesi</span><AnimatedSelect ariaLabel="Mikrofon yayın kalitesi" value={settings.audioQuality} onValueChange={value => void updateAudioQuality(value)} options={[{ value: 'speech', label: 'Konuşma · düşük gecikme' }, { value: 'high', label: 'Yüksek kalite · daha çok internet' }]} disabled={busy !== ''} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Mikrofon girişi</span><AnimatedSelect ariaLabel="Mikrofon girişi" value={settings.inputDeviceId} onValueChange={value => void changeDevice('audioinput', value)} options={inputOptions} disabled={busy !== ''} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hoparlör / kulaklık</span><AnimatedSelect ariaLabel="Hoparlör veya kulaklık çıkışı" value={settings.outputDeviceId} onValueChange={value => void changeDevice('audiooutput', value)} options={outputOptions} disabled={busy !== '' || !supportsAudioOutputSelection()} className="w-full" /></label>
-        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor || 'rnnoise'} onValueChange={value => void updateCaptureSetting('noiseProcessor', value)} options={[{ value: 'rnnoise', label: 'RNNoise · gelişmiş gürültü engelleme' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} disabled={busy !== ''} className="w-full" /></label>
+        <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor || 'rnnoise'} onValueChange={value => void updateCaptureSetting('noiseProcessor', value)} options={[{ value: 'krisp', label: 'Krisp · en güçlü filtre' }, { value: 'rnnoise', label: 'RNNoise · cihazda, çevrim dışı' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} disabled={busy !== ''} className="w-full" /></label>
         <div className="border-t border-white/[0.07] pt-2">
           {[["echoCancellation", 'Yankı engelleme', 'Hoparlörden mikrofona dönen sesi azaltır.'], ["noiseSuppression", 'Gürültü engelleme', 'Fan ve ortam gürültüsünü azaltır.'], ["autoGainControl", 'Otomatik mikrofon seviyesi', 'Konuşma sesini dengeler.']].map(([key, label, description]) => <div key={key} className="flex items-center justify-between gap-3 rounded-xl px-2 py-2 transition hover:bg-white/[0.04]"><span><span className="block text-xs font-medium text-slate-200">{label}</span><span className="mt-0.5 block text-[9px] leading-4 text-slate-500">{description}</span></span><button type="button" role="switch" aria-checked={settings[key]} aria-label={label} disabled={busy !== ''} onClick={() => void updateCaptureSetting(key, !settings[key])} className={`relative h-6 w-11 shrink-0 rounded-full border p-[3px] transition ${settings[key] ? 'border-cyan-200/40 bg-cyan-400/50' : 'border-white/10 bg-slate-800'} disabled:opacity-50`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${settings[key] ? 'translate-x-5' : ''}`} /></button></div>)}
         </div>
       </div>
       {message && <p role="status" className={`mt-3 rounded-xl border px-3 py-2 text-[10px] leading-4 ${message.includes('uygulanamadı') || message.includes('değiştirilemedi') || message.includes('desteklemiyor') || message.includes('bulunamadı') ? 'border-rose-300/15 bg-rose-400/[0.05] text-rose-200' : 'border-emerald-300/10 bg-emerald-400/[0.05] text-emerald-200'}`}>{message}</p>}
-      <p className="mt-3 text-[9px] leading-4 text-slate-600">RNNoise cihazında çalışır; klavye, fan ve ortam gürültüsünü azaltır. Müzik paylaşırken filtreyi kapatabilirsin.</p>
+      <p className="mt-3 text-[9px] leading-4 text-slate-600">Krisp, LiveKit Cloud ve uyumlu cihazlarda yüksek kaliteli filtre uygular. Olmazsa RNNoise yedeğine geçer. Müzik için filtreyi kapatabilirsin.</p>
     </section>}
   </div>;
 }
@@ -676,8 +678,19 @@ function ScreenSourcePicker({ sources, settings, onSettingChange, pending, onCho
   </div>, document.body);
 }
 
+function matchesVoiceKeybind(event, binding) {
+  if (!binding) return false;
+  const expected = binding.split('+');
+  return expected.at(-1) === event.code
+    && expected.includes('Ctrl') === event.ctrlKey
+    && expected.includes('Alt') === event.altKey
+    && expected.includes('Shift') === event.shiftKey
+    && expected.includes('Meta') === event.metaKey;
+}
+
 function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, expanded = false, onToggleExpand }) {
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } = useLocalParticipant();
+  const connectionState = useConnectionState();
   const [isDeafened, setIsDeafened] = useState(false);
   const [pendingControl, setPendingControl] = useState('');
   const [controlError, setControlError] = useState('');
@@ -686,7 +699,18 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const [screenSources, setScreenSources] = useState([]);
   const [screenSourcePickerOpen, setScreenSourcePickerOpen] = useState(false);
   const currentUserId = useAuthStore((state) => state.user?.id);
+  const [voiceKeyPreferences, setVoiceKeyPreferences] = useState(() => getAppPreferences(currentUserId));
+  useEffect(() => {
+    const refresh = event => { if (!event?.detail?.userId || event.detail.userId === currentUserId) setVoiceKeyPreferences(getAppPreferences(currentUserId)); };
+    window.addEventListener('fastcord:preferences-updated', refresh);
+    return () => window.removeEventListener('fastcord:preferences-updated', refresh);
+  }, [currentUserId]);
   const voiceAudioSettings = getAppPreferences(currentUserId).voiceAudioSettings || DEFAULT_VOICE_AUDIO_SETTINGS;
+  useEffect(() => {
+    if (connectionState === 'connected' && voiceKeyPreferences.pushToTalkEnabled && isMicrophoneEnabled) {
+      void localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings));
+    }
+  }, [connectionState, voiceKeyPreferences.pushToTalkEnabled, localParticipant, isMicrophoneEnabled, voiceAudioSettings]);
   const [screenShareSettings, setScreenShareSettings] = useState(() => ({ quality: '1080', frameRate: 30, audio: false, ...(getAppPreferences(currentUserId).screenShareSettings || {}) }));
 
   const updateScreenShareSettings = (key, value) => {
@@ -696,14 +720,14 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     saveAppPreferences(currentUserId, { ...preferences, screenShareSettings: next });
   };
 
-  const toggle = async (control, action) => {
+  const toggle = useCallback(async (control, action) => {
     if (pendingControl) return;
     setPendingControl(control);
     setControlError('');
     try { await action(); }
     catch (error) { setControlError(error instanceof Error ? error.message : 'Medya aygıtı değiştirilemedi.'); }
     finally { setPendingControl(''); }
-  };
+  }, [pendingControl]);
 
   const startScreenShare = async () => {
     if (isScreenShareEnabled) {
@@ -748,7 +772,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     }
   };
 
-  const toggleDeafen = () => toggle('deafen', async () => {
+  const toggleDeafen = useCallback(() => toggle('deafen', async () => {
     if (isDeafened) {
       await localParticipant.setMicrophoneEnabled(microphoneBeforeDeafen, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings));
       setIsDeafened(false);
@@ -759,10 +783,85 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     await localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings));
     setIsDeafened(true);
     onDeafenedChange(true);
-  });
+  }), [toggle, isDeafened, microphoneBeforeDeafen, localParticipant, voiceAudioSettings, isMicrophoneEnabled, onDeafenedChange]);
+
+  const keybinds = useMemo(() => ({ toggleMicrophone: 'Ctrl+Shift+KeyM', toggleDeafen: 'Ctrl+Shift+KeyD', pushToTalk: 'KeyV', ...(voiceKeyPreferences.keybinds || {}) }), [voiceKeyPreferences.keybinds]);
+  const pushToTalkEnabled = Boolean(voiceKeyPreferences.pushToTalkEnabled);
+  const voiceInputRef = useRef({});
+  const pushHeldRef = useRef(false);
+  const pushEnablePromiseRef = useRef(Promise.resolve());
+  const pushRestoreMicRef = useRef(false);
+  const microphoneTestActiveRef = useRef(false);
+  const microphoneTestRestoreRef = useRef(false);
+  const microphoneTestDeafenAttemptRef = useRef(false);
+  const deafenActionRef = useRef(toggleDeafen);
+  useLayoutEffect(() => {
+    deafenActionRef.current = toggleDeafen;
+    voiceInputRef.current = { localParticipant, keybinds, pushToTalkEnabled, isDeafened, isMicrophoneEnabled, pendingControl, voiceAudioSettings, onDeafenedChange };
+  }, [localParticipant, keybinds, pushToTalkEnabled, isDeafened, isMicrophoneEnabled, pendingControl, voiceAudioSettings, onDeafenedChange, toggleDeafen]);
+  useEffect(() => {
+    const handleMicrophoneTest = event => {
+      const active = Boolean(event.detail?.active);
+      if (active === microphoneTestActiveRef.current) return;
+      microphoneTestActiveRef.current = active;
+      if (active) {
+        microphoneTestRestoreRef.current = !voiceInputRef.current.isDeafened;
+        microphoneTestDeafenAttemptRef.current = false;
+      }
+    };
+    window.addEventListener('fastlynox:microphone-test', handleMicrophoneTest);
+    return () => window.removeEventListener('fastlynox:microphone-test', handleMicrophoneTest);
+  }, []);
+  useEffect(() => {
+    if (pendingControl) return;
+    if (microphoneTestActiveRef.current && !isDeafened && !microphoneTestDeafenAttemptRef.current) {
+      microphoneTestDeafenAttemptRef.current = true;
+      deafenActionRef.current();
+    } else if (!microphoneTestActiveRef.current && microphoneTestRestoreRef.current) {
+      if (isDeafened) deafenActionRef.current();
+      else microphoneTestRestoreRef.current = false;
+    }
+  }, [isDeafened, pendingControl]);
+  useEffect(() => {
+    const isEditable = target => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+    const releasePushToTalk = () => {
+      if (!pushHeldRef.current) return;
+      pushHeldRef.current = false;
+      const state = voiceInputRef.current;
+      if (!pushRestoreMicRef.current) {
+        void Promise.resolve(pushEnablePromiseRef.current).catch(() => {}).then(() => state.localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings))).catch(() => {});
+      }
+    };
+    const handleKeyDown = event => {
+      const state = voiceInputRef.current;
+      if (event.repeat || isEditable(event.target)) return;
+      if (matchesVoiceKeybind(event, state.keybinds.toggleMicrophone)) {
+        event.preventDefault();
+        if (!state.pendingControl && !state.isDeafened && !state.pushToTalkEnabled) void state.localParticipant.setMicrophoneEnabled(!state.isMicrophoneEnabled, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).catch(() => {});
+      } else if (matchesVoiceKeybind(event, state.keybinds.toggleDeafen)) {
+        event.preventDefault();
+        deafenActionRef.current();
+      } else if (state.pushToTalkEnabled && matchesVoiceKeybind(event, state.keybinds.pushToTalk) && !state.isDeafened && !state.pendingControl) {
+        event.preventDefault();
+        if (pushHeldRef.current) return;
+        pushHeldRef.current = true;
+        pushRestoreMicRef.current = state.pushToTalkEnabled ? false : state.isMicrophoneEnabled;
+        if (!state.isMicrophoneEnabled) {
+          pushEnablePromiseRef.current = state.localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).catch(error => { pushHeldRef.current = false; throw error; });
+          void pushEnablePromiseRef.current.catch(() => {});
+        }
+      }
+    };
+    const handleKeyUp = event => { if (pushHeldRef.current && event.code === voiceInputRef.current.keybinds.pushToTalk?.split('+').at(-1)) releasePushToTalk(); };
+    const handleBlur = () => releasePushToTalk();
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); window.removeEventListener('blur', handleBlur); releasePushToTalk(); };
+  }, [keybinds.toggleMicrophone, keybinds.toggleDeafen, keybinds.pushToTalk, pushToTalkEnabled]);
 
   const controls = [
-    { key: 'mic', label: isMicrophoneEnabled ? 'Mikrofonu kapat' : 'Mikrofonu aç', active: isMicrophoneEnabled, icon: isMicrophoneEnabled ? Mic : MicOff, action: () => toggle('mic', () => localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings))) },
+    { key: 'mic', label: pushToTalkEnabled ? 'Bas-konuş etkin · atanmış tuşla konuş' : isMicrophoneEnabled ? 'Mikrofonu kapat' : 'Mikrofonu aç', active: isMicrophoneEnabled, icon: isMicrophoneEnabled ? Mic : MicOff, action: () => toggle('mic', () => localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings))) },
     { key: 'deafen', label: isDeafened ? 'Kulaklığı aç' : 'Kulaklığı kapat', active: isDeafened, icon: isDeafened ? HeadphoneOff : Headphones, action: toggleDeafen },
     { key: 'camera', label: isCameraEnabled ? 'Kamerayı kapat' : 'Kamerayı aç', active: isCameraEnabled, icon: isCameraEnabled ? CameraOff : Camera, action: () => toggle('camera', () => localParticipant.setCameraEnabled(!isCameraEnabled)) },
     { key: 'screen', label: isScreenShareEnabled ? 'Ekran paylaşımını durdur' : 'Ekran paylaş', active: isScreenShareEnabled, icon: MonitorUp, action: startScreenShare },
@@ -779,7 +878,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
               ? active ? 'border-violet-300/25 bg-violet-400/15 text-violet-100' : 'border-white/10 bg-white/[0.07] text-white hover:bg-white/10'
               : active ? 'border-white/10 bg-white/[0.07] text-white hover:bg-white/10' : 'border-rose-300/15 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20';
           return (
-          <button key={key} type="button" aria-label={label} aria-pressed={active} aria-busy={pendingControl === key} title={label} disabled={(pendingControl !== '' && pendingControl !== key) || (key === 'mic' && isDeafened)} onClick={action} className={`group grid place-items-center rounded-xl border transition-all disabled:opacity-50 ${compact ? 'h-9 w-9' : 'h-11 w-12'} ${tone}`}>
+          <button key={key} type="button" aria-label={label} aria-pressed={active} aria-busy={pendingControl === key} title={label} disabled={(pendingControl !== '' && pendingControl !== key) || (key === 'mic' && (isDeafened || pushToTalkEnabled))} onClick={action} className={`group grid place-items-center rounded-xl border transition-all disabled:opacity-50 ${compact ? 'h-9 w-9' : 'h-11 w-12'} ${tone}`}>
             <Icon className="h-[18px] w-[18px] transition-transform group-hover:scale-105" />
           </button>
           );
@@ -865,7 +964,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
     ? 'absolute top-0 bottom-[88px] left-[256px] right-[250px] z-30 flex min-w-0 flex-col overflow-hidden border-x border-white/[0.07] bg-[#0b0e14]/95 shadow-2xl max-xl:right-0 max-md:left-0'
     : isDockExpanded
       ? 'absolute bottom-[82px] left-1/2 z-[75] h-[min(560px,72vh)] w-[min(440px,calc(100%-24px))] -translate-x-1/2 overflow-visible rounded-[24px] border border-white/10 bg-[#11151e]/95 shadow-[0_20px_70px_rgba(0,0,0,.55)] backdrop-blur-2xl transition-all duration-300 ease-out'
-      : 'absolute bottom-[82px] left-1/2 z-[75] flex w-fit max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-2 overflow-visible rounded-full border border-white/10 bg-[#11151e]/95 px-3 py-2 shadow-[0_16px_60px_rgba(0,0,0,.52)] backdrop-blur-2xl transition-all duration-300 ease-out';
+      : 'voice-mini-dock absolute bottom-[82px] left-1/2 z-[75] flex w-fit max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-2 overflow-visible rounded-full border border-white/10 bg-[#11151e] px-3 py-2 shadow-[0_16px_60px_rgba(0,0,0,.52)] transition-all duration-300 ease-out';
 
   if (connectionError) {
     return (
