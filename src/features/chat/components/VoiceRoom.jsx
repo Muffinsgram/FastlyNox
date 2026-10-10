@@ -1,6 +1,6 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionQualityIndicator, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
+import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionQualityIndicator, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTrackVolume, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { AudioPresets, DisconnectReason, Room as LiveKitClientRoom, RoomEvent, Track, supportsAudioOutputSelection } from 'livekit-client';
 import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
@@ -81,6 +81,12 @@ class VoiceRoomErrorBoundary extends Component {
 
 function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened, outputVolume = 100, watchedScreenShares = new Set(), screenShares = [] }) {
   const tracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio, Track.Source.Unknown], { onlySubscribed: true });
+  useEffect(() => {
+    for (const trackRef of tracks) {
+      if (trackRef.source !== Track.Source.Microphone || trackRef.participant.isLocal) continue;
+      trackRef.publication.track?.setPlayoutDelay?.(0.02);
+    }
+  }, [tracks]);
   return <div hidden>{tracks.filter((track) => !track.participant.isLocal && track.publication.kind === Track.Kind.Audio).map((track) => {
     const playback = getVoicePlayback({ source: track.source, participantId: track.participant.identity, volumes, shareVolumes, mutedShares, deafened });
     playback.volume = Math.min(2, playback.volume * Math.max(0, Math.min(200, Number(outputVolume) || 0)) / 100);
@@ -96,7 +102,8 @@ function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened, outputVol
 function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, onPresenceError, onParticipantsChange, contextMenuRequest, onContextMenuRequestHandled }) {
   const room = useRoomContext();
   const participants = useParticipants();
-  const { isMicrophoneEnabled } = useLocalParticipant();
+  const { isMicrophoneEnabled, microphoneTrack } = useLocalParticipant();
+  const localMicrophoneLevel = useTrackVolume(microphoneTrack?.track, { fftSize: 32, smoothingTimeConstant: 0 });
   const speakingParticipants = useSpeakingParticipants();
   const connectionState = useConnectionState();
   const videoTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: false });
@@ -489,11 +496,12 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
         <ul aria-label="Ses katılımcıları" className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-3">
           {participants.map((participant) => {
             const profile = participant.identity === currentUser?.id ? currentUser : profileById.get(participant.identity);
-            const speaking = speakingIds.has(participant.identity);
+            const speaking = speakingIds.has(participant.identity)
+              || (participant.isLocal && isMicrophoneEnabled && !localDeafened && localMicrophoneLevel > 0.04);
             return (
               <li key={participant.identity} role="button" tabIndex={0} aria-label={`${profile?.username || participant.name || 'Katılımcı'} profilini görüntüle`} onClick={() => void openParticipantProfile(participant)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void openParticipantProfile(participant); } }} onContextMenu={event => { event.preventDefault(); if (!participant.isLocal) setContextMenu({ x: event.clientX, y: event.clientY, participantId: participant.identity }); }} className={`macos-surface relative min-h-36 cursor-pointer rounded-[22px] border bg-[#111722]/85 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60 ${speaking && !moderationByUser[participant.identity]?.server_muted ? 'border-emerald-300/70 shadow-[0_0_0_1px_rgba(52,211,153,.16),0_0_32px_rgba(16,185,129,.12)]' : 'border-white/[0.08]'}`}>
                 <div className="relative flex h-full min-h-36 flex-col items-center justify-center gap-3 bg-[radial-gradient(ellipse_at_top,rgba(139,92,246,.08),transparent_65%)] p-5">
-                  <div className={`relative rounded-full p-1 transition-all ${speaking ? 'bg-emerald-400 shadow-[0_0_0_5px_rgba(52,211,153,.13),0_0_26px_rgba(52,211,153,.48)]' : 'bg-white/10'}`}>
+                  <div className={`relative rounded-full p-1 transition-[background-color,box-shadow] duration-75 ease-out ${speaking ? 'bg-emerald-400 shadow-[0_0_0_5px_rgba(52,211,153,.13),0_0_26px_rgba(52,211,153,.48)]' : 'bg-white/10'}`}>
                     <img src={getAvatarUrl(profile?.avatar_url, profile?.username || participant.name || participant.identity)} alt={`${profile?.username || participant.name || 'Katılımcı'} profil fotoğrafı`} className="h-[4.5rem] w-[4.5rem] rounded-full border-2 border-[#111722] object-cover" />
                   </div>
                   <div className="flex items-center gap-2 rounded-full border border-white/10 bg-[#080b10]/65 px-3 py-1.5 backdrop-blur-xl">
