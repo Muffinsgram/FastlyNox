@@ -17,8 +17,10 @@ export function createVoiceTokenRequests(request, now = Date.now) {
       const key = keyFor(userId, channelId, dmChannelId);
       for (const [id, entry] of prefetched) if (entry.expires <= now()) prefetched.delete(id);
       if (prefetched.has(key)) return prefetched.get(key).promise;
-      if (prefetched.size >= 4) return null;
-      const entry = { expires: now() + 15_000, promise: run(key, channelId, dmChannelId) };
+      // Keep the newest user intent warm. A fixed-cap refusal meant that
+      // channels beyond the first four could never benefit from prefetching.
+      if (prefetched.size >= 4) prefetched.delete(prefetched.keys().next().value);
+      const entry = { expires: now() + 60_000, promise: run(key, channelId, dmChannelId) };
       prefetched.set(key, entry);
       entry.promise.catch(() => { if (prefetched.get(key) === entry) prefetched.delete(key); });
       return entry.promise;

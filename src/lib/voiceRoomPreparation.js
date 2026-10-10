@@ -16,8 +16,16 @@ export function createVoiceRoomPreparations(createRoom, prepareRoom, now = Date.
     prefetch(userId, channelId, dmChannelId, tokenPromise) {
       prune();
       const key = keyFor(userId, channelId, dmChannelId);
-      if (entries.has(key) || entries.size >= 4) return;
-      const entry = { expires: now() + 15_000, cancelled: false, room: null };
+      if (entries.has(key)) return;
+      // Prioritize the latest hovered/selected channel instead of refusing
+      // preparation once four other channels have been visited.
+      if (entries.size >= 4) {
+        const oldestKey = entries.keys().next().value;
+        const oldestEntry = entries.get(oldestKey);
+        entries.delete(oldestKey);
+        discard(oldestEntry);
+      }
+      const entry = { expires: now() + 60_000, cancelled: false, room: null };
       entries.set(key, entry);
       const roomPromise = Promise.resolve().then(() => createRoom(userId)).then(room => {
         entry.room = room;

@@ -241,7 +241,10 @@ export default function App() {
       void Promise.allSettled([loadVoiceRoom(), prepareVoiceConnection()]);
       prefetchVoiceToken(user?.id, channel.id);
     };
-    if (immediate) prepare();
+    // Voice authorization and LiveKit region selection both require network
+    // round-trips. Start them on hover so a quick click can reuse the warmed
+    // token and connection instead of waiting for the join screen to mount.
+    if (immediate || channel.type === 'voice') prepare();
     else voiceIntentTimer.current = setTimeout(prepare, 60);
   };
   const [incomingCallInvite, setIncomingCallInvite] = useState(null);
@@ -275,6 +278,15 @@ export default function App() {
   const activeVoiceChannelIds = (servers.find((item) => item.id === activeServerId)?.categories || [])
     .flatMap((category) => category.channels || []).filter((channel) => channel.type === 'voice').map((channel) => channel.id);
   const activeVoiceChannelKey = activeVoiceChannelIds.join(',');
+  // Warm the channel most likely to be joined while the user is browsing the
+  // server. Token authorization and LiveKit region discovery then overlap the
+  // user's decision time instead of starting after the click.
+  useEffect(() => {
+    if (!user?.id || !activeVoiceChannelIds.length) return;
+    const channelId = activeVoiceChannelIds.includes(activeChannelId) ? activeChannelId : activeVoiceChannelIds[0];
+    void Promise.allSettled([loadVoiceRoom(), prepareVoiceConnection()]);
+    prefetchVoiceToken(user.id, channelId);
+  }, [activeServerId, activeChannelId, activeVoiceChannelKey, user?.id]);
 
   useEffect(() => {
     if (!activeServerId || !user?.id || !activeVoiceChannelIds.length) {
@@ -758,6 +770,7 @@ export default function App() {
         setVoiceNotice(`Şu anda “${voiceSession.channelName}” ses odasındasın. Önce mevcut odadan ayrıl.`);
         return;
       }
+      prepareVoiceIntent(targetChannel, true);
       setVoiceSession({ channelId: targetChannel.id, channelName: targetChannel.name, serverId: targetServer.id });
     }
     setVoiceNotice('');
@@ -850,6 +863,7 @@ export default function App() {
     }
     const sourceChannelId = voiceSession?.channelId || member.sourceChannelId;
     if (sourceChannelId) void supabase.rpc('clear_server_voice_presence', { channel_uuid: sourceChannelId });
+    prepareVoiceIntent(targetChannel, true);
     setVoiceParticipants([]); setVoiceRosterConnected(false);
     setVoiceSession({ channelId: targetChannel.id, channelName: targetChannel.name, serverId: member.serverId });
     openServer(member.serverId);

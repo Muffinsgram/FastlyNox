@@ -138,6 +138,18 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention, o
 
   useEffect(() => () => window.clearTimeout(typingTimerRef.current), []);
 
+  useEffect(() => {
+    const focusComposerOnEnter = (event) => {
+      if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey || event.isComposing || event.defaultPrevented) return;
+      const target = event.target;
+      if (!(target instanceof Element) || target.closest('input, textarea, select, button, a, [contenteditable="true"], [role="textbox"], [role="button"], [role="dialog"], [role="menu"], [role="listbox"]')) return;
+      event.preventDefault();
+      inputRef.current?.focus({ preventScroll: true });
+    };
+    window.addEventListener('keydown', focusComposerOnEnter);
+    return () => window.removeEventListener('keydown', focusComposerOnEnter);
+  }, []);
+
   useLayoutEffect(() => {
     pendingInitialScroll.current = true;
     shouldAutoScroll.current = true;
