@@ -281,16 +281,18 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
   return createPortal((
     <>
     <div className="fixed inset-0 z-[300] bg-black/60 flex items-center justify-center animate-in fade-in duration-200" onClick={onClose}>
-      <div className="relative max-h-[92vh] w-[min(58rem,calc(100vw-2rem))] overflow-x-hidden overflow-y-auto rounded-[26px] border border-white/10 bg-[#10151f]/95 shadow-[0_30px_100px_rgba(0,0,0,.65)] backdrop-blur-2xl" onClick={(e) => e.stopPropagation()}>
-        {/* Banner */}
-        <div className="relative h-40 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,rgba(139,92,246,.45),transparent_60%),linear-gradient(120deg,#151b28,#10141e)] sm:h-48">
-          {getBannerUrl(profile.banner_url) && <><img src={getBannerUrl(profile.banner_url)} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full scale-110 object-cover opacity-35 blur-2xl" /><img src={getBannerUrl(profile.banner_url)} alt="" className="relative z-[1] h-full w-full object-contain" style={{ objectPosition: `${profile.banner_position_x ?? 50}% ${profile.banner_position_y ?? 50}%` }} /></>}
-          <div className="absolute inset-0 bg-gradient-to-t from-[#10151f]/70 to-transparent" />
-        </div>
-        
+      <div className="relative max-h-[92vh] w-[min(68rem,calc(100vw-2rem))] overflow-hidden rounded-[26px] border border-white/10 bg-[#10151f]/95 shadow-[0_30px_100px_rgba(0,0,0,.65)] backdrop-blur-2xl" onClick={(e) => e.stopPropagation()}>
         <button onClick={onClose} className="absolute top-4 right-4 w-7 h-7 bg-black/40 rounded-full flex items-center justify-center text-white hover:bg-black/60 transition-colors">
           <X className="w-4 h-4" />
         </button>
+
+        <div className="grid max-h-[92vh] grid-cols-1 overflow-y-auto lg:grid-cols-[minmax(0,1.08fr)_minmax(20rem,.92fr)] lg:overflow-hidden">
+        <section className="min-w-0 lg:max-h-[92vh] lg:overflow-y-auto">
+        {/* Banner lives with the profile instead of stretching over the shared-info panel. */}
+        <div className="relative h-36 overflow-hidden bg-[radial-gradient(ellipse_at_top_left,rgba(139,92,246,.45),transparent_60%),linear-gradient(120deg,#151b28,#10141e)] sm:h-40">
+          {getBannerUrl(profile.banner_url) && <><img src={getBannerUrl(profile.banner_url)} alt="" aria-hidden="true" className="absolute inset-0 h-full w-full scale-110 object-cover opacity-35 blur-2xl" /><img src={getBannerUrl(profile.banner_url)} alt="" className="relative z-[1] h-full w-full object-cover" style={{ objectPosition: `${profile.banner_position_x ?? 50}% ${profile.banner_position_y ?? 50}%` }} /></>}
+          <div className="absolute inset-0 bg-gradient-to-t from-[#10151f]/70 via-transparent to-black/10" />
+        </div>
 
         {/* Avatar */}
         <div className="px-5 relative">
@@ -300,9 +302,7 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
         </div>
 
         {/* Info */}
-        <div className="pt-14 px-5 pb-6">
-          <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(19rem,.95fr)]">
+        <div className="px-5 pb-5 pt-14">
             <div className="min-w-0">
             <h2 className="flex items-center gap-2 text-xl font-bold" style={serverRoles[0]?.gradient_color ? { backgroundImage: `linear-gradient(100deg, ${serverRoles[0].color}, ${serverRoles[0].gradient_color}, ${serverRoles[0].color})`, backgroundSize: '180% 100%', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' } : { color: serverRoles[0]?.color || '#fff' }}>
               {profile.username}
@@ -320,7 +320,15 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
             {followError && <p role="status" className="mt-2 text-[11px] text-amber-200">{followError}</p>}
             {profile.bio && <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-6 text-slate-300">{profile.bio}</p>}
             </div>
-            <div className="min-w-0 space-y-3 lg:border-l lg:border-white/[0.08] lg:pl-5">
+            {serverId && <section aria-label="Sunucu profili ve rolleri" className="mt-5 rounded-2xl border border-white/[0.07] bg-white/[0.025] px-3.5 py-3">
+              <div className="mb-2.5 flex items-center justify-between gap-3"><h3 className="text-[10px] font-black uppercase tracking-[.14em] text-slate-500">{serverName || 'Sunucu'} profili</h3><span className="rounded-full border border-white/[0.07] bg-black/15 px-2 py-1 text-[9px] font-semibold text-slate-400">{serverMemberRole === 'owner' ? 'Sunucu sahibi' : serverMemberRole === 'admin' ? 'Yönetici' : 'Üye'}</span></div>
+              {serverRoles.length ? <div className="flex flex-wrap gap-1.5">{serverRoles.map((serverRole) => <span key={serverRole.id} className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-semibold" style={{ borderColor: `${serverRole.color}45`, backgroundColor: `${serverRole.color}12` }}><RoleEmoji value={serverRole.emoji} className="h-3.5 w-3.5" /><span className={serverRole.animated ? 'role-name-animated' : ''} style={serverRole.gradient_color ? { backgroundImage: `linear-gradient(100deg, ${serverRole.color}, ${serverRole.gradient_color}, ${serverRole.color})`, backgroundSize: '180% 100%', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' } : { color: serverRole.color }}>{serverRole.name}</span></span>)}</div> : <p className="text-[11px] text-slate-500">Bu sunucuda atanmış özel rolü yok.</p>}
+            </section>}
+        </div>
+        </section>
+        <aside className="min-w-0 border-t border-white/[0.08] bg-black/[0.12] px-5 pb-5 pt-6 lg:max-h-[92vh] lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pt-12">
+            <div className="mb-4 pr-8"><p className="text-[10px] font-black uppercase tracking-[.18em] text-violet-200/75">Profil alanı</p><h3 className="mt-1 text-lg font-bold text-white">Ortak dünyanız</h3><p className="mt-1 text-xs leading-5 text-slate-500">Bağlantılar, ilgi alanları ve birlikte olduğunuz topluluklar.</p></div>
+            <div className="space-y-3">
 
             {socialLinks.length > 0 && <section aria-label="Bağlantılı profiller" className="mt-4 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5"><h3 className="mb-2.5 text-[10px] font-black uppercase tracking-[.14em] text-slate-500">Bağlantılar</h3><div className="flex flex-wrap gap-2">{socialLinks.map((link) => {
               const social = { spotify: { name: 'Spotify', Icon: Music2 }, listenbrainz: { name: 'ListenBrainz', Icon: Radio }, steam: { name: 'Steam', Icon: Gamepad2 }, youtube: { name: 'YouTube', Icon: Video }, instagram: { name: 'Instagram', Icon: Camera } }[link.platform];
@@ -348,14 +356,8 @@ export function UserProfileModal({ profile, role, serverId = null, serverName = 
               {!mutualFriends.length && !mutualServers.length && !connectionsNotice && <p className="text-[10px] text-slate-500">Henüz ortak bağlantı yok.</p>}
             </section>}
             </div>
-            </div>
-            
-            {serverId && <><div className="my-3 h-px w-full bg-white/[0.07]" /><section aria-label="Sunucu profili ve rolleri" className="mb-1 rounded-xl border border-white/[0.06] bg-black/10 px-3 py-2.5">
-              <div className="mb-2.5 flex items-center justify-between gap-3"><h3 className="text-[10px] font-black uppercase tracking-[.14em] text-slate-500">{serverName || 'Sunucu'} profili</h3><span className="rounded-full border border-white/[0.07] bg-black/15 px-2 py-1 text-[9px] font-semibold text-slate-400">{serverMemberRole === 'owner' ? 'Sunucu sahibi' : serverMemberRole === 'admin' ? 'Yönetici' : 'Üye'}</span></div>
-              {serverRoles.length ? <div className="flex flex-wrap gap-1.5">{serverRoles.map((serverRole) => <span key={serverRole.id} className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-semibold" style={{ borderColor: `${serverRole.color}45`, backgroundColor: `${serverRole.color}12` }}><RoleEmoji value={serverRole.emoji} className="h-3.5 w-3.5" /><span className={serverRole.animated ? 'role-name-animated' : ''} style={serverRole.gradient_color ? { backgroundImage: `linear-gradient(100deg, ${serverRole.color}, ${serverRole.gradient_color}, ${serverRole.color})`, backgroundSize: '180% 100%', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' } : { color: serverRole.color }}>{serverRole.name}</span></span>)}</div> : <p className="text-[11px] text-slate-500">Bu sunucuda atanmış özel rolü yok.</p>}
-            </section></>}
-
-          </div>
+            {!socialLinks.length && !profileActivities.length && !mutualFriends.length && !mutualServers.length && !connectionsNotice && <div className="grid min-h-44 place-items-center rounded-2xl border border-dashed border-white/[0.09] bg-white/[0.02] p-6 text-center"><div><span className="mx-auto grid h-10 w-10 place-items-center rounded-2xl bg-violet-300/[0.08] text-violet-200"><UsersRound className="h-5 w-5" /></span><p className="mt-3 text-sm font-semibold text-slate-300">Henüz ortak içerik yok</p><p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">Bağlantılar ve etkinlikler burada görünür hale gelir.</p></div></div>}
+        </aside>
         </div>
       </div>
     </div>

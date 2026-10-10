@@ -105,11 +105,9 @@ function refreshVoiceHotkeys() {
       continue;
     }
     const registered = globalShortcut.register(accelerator, () => {
-      // The renderer handles focused-window input itself; global shortcuts
-      // should only reach it while Fastlynox is in the background.
-      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
-        mainWindow.webContents.send('fastlynox:voice-hotkey', action);
-      }
+      // Let the renderer decide whether the app is focused. Windows can report
+      // a stale BrowserWindow focus state around minimize/restore transitions.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('fastlynox:voice-hotkey', action);
     });
     if (registered) registeredVoiceHotkeys.add(accelerator);
     else {

@@ -961,6 +961,9 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     const desktop = window.fastlynoxDesktop;
     if (!desktop?.onVoiceHotkey) return undefined;
     return desktop.onVoiceHotkey((action) => {
+      // The DOM key handler owns the focused case. This prevents a global
+      // shortcut and the regular keydown listener from toggling twice.
+      if (document.hasFocus()) return;
       const state = voiceInputRef.current;
       if (action === 'toggleMicrophone') {
         if (state.pendingControl || state.isDeafened || state.pushToTalkEnabled) return;

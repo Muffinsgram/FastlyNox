@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from './useAuthStore';
-import { mergeFetchedMessages, mergeMessage, replaceOptimisticMessage } from '../lib/messageList';
+import { mergeFetchedMessages, mergeMessage, replaceOptimisticMessage, sortMessages } from '../lib/messageList';
 import { appendReaction, attachReactions, MESSAGE_REACTIONS, removeReaction } from '../lib/messageReactions';
 import { writeDraft } from '../lib/draftStorage';
 
@@ -14,6 +14,7 @@ export const useDMChatStore = create((set, get) => ({
   messageEventVersions: {},
   activeSubscription: null,
   activeSubscriptionCleanup: null,
+  activeSubscriptionChannelId: null,
   subscriptionToken: 0,
 
   fetchMessages: async (channelId) => {
@@ -52,6 +53,31 @@ export const useDMChatStore = create((set, get) => ({
     }
   },
 
+  // A small live tail query is a recovery path for clients where the
+  // Realtime publication/policy is misconfigured. Broadcast and postgres
+  // changes remain the immediate path; this keeps an open DM self-healing.
+  fetchRecentMessages: async (channelId) => {
+    if (!channelId || document.visibilityState !== 'visible') return;
+    const { data, error } = await supabase.from('dm_messages')
+      .select('*, profiles:user_id ( id, username, avatar_url )')
+      .eq('dm_channel_id', channelId)
+      .order('created_at', { ascending: false })
+      .limit(25);
+    if (error || !data?.length) return;
+    const recent = data.reverse();
+    set((state) => {
+      const current = state.messages[channelId] || [];
+      const incoming = new Map(recent.map((message) => [message.id, message]));
+      const merged = current.map((message) => {
+        const update = incoming.get(message.id);
+        if (!update) return message;
+        incoming.delete(message.id);
+        return { ...message, ...update, reactions: update.reactions || message.reactions };
+      });
+      return { messages: { ...state.messages, [channelId]: sortMessages([...merged, ...incoming.values()]) } };
+    });
+  },
+
   bumpMessageEvent: (channelId) => set((state) => ({ messageEventVersions: { ...state.messageEventVersions, [channelId]: (state.messageEventVersions[channelId] || 0) + 1 } })),
 
   receiveRealtimeMessage: (channelId, message, profile = null) => {
@@ -87,15 +113,24 @@ export const useDMChatStore = create((set, get) => ({
     let subscription;
     const isCurrent = () => get().subscriptionToken === subscriptionToken && generation === get().requestGeneration;
     subscription = supabase.channel(`public:dm_messages:${channelId}`)
+      .on('broadcast', { event: 'dm_changed' }, ({ payload }) => {
+        if (!isCurrent() || payload?.dm_channel_id !== channelId || !payload?.id) return;
+        if (payload.kind === 'delete') get().removeRealtimeMessage(channelId, payload.id);
+        else void get().fetchRecentMessages(channelId);
+      })
+      .on('broadcast', { event: 'dm_message_delete' }, ({ payload }) => {
+        if (!isCurrent() || payload?.dm_channel_id !== channelId || !payload?.id) return;
+        get().removeRealtimeMessage(channelId, payload.id);
+      })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages', filter: `dm_channel_id=eq.${channelId}` }, async (payload) => {
         if (!isCurrent()) return;
-        get().bumpMessageEvent(channelId);
         const newMsg = payload.new;
         const stateMessages = get().messages[channelId] || [];
         if (stateMessages.find(m => m.id === newMsg.id)) return;
+        get().receiveRealtimeMessage(channelId, { ...newMsg, profiles: { id: newMsg.user_id, username: 'Yükleniyor', avatar_url: null } });
         const { data: profile } = await supabase.from('profiles').select('id, username, avatar_url').eq('id', newMsg.user_id).single();
         if (!isCurrent()) return;
-        set((state) => ({ messages: { ...state.messages, [channelId]: mergeMessage(state.messages[channelId] || [], { ...newMsg, profiles: profile }) } }));
+        if (profile) get().receiveRealtimeMessage(channelId, newMsg, profile);
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dm_messages', filter: `dm_channel_id=eq.${channelId}` }, (payload) => {
         if (!isCurrent()) return;
@@ -126,10 +161,14 @@ export const useDMChatStore = create((set, get) => ({
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') console.warn(`DM mesaj kanalı bağlantı sorunu (${channelId}):`, status);
       });
 
-    const refreshWhenConnected = () => { if (isCurrent() && document.visibilityState === 'visible') void get().fetchMessages(channelId); };
+    const refreshWhenConnected = () => { if (isCurrent() && document.visibilityState === 'visible') void get().fetchRecentMessages(channelId); };
+    const recoveryTimer = window.setInterval(() => {
+      if (isCurrent() && document.visibilityState === 'visible' && navigator.onLine) void get().fetchRecentMessages(channelId);
+    }, 2000);
     window.addEventListener('online', refreshWhenConnected);
     document.addEventListener('visibilitychange', refreshWhenConnected);
-    set({ activeSubscription: subscription, activeSubscriptionCleanup: () => {
+    set({ activeSubscription: subscription, activeSubscriptionChannelId: channelId, activeSubscriptionCleanup: () => {
+      window.clearInterval(recoveryTimer);
       window.removeEventListener('online', refreshWhenConnected);
       document.removeEventListener('visibilitychange', refreshWhenConnected);
     } });
@@ -139,7 +178,7 @@ export const useDMChatStore = create((set, get) => ({
     const { activeSubscription, activeSubscriptionCleanup } = get();
     activeSubscriptionCleanup?.();
     if (activeSubscription) void supabase.removeChannel(activeSubscription);
-    set((state) => ({ activeSubscription: null, activeSubscriptionCleanup: null, subscriptionToken: state.subscriptionToken + 1 }));
+    set((state) => ({ activeSubscription: null, activeSubscriptionCleanup: null, activeSubscriptionChannelId: null, subscriptionToken: state.subscriptionToken + 1 }));
   },
 
   reset: () => {
@@ -186,6 +225,8 @@ export const useDMChatStore = create((set, get) => ({
       const { data, error } = await supabase.from('dm_messages').update({ content: newContent, is_edited: true }).eq('id', messageId).select('id, content, is_edited').single();
       if (error) return { success: false, error: error.message };
       set((state) => ({ messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id, messages.map((message) => message.id === messageId ? { ...message, ...data } : message)])) }));
+      const message = Object.values(get().messages).flat().find((item) => item.id === messageId);
+      if (message && get().activeSubscriptionChannelId === message.dm_channel_id) void get().activeSubscription?.send({ type: 'broadcast', event: 'dm_changed', payload: { id: messageId, dm_channel_id: message.dm_channel_id, kind: 'update' } });
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Message could not be edited.' };
@@ -194,9 +235,11 @@ export const useDMChatStore = create((set, get) => ({
 
   deleteMessage: async (messageId) => {
     try {
+      const dmChannelId = Object.keys(get().messages).find((channelId) => (get().messages[channelId] || []).some((message) => message.id === messageId));
       const { error } = await supabase.from('dm_messages').delete().eq('id', messageId);
       if (error) return { success: false, error: error.message };
       set((state) => ({ messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id, messages.filter((message) => message.id !== messageId)])) }));
+      if (dmChannelId && get().activeSubscriptionChannelId === dmChannelId) void get().activeSubscription?.send({ type: 'broadcast', event: 'dm_changed', payload: { id: messageId, dm_channel_id: dmChannelId, kind: 'delete' } });
       return { success: true };
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Message could not be deleted.' };
@@ -222,6 +265,7 @@ export const useDMChatStore = create((set, get) => ({
         }
         return { messages: { ...state.messages, [channelId]: replaceOptimisticMessage(msgs, tempId, data) } };
       });
+      if (!error && data && get().activeSubscriptionChannelId === channelId) void get().activeSubscription?.send({ type: 'broadcast', event: 'dm_changed', payload: { id: data.id, dm_channel_id: channelId, kind: 'insert' } });
       return error ? { success: false, error: error.message } : { success: true };
     } catch (error) {
       console.error('DM mesajı gönderimi başarısız:', error);
