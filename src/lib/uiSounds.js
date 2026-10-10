@@ -3,8 +3,8 @@ import { getAppPreferences } from './appPreferences';
 let audioContext;
 
 const soundNotes = {
-  join: [{ frequency: 587, duration: 0.09 }, { frequency: 784, duration: 0.15 }],
-  leave: [{ frequency: 659, duration: 0.08 }, { frequency: 440, duration: 0.16 }],
+  join: [{ frequency: 523, duration: 0.075 }, { frequency: 659, duration: 0.075 }, { frequency: 784, duration: 0.14 }],
+  leave: [{ frequency: 784, duration: 0.07 }, { frequency: 587, duration: 0.08 }, { frequency: 440, duration: 0.15 }],
   move: [{ frequency: 523, duration: 0.07 }, { frequency: 659, duration: 0.07 }, { frequency: 784, duration: 0.12 }],
   microphoneOn: [{ frequency: 659, duration: 0.055 }, { frequency: 880, duration: 0.075 }],
   microphoneOff: [{ frequency: 587, duration: 0.07 }, { frequency: 440, duration: 0.09 }],

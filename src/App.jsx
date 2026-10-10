@@ -664,7 +664,6 @@ export default function App() {
         return;
       }
       setVoiceNotice('');
-      if (voiceSession?.channelId !== channel.id) playUiSound(voiceSession ? 'move' : 'join', user?.id);
       setVoiceSession({ channelId: channel.id, channelName: channel.name, serverId: activeServerId });
     } else {
       setVoiceNotice('');
@@ -685,7 +684,6 @@ export default function App() {
         setVoiceNotice(`Şu anda “${voiceSession.channelName}” ses odasındasın. Önce mevcut odadan ayrıl.`);
         return;
       }
-      if (!voiceSession) playUiSound('join', user?.id);
       setVoiceSession({ channelId: targetChannel.id, channelName: targetChannel.name, serverId: targetServer.id });
     }
     setVoiceNotice('');
