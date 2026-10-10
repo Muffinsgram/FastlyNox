@@ -1,7 +1,7 @@
 import { normalizeVoiceVolume } from './voicePlayback.js';
 
 const preferenceKey = (userId) => `fastcord:preferences:${encodeURIComponent(userId || '')}`;
-const defaults = { launchAtStartup: true, pushToTalkEnabled: false, keybinds: { toggleMicrophone: 'Ctrl+Alt+KeyM', toggleDeafen: 'Ctrl+Alt+KeyD', pushToTalk: 'KeyV' }, doNotDisturb: false, desktopNotifications: true, notificationSound: true, notificationSoundVolume: 65, soundEffects: true, uiSoundVolume: 65, microphoneToggleSoundVolume: 55, headphoneToggleSoundVolume: 55, pinnedDMIds: [], hiddenDMIds: [], reduceMotion: false, accentTheme: 'violet', chatDensity: 'comfortable', searchShortcut: 'ctrl+k', mutedUserIds: [], mutedServerIds: [], mutedChannelIds: [], serverMuteUntil: {}, serverNotificationModes: {}, serverFolders: [], collapsedServerFolderIds: [], featuredServerIds: [], featuredServersConfigured: false, serverFolderIds: {}, voiceAudioSettings: { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, inputSensitivityDb: -100 }, quietHoursEnabled: false, quietHoursStart: '22:00', quietHoursEnd: '08:00' };
+const defaults = { launchAtStartup: true, pushToTalkEnabled: false, keybinds: { toggleMicrophone: 'Ctrl+Alt+KeyM', toggleDeafen: 'Ctrl+Alt+KeyD', pushToTalk: 'KeyV' }, doNotDisturb: false, desktopNotifications: true, notificationSound: true, notificationSoundVolume: 65, soundEffects: true, uiSoundVolume: 65, microphoneToggleSoundVolume: 55, headphoneToggleSoundVolume: 55, pinnedDMIds: [], hiddenDMIds: [], reduceMotion: false, accentTheme: 'violet', chatDensity: 'comfortable', searchShortcut: 'ctrl+k', mutedUserIds: [], mutedServerIds: [], mutedChannelIds: [], serverMuteUntil: {}, serverNotificationModes: {}, serverFolders: [], collapsedServerFolderIds: [], featuredServerIds: [], featuredServersConfigured: false, serverFolderIds: {}, voiceAudioSettings: { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, inputSensitivityEnabled: false, inputSensitivityDb: -100, inputVolume: 100, outputVolume: 100 }, quietHoursEnabled: false, quietHoursStart: '22:00', quietHoursEnd: '08:00' };
 const accentPalettes = {
   violet: ['#e0e7ff', '#dbe2ff', '#becaff', '#9baaff', '#7185ff', '#5e71e8', '#4d5bd4', '#3730a3', '#312e81'],
   cyan: ['#ecfeff', '#cffafe', '#a5f3fc', '#67e8f9', '#06b6d4', '#0891b2', '#0e7490', '#155e75', '#164e63'],
@@ -58,7 +58,10 @@ export function getAppPreferences(userId, storage = globalThis.localStorage) {
           ...defaults.voiceAudioSettings,
           ...settings,
           autoGainControl: true,
+          inputSensitivityEnabled: settings.inputSensitivityEnabled === true,
           inputSensitivityDb: Number.isFinite(threshold) ? Math.min(0, Math.max(-100, threshold)) : -100,
+          inputVolume: Number.isFinite(Number(settings.inputVolume)) ? Math.min(200, Math.max(0, Number(settings.inputVolume))) : 100,
+          outputVolume: Number.isFinite(Number(settings.outputVolume)) ? Math.min(200, Math.max(0, Number(settings.outputVolume))) : 100,
         };
       })(),
     };

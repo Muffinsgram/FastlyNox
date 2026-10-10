@@ -18,7 +18,7 @@ import { getVoicePlayback, normalizeVoiceVolume } from '../../../lib/voicePlayba
 import { getScreenShareCaptureOptions, getScreenSharePublishOptions, supportsOwnAudioExclusion } from '../../../lib/screenCapture';
 import { syncNoiseProcessor } from '../../../lib/microphoneNoiseProcessor';
 
-const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, inputSensitivityDb: -100 };
+const DEFAULT_VOICE_AUDIO_SETTINGS = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, inputSensitivityEnabled: false, inputSensitivityDb: -100, inputVolume: 100, outputVolume: 100 };
 
 function getAudioCaptureOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
   return {
@@ -105,15 +105,17 @@ class VoiceRoomErrorBoundary extends Component {
   }
 }
 
-function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened }) {
+function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened, outputVolume = 100 }) {
   const tracks = useTracks([Track.Source.Microphone, Track.Source.ScreenShareAudio, Track.Source.Unknown], { onlySubscribed: true });
   return <div hidden>{tracks.filter((track) => !track.participant.isLocal && track.publication.kind === Track.Kind.Audio).map((track) => {
     const playback = getVoicePlayback({ source: track.source, participantId: track.participant.identity, volumes, shareVolumes, mutedShares, deafened });
+    playback.volume = Math.min(2, playback.volume * Math.max(0, Math.min(200, Number(outputVolume) || 0)) / 100);
+    playback.muted = playback.muted || playback.volume === 0;
     return <AudioTrack key={`${track.participant.identity}:${track.publication.trackSid}`} trackRef={track} volume={playback.volume} muted={playback.muted} />;
   })}</div>;
 }
 
-function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError, onParticipantsChange, contextMenuRequest, onContextMenuRequestHandled }) {
+function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, onPresenceError, onParticipantsChange, contextMenuRequest, onContextMenuRequestHandled }) {
   const participants = useParticipants();
   const { isMicrophoneEnabled } = useLocalParticipant();
   const speakingParticipants = useSpeakingParticipants();
@@ -401,7 +403,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-6xl flex-col text-slate-100">
-      <VoicePlayback volumes={savedVolumes} shareVolumes={shareVolumes} mutedShares={mutedShares} deafened={localDeafened} />
+      <VoicePlayback volumes={savedVolumes} shareVolumes={shareVolumes} mutedShares={mutedShares} deafened={localDeafened} outputVolume={outputVolume} />
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-white">Ses odasındakiler</h2>
@@ -534,6 +536,8 @@ function VoiceAudioSettings({ currentUserId }) {
   const [open, setOpen] = useState(false);
   const [settings, setSettings] = useState(() => ({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(currentUserId).voiceAudioSettings || {}) }));
   const [sensitivityDraft, setSensitivityDraft] = useState(settings.inputSensitivityDb);
+  const [inputVolumeDraft, setInputVolumeDraft] = useState(settings.inputVolume);
+  const [outputVolumeDraft, setOutputVolumeDraft] = useState(settings.outputVolume);
   const settingsRef = useRef(settings);
   const [devices, setDevices] = useState({ audioinput: [], audiooutput: [] });
   const [message, setMessage] = useState('');
@@ -543,7 +547,7 @@ function VoiceAudioSettings({ currentUserId }) {
   useEffect(() => {
     if (!localMicrophoneTrack || connectionState !== 'connected' || !isMicrophoneEnabled) return;
     void syncNoiseProcessor(localMicrophoneTrack, settings).catch(() => setMessage('Gelişmiş mikrofon işleme uygulanamadı; standart filtre kullanılacak.'));
-  }, [localMicrophoneTrack, connectionState, isMicrophoneEnabled, settings.noiseSuppression, settings.noiseProcessor, settings.inputSensitivityDb, settings.echoCancellation, settings.voiceIsolation]);
+  }, [localMicrophoneTrack, connectionState, isMicrophoneEnabled, settings.noiseSuppression, settings.noiseProcessor, settings.inputSensitivityEnabled, settings.inputSensitivityDb, settings.inputVolume, settings.echoCancellation, settings.voiceIsolation]);
 
   useEffect(() => {
     const notify = event => setMessage(event?.detail === 'rnnoise' ? 'Krisp kullanılamadı; RNNoise yedeği etkin.' : 'Gelişmiş filtre açılamadı; standart gürültü engelleme kullanılıyor.');
@@ -629,6 +633,8 @@ function VoiceAudioSettings({ currentUserId }) {
         settingsRef.current = next;
         setSettings(next);
         setSensitivityDraft(next.inputSensitivityDb);
+        setInputVolumeDraft(next.inputVolume);
+        setOutputVolumeDraft(next.outputVolume);
       }
     };
     window.addEventListener('fastcord:preferences-updated', refreshPreferences);
@@ -658,9 +664,9 @@ function VoiceAudioSettings({ currentUserId }) {
             try { await localParticipant.publishTrack(microphoneTrack, getAudioPublishOptions(next)); }
             catch (error) { await localParticipant.publishTrack(microphoneTrack, getAudioPublishOptions(previous)); throw error; }
           }
-          const captureKeys = ['inputDeviceId', 'echoCancellation', 'noiseSuppression', 'noiseProcessor', 'voiceIsolation', 'inputSensitivityDb'];
+          const captureKeys = ['inputDeviceId', 'echoCancellation', 'noiseSuppression', 'noiseProcessor', 'voiceIsolation', 'inputSensitivityEnabled', 'inputSensitivityDb'];
           if (captureKeys.some(key => previous[key] !== next[key])) await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
-          if (captureKeys.some(key => previous[key] !== next[key])) await syncNoiseProcessor(microphoneTrack, next);
+          if (captureKeys.some(key => previous[key] !== next[key]) || previous.inputVolume !== next.inputVolume) await syncNoiseProcessor(microphoneTrack, next);
         };
         apply().catch((error) => setMessage(error instanceof Error ? error.message : 'Mikrofon ayarı uygulanamadı.'));
       }
@@ -679,10 +685,10 @@ function VoiceAudioSettings({ currentUserId }) {
     setBusy(key);
     try {
       const microphoneTrack = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-      if (isMicrophoneEnabled && microphoneTrack?.restartTrack) {
+      if (isMicrophoneEnabled && microphoneTrack?.restartTrack && key !== 'inputVolume') {
         await microphoneTrack.restartTrack(getAudioCaptureOptions(next));
         await syncNoiseProcessor(microphoneTrack, next);
-      } else if (key === 'inputSensitivityDb' || key === 'noiseProcessor' || key === 'noiseSuppression') {
+      } else if (key === 'inputSensitivityEnabled' || key === 'inputSensitivityDb' || key === 'inputVolume' || key === 'noiseProcessor' || key === 'noiseSuppression') {
         const track = localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
         if (track) await syncNoiseProcessor(track, next);
       }
@@ -749,7 +755,10 @@ function VoiceAudioSettings({ currentUserId }) {
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Mikrofon girişi</span><AnimatedSelect ariaLabel="Mikrofon girişi" value={settings.inputDeviceId} onValueChange={value => void changeDevice('audioinput', value)} options={inputOptions} disabled={busy !== ''} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Hoparlör / kulaklık</span><AnimatedSelect ariaLabel="Hoparlör veya kulaklık çıkışı" value={settings.outputDeviceId} onValueChange={value => void changeDevice('audiooutput', value)} options={outputOptions} disabled={busy !== '' || !supportsAudioOutputSelection()} className="w-full" /></label>
         <label className="block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor || 'rnnoise'} onValueChange={value => void updateCaptureSetting('noiseProcessor', value)} options={[{ value: 'krisp', label: 'Krisp · en güçlü filtre' }, { value: 'rnnoise', label: 'RNNoise · cihazda, çevrim dışı' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} disabled={busy !== ''} className="w-full" /></label>
-        <label className="block rounded-xl bg-white/[0.025] px-3 py-2"><span className="flex justify-between text-[10px] font-semibold text-slate-300"><span>Mikrofon giriş eşiği</span><span>{sensitivityDraft} dB</span></span><input type="range" min="-100" max="0" step="1" value={sensitivityDraft} aria-label="Mikrofon giriş eşiği (dB)" onChange={event => setSensitivityDraft(Number(event.target.value))} onPointerUp={event => void updateCaptureSetting('inputSensitivityDb', Number(event.currentTarget.value))} onKeyUp={event => void updateCaptureSetting('inputSensitivityDb', Number(event.currentTarget.value))} className="mt-2 w-full accent-cyan-300" /><span className="text-[9px] leading-4 text-slate-500">Düşük eşik daha kısık sesi geçirir; yüksek eşik arka planı azaltır. −100 dB açık, 0 dB kapalıya yakındır.</span></label>
+        <div className="flex items-center justify-between gap-3 rounded-xl px-2 py-2 transition hover:bg-white/[0.04]"><span><span className="block text-xs font-medium text-slate-200">Mikrofon giriş eşiği</span><span className="mt-0.5 block text-[9px] leading-4 text-slate-500">Arka plan seslerini eşik altında tutar.</span></span><button type="button" role="switch" aria-checked={settings.inputSensitivityEnabled} aria-label="Mikrofon giriş eşiği" disabled={busy !== ''} onClick={() => void updateCaptureSetting('inputSensitivityEnabled', !settings.inputSensitivityEnabled)} className={`relative h-6 w-11 shrink-0 rounded-full border p-[3px] transition ${settings.inputSensitivityEnabled ? 'border-cyan-200/40 bg-cyan-400/50' : 'border-white/10 bg-slate-800'} disabled:opacity-50`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${settings.inputSensitivityEnabled ? 'translate-x-5' : ''}`} /></button></div>
+        {settings.inputSensitivityEnabled && <label className="block rounded-xl bg-white/[0.025] px-3 py-2"><span className="flex justify-between text-[10px] font-semibold text-slate-300"><span>Mikrofon giriş eşiği</span><span>{sensitivityDraft} dB</span></span><input type="range" min="-100" max="0" step="1" value={sensitivityDraft} aria-label="Mikrofon giriş eşiği (dB)" onChange={event => setSensitivityDraft(Number(event.target.value))} onPointerUp={event => void updateCaptureSetting('inputSensitivityDb', Number(event.currentTarget.value))} onKeyUp={event => void updateCaptureSetting('inputSensitivityDb', Number(event.currentTarget.value))} className="mt-2 w-full accent-cyan-300" /><span className="text-[9px] leading-4 text-slate-500">Düşük eşik daha kısık sesi geçirir; yüksek eşik arka planı azaltır. −100 dB açık, 0 dB kapalıya yakındır.</span></label>}
+        <label className="block rounded-xl bg-white/[0.025] px-3 py-2"><span className="flex justify-between text-[10px] font-semibold text-slate-300"><span>Mikrofon ses seviyesi</span><span>{inputVolumeDraft}%</span></span><input type="range" min="0" max="200" step="1" value={inputVolumeDraft} aria-label="Mikrofon ses seviyesi" onChange={event => setInputVolumeDraft(Number(event.target.value))} onPointerUp={event => void updateCaptureSetting('inputVolume', Number(event.currentTarget.value))} onKeyUp={event => void updateCaptureSetting('inputVolume', Number(event.currentTarget.value))} className="mt-2 w-full accent-cyan-300" /></label>
+        <label className="block rounded-xl bg-white/[0.025] px-3 py-2"><span className="flex justify-between text-[10px] font-semibold text-slate-300"><span>Hoparlör ses seviyesi</span><span>{outputVolumeDraft}%</span></span><input type="range" min="0" max="200" step="1" value={outputVolumeDraft} aria-label="Hoparlör ses seviyesi" onChange={event => setOutputVolumeDraft(Number(event.target.value))} onPointerUp={event => { const value = Number(event.currentTarget.value); setOutputVolumeDraft(value); persist({ ...settings, outputVolume: value }); }} onKeyUp={event => { const value = Number(event.currentTarget.value); setOutputVolumeDraft(value); persist({ ...settings, outputVolume: value }); }} className="mt-2 w-full accent-cyan-300" /></label>
         <div className="border-t border-white/[0.07] pt-2">
           {[["echoCancellation", 'Yankı engelleme', 'Hoparlörden mikrofona dönen sesi azaltır.'], ["noiseSuppression", 'Gürültü engelleme', 'Fan ve ortam gürültüsünü azaltır.']].map(([key, label, description]) => <div key={key} className="flex items-center justify-between gap-3 rounded-xl px-2 py-2 transition hover:bg-white/[0.04]"><span><span className="block text-xs font-medium text-slate-200">{label}</span><span className="mt-0.5 block text-[9px] leading-4 text-slate-500">{description}</span></span><button type="button" role="switch" aria-checked={settings[key]} aria-label={label} disabled={busy !== ''} onClick={() => void updateCaptureSetting(key, !settings[key])} className={`relative h-6 w-11 shrink-0 rounded-full border p-[3px] transition ${settings[key] ? 'border-cyan-200/40 bg-cyan-400/50' : 'border-white/10 bg-slate-800'} disabled:opacity-50`}><span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${settings[key] ? 'translate-x-5' : ''}`} /></button></div>)}
         </div>
@@ -991,13 +1000,8 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
         const codes = { Control: 'Ctrl', Super: 'Meta', M: 'KeyM', D: 'KeyD', F9: 'F9', F10: 'F10', F8: 'F8', F7: 'F7', F6: 'F6', F5: 'F5' };
         const effective = Object.fromEntries(Object.entries(result?.bindings || {}).map(([action, accelerator]) => [action, accelerator.split('+').map(part => codes[part] || part).join('+')]));
         setEffectiveKeybinds(effective);
-        if (!result?.success) setControlError('Ses kısayolları kaydedilemedi. Ayarlar > Tuş atamaları bölümünden daha az kullanılan bir kombinasyon seç.');
-        else if (Object.entries(effective).some(([action, binding]) => binding !== keybinds[action])) {
-          const names = { toggleMicrophone: 'Mikrofon', toggleDeafen: 'Kulaklık' };
-          setControlError(`Bir kısayol çakıştığı için kullanılabilir yedek atandı: ${Object.entries(effective).filter(([action, binding]) => binding !== keybinds[action]).map(([action, binding]) => `${names[action] || action}: ${binding}`).join(' · ')}`);
-        }
       })
-      .catch(() => { if (active) setControlError('Arka plan ses kısayolları kaydedilemedi. Ayarlar > Tuş atamaları bölümünden başka bir kombinasyon seç.'); });
+      .catch(() => {});
     return () => { active = false; void desktop.setVoiceHotkeysEnabled(false); };
   }, [keybinds, connectionState]);
   useEffect(() => {
@@ -1273,7 +1277,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
         >
           <div className={`flex min-h-0 flex-col ${isStageVisible || isDockExpanded ? 'h-full' : ''}`}>
             <div className={isStageVisible || isDockExpanded ? 'flex min-h-0 flex-1' : 'pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0'}>
-              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4"><VoiceParticipants serverId={serverId} channelId={channelId} localDeafened={localDeafened} onPresenceError={onPresenceError} onParticipantsChange={onParticipantsChange} contextMenuRequest={contextMenuRequest} onContextMenuRequestHandled={onContextMenuRequestHandled} /></div>
+              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4"><VoiceParticipants serverId={serverId} channelId={channelId} localDeafened={localDeafened} outputVolume={voiceAudioSettings.outputVolume} onPresenceError={onPresenceError} onParticipantsChange={onParticipantsChange} contextMenuRequest={contextMenuRequest} onContextMenuRequestHandled={onContextMenuRequestHandled} /></div>
               {isStageVisible && showVoiceChat && <aside aria-label="Ses kanalı metin sohbeti" className="w-[min(360px,45%)] min-w-[280px] shrink-0 border-l border-white/[0.07] bg-[#0d1119]"><ChatArea activeChannelId={channelId} channelName={`${channelName} sohbeti`} /></aside>}
             </div>
             <VoiceControls onLeave={onLeave} onDeafenedChange={setLocalDeafened} compact={!isStageVisible} expanded={isDockExpanded} onToggleExpand={() => setIsDockExpanded((value) => !value)} />

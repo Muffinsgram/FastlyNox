@@ -99,36 +99,22 @@ function refreshVoiceHotkeys() {
   if (!voiceHotkeysEnabled) return { success: true, bindings: {} };
   let allRegistered = true;
   const registeredBindings = {};
-  const fallbackAccelerators = {
-    toggleMicrophone: ['Control+Alt+M', 'Control+Alt+F9', 'Control+Alt+F7', 'Control+Alt+F5'],
-    toggleDeafen: ['Control+Alt+D', 'Control+Alt+F10', 'Control+Alt+F8', 'Control+Alt+F6'],
-  };
-  const attempted = new Set();
   for (const action of ['toggleMicrophone', 'toggleDeafen']) {
     const requested = toElectronAccelerator(voiceKeybinds[action]);
-    if (!requested && !voiceKeybinds[action]) {
+    if (!voiceKeybinds[action]) continue;
+    if (!requested) {
+      allRegistered = false;
       continue;
     }
-    let chosen = '';
-    for (const accelerator of [...(requested ? [requested] : []), ...fallbackAccelerators[action]]) {
-      if (!accelerator || attempted.has(accelerator)) continue;
-      attempted.add(accelerator);
-      const registered = globalShortcut.register(accelerator, () => {
-        // Let the renderer decide whether the app is focused. Windows can report
-        // a stale BrowserWindow focus state around minimize/restore transitions.
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('fastlynox:voice-hotkey', action);
-      });
-      if (registered) {
-        chosen = accelerator;
-        registeredVoiceHotkeys.add(accelerator);
-        break;
-      }
-      console.warn(`Ses kısayolu kaydedilemedi (${action}): ${accelerator}`);
-    }
-    if (chosen) registeredBindings[action] = chosen;
-    else {
-      allRegistered = false;
-    }
+    const registered = globalShortcut.register(requested, () => {
+      // Let the renderer decide whether the app is focused. Windows can report
+      // a stale BrowserWindow focus state around minimize/restore transitions.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('fastlynox:voice-hotkey', action);
+    });
+    if (registered) {
+      registeredBindings[action] = requested;
+      registeredVoiceHotkeys.add(requested);
+    } else allRegistered = false;
   }
   return { success: allRegistered, bindings: registeredBindings };
 }

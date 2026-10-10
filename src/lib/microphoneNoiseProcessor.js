@@ -90,21 +90,26 @@ export class MicrophoneNoiseProcessor {
 class InputThresholdProcessor {
   name = 'fastlynox-input-threshold';
 
-  constructor(innerProcessor, thresholdDb) {
+  constructor(innerProcessor, thresholdDb, inputVolume = 100) {
     this.innerProcessor = innerProcessor;
     const parsedThreshold = Number(thresholdDb);
     this.thresholdDb = Number.isFinite(parsedThreshold) ? Math.max(-100, Math.min(0, parsedThreshold)) : -100;
-    this.configurationKey = `input-threshold:${this.thresholdDb}:${innerProcessor?.name || 'standard'}`;
+    this.inputVolume = Math.max(0, Math.min(200, Number(inputVolume) || 0));
+    this.configurationKey = `input-threshold:${this.thresholdDb}:volume-${this.inputVolume}:${innerProcessor?.name || 'standard'}`;
   }
 
   async init(options) {
-    if (!window.AudioWorkletNode || !AudioContext.prototype.audioWorklet) throw new Error('Mikrofon hassasiyet filtresi bu cihazda desteklenmiyor.');
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!window.AudioWorkletNode || !AudioContextClass) throw new Error('Mikrofon hassasiyet filtresi bu cihazda desteklenmiyor.');
     if (this.innerProcessor) await this.innerProcessor.init(options);
     try {
-      this.context = new AudioContext({ latencyHint: 'interactive' });
+      this.context = new AudioContextClass({ latencyHint: 'interactive' });
+      if (!this.context.audioWorklet) throw new Error('Mikrofon hassasiyet filtresi bu cihazda desteklenmiyor.');
       await Promise.all([this.context.audioWorklet.addModule(inputThresholdUrl), this.context.resume()]);
       const sourceTrack = this.innerProcessor?.processedTrack || options.track;
       this.source = this.context.createMediaStreamSource(new MediaStream([sourceTrack]));
+      this.gain = this.context.createGain();
+      this.gain.gain.value = this.inputVolume / 100;
       this.gate = new AudioWorkletNode(this.context, 'fastlynox-input-threshold', {
         numberOfInputs: 1,
         numberOfOutputs: 1,
@@ -112,7 +117,7 @@ class InputThresholdProcessor {
         parameterData: { thresholdDb: this.thresholdDb },
       });
       this.destination = this.context.createMediaStreamDestination();
-      this.source.connect(this.gate).connect(this.destination);
+      this.source.connect(this.gain).connect(this.gate).connect(this.destination);
       this.processedTrack = this.destination.stream.getAudioTracks()[0];
     } catch (error) {
       await this.destroy();
@@ -130,12 +135,54 @@ class InputThresholdProcessor {
   }
 
   async destroy() {
-    const { source, gate, destination, context, processedTrack, innerProcessor } = this;
-    this.source = this.gate = this.destination = this.context = this.processedTrack = undefined;
+    const { source, gain, gate, destination, context, processedTrack, innerProcessor } = this;
+    this.source = this.gain = this.gate = this.destination = this.context = this.processedTrack = undefined;
     source?.disconnect();
+    gain?.disconnect();
     gate?.disconnect();
     destination?.disconnect();
     processedTrack?.stop();
+    if (context && context.state !== 'closed') await context.close().catch(() => {});
+    if (innerProcessor) await innerProcessor.destroy();
+  }
+}
+
+class InputGainProcessor {
+  name = 'fastlynox-input-gain';
+
+  constructor(innerProcessor, inputVolume) {
+    this.innerProcessor = innerProcessor;
+    this.inputVolume = Math.max(0, Math.min(200, Number(inputVolume) || 0));
+    this.configurationKey = `input-gain:${this.inputVolume}:${innerProcessor?.name || 'standard'}`;
+  }
+
+  async init(options) {
+    if (this.innerProcessor) await this.innerProcessor.init(options);
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) throw new Error('Mikrofon ses seviyesi bu cihazda desteklenmiyor.');
+    try {
+      this.context = new AudioContextClass({ latencyHint: 'interactive' });
+      await this.context.resume();
+      const sourceTrack = this.innerProcessor?.processedTrack || options.track;
+      this.source = this.context.createMediaStreamSource(new MediaStream([sourceTrack]));
+      this.gain = this.context.createGain();
+      this.gain.gain.value = this.inputVolume / 100;
+      this.destination = this.context.createMediaStreamDestination();
+      this.source.connect(this.gain).connect(this.destination);
+      this.processedTrack = this.destination.stream.getAudioTracks()[0];
+    } catch (error) {
+      await this.destroy();
+      throw error;
+    }
+  }
+
+  async restart(options) { await this.destroy(); await this.init(options); }
+  async onPublish(room) { if (this.innerProcessor?.onPublish) await this.innerProcessor.onPublish(room); }
+
+  async destroy() {
+    const { source, gain, destination, context, processedTrack, innerProcessor } = this;
+    this.source = this.gain = this.destination = this.context = this.processedTrack = undefined;
+    source?.disconnect(); gain?.disconnect(); destination?.disconnect(); processedTrack?.stop();
     if (context && context.state !== 'closed') await context.close().catch(() => {});
     if (innerProcessor) await innerProcessor.destroy();
   }
@@ -149,7 +196,8 @@ export function syncNoiseProcessor(track, settings) {
     const noiseEnabled = settings.noiseSuppression && settings.noiseProcessor !== 'standard';
     const requestedThreshold = Number(settings.inputSensitivityDb ?? -100);
     const thresholdDb = Number.isFinite(requestedThreshold) ? Math.max(-100, Math.min(0, requestedThreshold)) : -100;
-    const thresholdEnabled = thresholdDb > -100;
+    const thresholdEnabled = settings.inputSensitivityEnabled === true && thresholdDb > -100;
+    const inputVolume = Number.isFinite(Number(settings.inputVolume)) ? Math.max(0, Math.min(200, Number(settings.inputVolume))) : 100;
     const captureTrack = track.mediaStreamTrack;
     const previousConstraints = captureTrack.getConstraints?.() || {};
     const captureConstraints = {
@@ -168,7 +216,7 @@ export function syncNoiseProcessor(track, settings) {
         autoGainControl: true,
       }).catch(() => {});
     }
-    if (!noiseEnabled && !thresholdEnabled) {
+    if (!noiseEnabled && !thresholdEnabled && inputVolume === 100) {
       if (current?.configurationKey || current?.name === 'fastlynox-rnnoise' || current?.name === 'livekit-noise-filter' || current?.name === 'fastlynox-input-threshold') await track.stopProcessor();
       return;
     }
@@ -192,11 +240,14 @@ export function syncNoiseProcessor(track, settings) {
       noiseName = noiseProcessor.name;
     }
 
-    const configurationKey = `${noiseName}:threshold-${thresholdEnabled ? thresholdDb : 'off'}`;
+    const configurationKey = `${noiseName}:threshold-${thresholdEnabled ? thresholdDb : 'off'}:input-${inputVolume}`;
     if (current?.configurationKey === configurationKey) return;
     if (current) await track.stopProcessor();
+    const inputProcessor = thresholdEnabled
+      ? new InputThresholdProcessor(noiseProcessor, thresholdDb, inputVolume)
+      : inputVolume !== 100 ? new InputGainProcessor(noiseProcessor, inputVolume) : noiseProcessor;
     if (!thresholdEnabled) {
-      await track.setProcessor(noiseProcessor);
+      await track.setProcessor(inputProcessor);
       if (noiseName === 'livekit-noise-filter') {
         await noiseProcessor.setEnabled(true);
         window.dispatchEvent(new CustomEvent('fastlynox:noise-quality', { detail: 'krisp' }));
@@ -205,7 +256,7 @@ export function syncNoiseProcessor(track, settings) {
       return;
     }
 
-    const thresholdProcessor = new InputThresholdProcessor(noiseProcessor, thresholdDb);
+    const thresholdProcessor = inputProcessor;
     thresholdProcessor.configurationKey = configurationKey;
     try {
       await track.setProcessor(thresholdProcessor);

@@ -399,7 +399,7 @@ export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser,
                          <div className="w-10 min-w-[2.5rem] shrink-0 flex items-center justify-end pr-1">
                             <span className="text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity select-none">{time}</span>
                          </div>
-                         <div className="flex flex-col flex-1 min-w-0 break-words [overflow-wrap:anywhere]">
+                         <div className="flex min-w-0 max-w-full flex-1 flex-col break-words [overflow-wrap:anywhere]">
                              {renderMessageContent()}
                              {m.image_url && <AttachmentImage imagePath={m.image_url} />}
                              {m.reactions?.length > 0 && <MessageReactions reactions={m.reactions} currentUserId={user?.id} onToggle={(emoji) => toggleReaction(activeChannelId, m.id, emoji)} />}
@@ -412,7 +412,7 @@ export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser,
                    return (
                     <div id={`message-${m.id}`} key={m.id} className={`flex gap-3 hover:bg-white/5 px-2 py-1.5 mt-2 ${isMentioned ? '' : 'rounded-xl'} group transition-colors relative min-w-0 ${mentionHighlightClass} ${m.isOptimistic ? 'opacity-50' : 'opacity-100'} ${editingId === m.id ? 'bg-white/5' : ''}`}>
                       <button type="button" onClick={() => profile.id && void fetchProfile(profile.id).then((value) => { if (value) setViewedProfile(value); })} title="Profili görüntüle" className="h-10 w-10 shrink-0 rounded-full"><img src={getAvatarUrl(profile.avatar_url, profile.username)} className="h-10 w-10 rounded-full bg-slate-800 object-cover" alt="Avatar" /></button>
-                      <div className="flex flex-col flex-1 min-w-0 break-words [overflow-wrap:anywhere]">
+                      <div className="flex min-w-0 max-w-full flex-1 flex-col break-words [overflow-wrap:anywhere]">
                           <div className="flex items-baseline gap-2">
                             <button type="button" onClick={() => profile.id && void fetchProfile(profile.id).then((value) => { if (value) setViewedProfile(value); })} className={`text-sm font-bold hover:underline ${isSelf ? 'text-emerald-400' : 'text-slate-200'}`}>{profile.username || 'Bilinmeyen'}</button>
                             <span className="text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity select-none">{time}</span>
