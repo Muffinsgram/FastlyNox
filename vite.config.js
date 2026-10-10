@@ -44,6 +44,8 @@ function installLiveKitTokenRoute(server, env) {
       const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
       if (authError || !authData.user) return respond(401, { error: 'Authentication expired. Sign in again.' });
 
+      const profilePromise = Promise.resolve(supabase.from('profiles').select('username').eq('id', authData.user.id).maybeSingle());
+
       let roomId;
       if (dmChannelId) {
         const { data: dm, error: dmError } = await supabase.from('dm_channels').select('id, user1_id, user2_id').eq('id', dmChannelId).maybeSingle();
@@ -65,8 +67,7 @@ function installLiveKitTokenRoute(server, env) {
         roomId = channel.id;
       }
 
-      const { data: profile } = await supabase
-        .from('profiles').select('username').eq('id', authData.user.id).maybeSingle();
+      const { data: profile } = await profilePromise;
       const token = await new SignJWT({
         name: profile?.username || authData.user.email || 'User',
         video: { room: roomId, roomJoin: true, canPublish: true, canSubscribe: true },

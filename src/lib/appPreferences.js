@@ -1,6 +1,7 @@
 import { normalizeVoiceVolume } from './voicePlayback.js';
 
 const preferenceKey = (userId) => `fastcord:preferences:${encodeURIComponent(userId || '')}`;
+const preferenceCache = new WeakMap();
 const defaults = { launchAtStartup: true, pushToTalkEnabled: false, keybinds: { toggleMicrophone: 'Ctrl+Alt+KeyM', toggleDeafen: 'Ctrl+Alt+KeyD', pushToTalk: 'KeyV' }, doNotDisturb: false, desktopNotifications: true, notificationSound: true, notificationSoundVolume: 65, soundEffects: true, uiSoundVolume: 65, microphoneToggleSoundVolume: 55, headphoneToggleSoundVolume: 55, pinnedDMIds: [], hiddenDMIds: [], reduceMotion: false, accentTheme: 'violet', chatDensity: 'comfortable', searchShortcut: 'ctrl+k', mutedUserIds: [], mutedServerIds: [], mutedChannelIds: [], serverMuteUntil: {}, serverNotificationModes: {}, serverFolders: [], collapsedServerFolderIds: [], featuredServerIds: [], featuredServersConfigured: false, serverFolderIds: {}, voiceAudioSettings: { inputDeviceId: '', outputDeviceId: '', audioQuality: 'speech', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, inputSensitivityEnabled: false, inputSensitivityDb: -100, inputVolume: 100, outputVolume: 100 }, quietHoursEnabled: false, quietHoursStart: '22:00', quietHoursEnd: '08:00' };
 const accentPalettes = {
   violet: ['#e0e7ff', '#dbe2ff', '#becaff', '#9baaff', '#7185ff', '#5e71e8', '#4d5bd4', '#3730a3', '#312e81'],
@@ -21,8 +22,13 @@ export function applyAppPreferences(preferences = defaults) {
 export function getAppPreferences(userId, storage = globalThis.localStorage) {
   if (!userId) return defaults;
   try {
-    const saved = JSON.parse(storage.getItem(preferenceKey(userId)) || '{}');
-    return {
+    const raw = storage.getItem(preferenceKey(userId)) || '{}';
+    let cache = preferenceCache.get(storage);
+    if (!cache) { cache = new Map(); preferenceCache.set(storage, cache); }
+    const cached = cache.get(userId);
+    if (cached?.raw === raw) return cached.preferences;
+    const saved = JSON.parse(raw);
+    const preferences = {
       ...defaults,
       ...saved,
       keybinds: {
@@ -65,6 +71,9 @@ export function getAppPreferences(userId, storage = globalThis.localStorage) {
         };
       })(),
     };
+    if (cache.size >= 16) cache.delete(cache.keys().next().value);
+    cache.set(userId, { raw, preferences });
+    return preferences;
   }
   catch { return defaults; }
 }

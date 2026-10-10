@@ -448,7 +448,8 @@ export const useNotificationStore = create((set, get) => ({
         // misses the message while this conversation is open.
         if (newNotif.dm_channel_id) {
           window.setTimeout(() => {
-            if (get().activeDMChannelId !== newNotif.dm_channel_id) return;
+            if (useAuthStore.getState().user?.id !== user.id) return;
+            void useFriendStore.getState().fetchDMs();
             const dmStore = useDMChatStore.getState();
             const notificationTime = Date.parse(newNotif.created_at || '') || Date.now();
             const alreadyVisible = (dmStore.messages[newNotif.dm_channel_id] || []).some((message) =>
@@ -456,7 +457,7 @@ export const useNotificationStore = create((set, get) => ({
               && Math.abs(notificationTime - (Date.parse(message.created_at || '') || 0)) < 1_500
               && (newNotif.body === '🖼️ Fotoğraf' ? Boolean(message.image_url) : (message.content || '').startsWith(newNotif.body || ''))
             );
-            if (!alreadyVisible) void dmStore.fetchMessages(newNotif.dm_channel_id);
+            if (!alreadyVisible) void dmStore.fetchRecentMessages(newNotif.dm_channel_id);
           }, 100);
         }
         

@@ -4,13 +4,22 @@ import { useAuthStore } from './useAuthStore';
 import { mergeFetchedMessages, mergeMessage, replaceOptimisticMessage, sortMessages } from '../lib/messageList';
 import { appendReaction, MESSAGE_REACTIONS, removeReaction } from '../lib/messageReactions';
 import { writeDraft } from '../lib/draftStorage';
+import { useFriendStore } from './useFriendStore';
 
 function sendDMRealtimeSignal(channelId, payload) {
   const state = useDMChatStore.getState();
-  if (state.activeSubscriptionChannelId !== channelId || !state.activeSubscription) return;
-  void state.activeSubscription.send({ type: 'broadcast', event: 'dm_changed', payload }).then((status) => {
+  if (state.activeSubscriptionChannelId === channelId && state.activeSubscription) void state.activeSubscription.send({ type: 'broadcast', event: 'dm_changed', payload }).then((status) => {
     if (status !== 'ok') console.warn(`DM canlı sinyali gönderilemedi (${channelId}):`, status);
   }).catch((error) => console.warn(`DM canlı sinyali gönderilemedi (${channelId}):`, error));
+  const userId = useAuthStore.getState().user?.id;
+  const dm = useFriendStore.getState().dmChannels.find(channel => channel.id === channelId);
+  const recipientId = dm?.user1_id === userId ? dm.user2_id : dm?.user2_id === userId ? dm.user1_id : null;
+  if (!recipientId) return;
+  // The inbox topic stays subscribed even when the recipient is on a server.
+  // Only IDs are sent; the receiver fetches the authorized row through RLS.
+  const inbox = supabase.channel(`dm-activity:${recipientId}`);
+  void inbox.send({ type: 'broadcast', event: 'dm_changed', payload }).catch(error => console.warn('DM gelen kutusu sinyali gönderilemedi:', error))
+    .finally(() => { void supabase.removeChannel(inbox); });
 }
 
 export const useDMChatStore = create((set, get) => ({
@@ -83,13 +92,14 @@ export const useDMChatStore = create((set, get) => ({
   // Realtime publication/policy is misconfigured. Broadcast and postgres
   // changes remain the immediate path; this keeps an open DM self-healing.
   fetchRecentMessages: async (channelId) => {
-    if (!channelId || document.visibilityState !== 'visible') return;
+    if (!channelId) return;
+    const generation = get().requestGeneration;
     const { data, error } = await supabase.from('dm_messages')
       .select('*, profiles:user_id ( id, username, avatar_url )')
       .eq('dm_channel_id', channelId)
       .order('created_at', { ascending: false })
       .limit(25);
-    if (error || !data?.length) return;
+    if (generation !== get().requestGeneration || error || !data?.length) return;
     const recent = data.reverse();
     set((state) => {
       const current = state.messages[channelId] || [];

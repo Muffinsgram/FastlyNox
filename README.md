@@ -32,6 +32,8 @@ The LiveKit API secret must be stored as `LIVEKIT_API_SECRET` without a `VITE_` 
 
 ## Deploying voice token issuance
 
+Deploy `server-voice-control` together with the client when updating voice moves. The function now changes the existing presence row's channel, which the client uses to distinguish moderator moves from ordinary heartbeats. Self-hosted LiveKit uses this update to reconnect the member with a fresh room token; LiveKit Cloud additionally uses its native move API. Function errors are read from the response body, and expired sessions are refreshed once before retrying.
+
 The production client calls the Supabase Edge Function at `supabase/functions/livekit-token`. Deploy it with `supabase functions deploy livekit-token`, then set `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` as Edge Function secrets. The function validates the user's Supabase session, verifies voice-channel membership, and returns a ten-minute token. The separate Vite middleware is for local development and preview only.
 
 ## GIF picker

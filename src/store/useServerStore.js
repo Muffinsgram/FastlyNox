@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from './useAuthStore';
+import { serverNavigationState } from '../lib/serverNavigation';
 
 const orderServerChannels = (server) => ({
   ...server,
@@ -14,14 +15,15 @@ export const useServerStore = create((set, get) => ({
   servers: [],
   activeServerId: null,
   activeChannelId: null,
+  lastChannelByServer: {},
   isLoading: false,
   requestGeneration: 0,
-  reset: () => set((state) => ({ servers: [], activeServerId: null, activeChannelId: null, isLoading: false, requestGeneration: state.requestGeneration + 1 })),
+  reset: () => set((state) => ({ servers: [], activeServerId: null, activeChannelId: null, lastChannelByServer: {}, isLoading: false, requestGeneration: state.requestGeneration + 1 })),
 
   fetchServers: async () => {
     const userId = useAuthStore.getState().user?.id;
     if (!userId) {
-      set((state) => ({ servers: [], activeServerId: null, activeChannelId: null, isLoading: false, requestGeneration: state.requestGeneration + 1 }));
+      set((state) => ({ servers: [], activeServerId: null, activeChannelId: null, lastChannelByServer: {}, isLoading: false, requestGeneration: state.requestGeneration + 1 }));
       return;
     }
     const requestGeneration = get().requestGeneration + 1;
@@ -66,15 +68,10 @@ export const useServerStore = create((set, get) => ({
       }));
       set((state) => {
         const activeServer = orderedServers.find((server) => server.id === state.activeServerId) || orderedServers[0];
-        const channels = activeServer?.categories?.flatMap((category) => category.channels || []) || [];
-        const selectedChannel = channels.some((channel) => channel.id === state.activeChannelId)
-          ? state.activeChannelId
-          : channels[0]?.id || null;
         return {
           servers: orderedServers,
           isLoading: false,
-          activeServerId: activeServer?.id || null,
-          activeChannelId: selectedChannel,
+          ...serverNavigationState({ ...state, servers: orderedServers }, activeServer?.id || null),
         };
       });
     } else {
@@ -82,16 +79,9 @@ export const useServerStore = create((set, get) => ({
     }
   },
 
-  setActiveServer: (id) => set((state) => ({ activeServerId: id, ...(state.activeServerId !== id ? { activeChannelId: null } : {}) })),
-  openServer: (id) => set((state) => {
-    const server = state.servers.find((item) => item.id === id);
-    const channels = server?.categories?.flatMap((category) => category.channels || []) || [];
-    const activeChannelId = channels.some((channel) => channel.id === state.activeChannelId)
-      ? state.activeChannelId
-      : channels[0]?.id || null;
-    return { activeServerId: id, activeChannelId };
-  }),
-  setActiveChannel: (id) => set({ activeChannelId: id }),
+  setActiveServer: (id) => set((state) => serverNavigationState(state, id)),
+  openServer: (id) => set((state) => serverNavigationState(state, id)),
+  setActiveChannel: (id) => set((state) => ({ activeChannelId: id, ...(id && state.activeServerId ? { lastChannelByServer: { ...state.lastChannelByServer, [state.activeServerId]: id } } : {}) })),
 
   refreshServer: async (serverId) => {
     const { data, error } = await supabase.from('servers').select(`*, categories (*, channels (*))`).eq('id', serverId).maybeSingle();
@@ -107,7 +97,7 @@ export const useServerStore = create((set, get) => ({
       return {
         servers,
         ...(state.activeServerId === serverId && !channels.some((channel) => channel.id === state.activeChannelId)
-          ? { activeChannelId: channels[0]?.id || null }
+          ? serverNavigationState({ ...state, servers }, serverId)
           : {}),
       };
     });

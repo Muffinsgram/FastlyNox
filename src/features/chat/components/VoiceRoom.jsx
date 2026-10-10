@@ -15,6 +15,9 @@ import { getAppPreferences, saveAppPreferences } from '../../../lib/appPreferenc
 import { AnimatedSelect } from '../../../components/ui/AnimatedSelect';
 import { supabase } from '../../../lib/supabase';
 import { getVoicePlayback, normalizeVoiceVolume } from '../../../lib/voicePlayback';
+import { queueVoicePresence } from '../../../lib/voicePresence';
+import { invokeAuthenticatedFunction } from '../../../lib/edgeFunctions';
+import { VIEWING_TOPIC, screenShareKey, shouldSubscribeToTrack, readViewingMessage, getShareViewers, changeDeafenState } from '../../../lib/screenShareViewing';
 
 import { getScreenShareCaptureOptions, getScreenSharePublishOptions, supportsOwnAudioExclusion } from '../../../lib/screenCapture';
 import { syncNoiseProcessor } from '../../../lib/microphoneNoiseProcessor';
@@ -39,6 +42,7 @@ function EnableMicrophoneAfterConnect({ settings, deafened, pushToTalkEnabled, o
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const connectionState = useConnectionState();
   const attemptedRef = useRef(false);
+  const previousPttRef = useRef(false);
 
   useEffect(() => {
     if (connectionState !== 'connected') {
@@ -47,7 +51,6 @@ function EnableMicrophoneAfterConnect({ settings, deafened, pushToTalkEnabled, o
     }
     if (deafened) {
       attemptedRef.current = true;
-      if (isMicrophoneEnabled) void localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(settings), getAudioPublishOptions(settings)).catch((error) => onFailure(error));
       return undefined;
     }
     // PTT owns microphone transitions while it is enabled. Opening the mic
@@ -55,9 +58,11 @@ function EnableMicrophoneAfterConnect({ settings, deafened, pushToTalkEnabled, o
     // briefly publish audio before the user asks to speak.
     if (pushToTalkEnabled) {
       attemptedRef.current = true;
-      if (isMicrophoneEnabled) void localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(settings), getAudioPublishOptions(settings)).catch((error) => onFailure(error));
+      if (!previousPttRef.current && isMicrophoneEnabled) void localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(settings), getAudioPublishOptions(settings)).catch(onFailure);
+      previousPttRef.current = true;
       return undefined;
     }
+    previousPttRef.current = false;
     if (attemptedRef.current || isMicrophoneEnabled) return undefined;
     attemptedRef.current = true;
     let active = true;
@@ -141,6 +146,10 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   const [profiles, setProfiles] = useState([]);
   const [viewedProfile, setViewedProfile] = useState(null);
   const [watchedScreenShares, setWatchedScreenShares] = useState(() => new Set());
+  const watchedScreenSharesRef = useRef(new Set());
+  const [viewingByParticipant, setViewingByParticipant] = useState({});
+  const viewingByParticipantRef = useRef({});
+  const [viewerListFor, setViewerListFor] = useState(null);
   const [expandedShareId, setExpandedShareId] = useState(null);
   const [shareFullscreenError, setShareFullscreenError] = useState('');
   const [moderationByUser, setModerationByUser] = useState({});
@@ -168,17 +177,43 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   const fullscreenShareRef = useRef(null);
   const screenShares = videoTracks.filter((track) => track.publication.source === Track.Source.ScreenShare);
   useEffect(() => {
-    for (const track of screenShares) {
-      const shareKey = `screen:${track.participant.identity}:${track.publication.trackSid}`;
-      if (!track.participant.isLocal && !watchedScreenShares.has(shareKey) && track.publication.isSubscribed) {
-        track.publication.setSubscribed(false);
+    const syncSubscriptions = () => {
+      for (const participant of room.remoteParticipants.values()) {
+        const screenSid = participant.getTrackPublication(Track.Source.ScreenShare)?.trackSid;
+        for (const publication of participant.trackPublications.values()) {
+          const subscribe = shouldSubscribeToTrack(publication.source, participant.identity, publication.trackSid, screenSid, watchedScreenSharesRef.current);
+          if (publication.isDesired !== subscribe) publication.setSubscribed(subscribe);
+        }
       }
-    }
-  }, [screenShares, watchedScreenShares]);
+    };
+    syncSubscriptions();
+    const events = [RoomEvent.TrackPublished, RoomEvent.TrackUnpublished, RoomEvent.ParticipantConnected, RoomEvent.Connected, RoomEvent.Reconnected];
+    events.forEach(event => room.on(event, syncSubscriptions));
+    return () => { events.forEach(event => room.off(event, syncSubscriptions)); };
+  }, [room, watchedScreenShares, connectionState]);
+  const sendViewingState = useCallback((destinationIdentities) => {
+    if (room.state !== 'connected') return;
+    const payload = new TextEncoder().encode(JSON.stringify({ type: VIEWING_TOPIC, action: 'state', watched: [...watchedScreenSharesRef.current] }));
+    void room.localParticipant.publishData(payload, { reliable: true, topic: VIEWING_TOPIC, ...(destinationIdentities ? { destinationIdentities } : {}) }).catch(() => {});
+  }, [room]);
   const watchScreenShare = (track) => {
-    const shareKey = `screen:${track.participant.identity}:${track.publication.trackSid}`;
-    setWatchedScreenShares((current) => new Set(current).add(shareKey));
-    if (!track.participant.isLocal) track.publication.setSubscribed(true);
+    const next = new Set(watchedScreenSharesRef.current).add(screenShareKey(track.participant.identity, track.publication.trackSid));
+    watchedScreenSharesRef.current = next;
+    setWatchedScreenShares(next);
+    sendViewingState();
+    playUiSound('streamWatchStart', currentUser?.id);
+  };
+  const stopWatchingScreenShare = (track) => {
+    const next = new Set(watchedScreenSharesRef.current);
+    next.delete(screenShareKey(track.participant.identity, track.publication.trackSid));
+    watchedScreenSharesRef.current = next;
+    setWatchedScreenShares(next);
+    for (const publication of track.participant.trackPublications.values()) {
+      if (publication.source === Track.Source.ScreenShare || publication.source === Track.Source.ScreenShareAudio) publication.setSubscribed(false);
+    }
+    if (document.fullscreenElement?.dataset.mediaStage === `screen:${track.participant.identity}`) void document.exitFullscreen().catch(() => {});
+    sendViewingState();
+    playUiSound('streamWatchEnd', currentUser?.id);
   };
   // LiveKit may keep a muted camera publication around after its video element
   // has stopped. Do not render an empty VideoTrack: it leaves a black tile behind.
@@ -189,6 +224,9 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   const isSpeaking = speakingParticipants.some(participant => participant.identity === currentUser?.id);
   const voiceStateRef = useRef({ microphoneEnabled: false, deafened: false, speaking: false });
   const presenceWarningShown = useRef(false);
+  const presenceRequestRef = useRef(null);
+  const presenceQueuedRef = useRef(false);
+  const presenceActiveRef = useRef(true);
   voiceStateRef.current = { microphoneEnabled: Boolean(isMicrophoneEnabled && !localDeafened), deafened: Boolean(localDeafened), speaking: Boolean(isSpeaking) };
   useEffect(() => {
     if (connectionState !== 'connected') {
@@ -209,35 +247,69 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   // participantKey changes only when room membership changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectionState, participantKey, currentUser?.id]);
-  const publishShareViewingChange = (fullscreenKey, action) => {
-    if (!fullscreenKey) return;
-    const shareIdentity = fullscreenKey.slice(fullscreenKey.indexOf(':') + 1);
-    if (!shareIdentity || shareIdentity === currentUser?.id) return;
-    playUiSound(action === 'start' ? 'streamWatchStart' : 'streamWatchEnd', currentUser?.id);
-    const payload = new TextEncoder().encode(JSON.stringify({ type: 'fastlynox:screen-share-view', action, shareIdentity }));
-    void room.localParticipant.publishData(payload, { reliable: true, topic: 'fastlynox:screen-share-view' }).catch(() => {});
-  };
   useEffect(() => {
-    const handleDataReceived = (payload, participant) => {
+    const handleDataReceived = (payload, participant, _kind, topic) => {
+      if (topic !== VIEWING_TOPIC) return;
       if (!participant || participant.identity === currentUser?.id) return;
-      try {
-        const message = JSON.parse(new TextDecoder().decode(payload));
-        if (message?.type !== 'fastlynox:screen-share-view' || message.shareIdentity !== currentUser?.id) return;
-        if (message.action === 'start' || message.action === 'end') playUiSound(message.action === 'start' ? 'streamWatchStart' : 'streamWatchEnd', currentUser?.id);
-      } catch { /* Ignore unrelated voice-room data packets. */ }
+      const message = readViewingMessage(payload);
+      if (!message) return;
+      if (message.action === 'request') { sendViewingState([participant.identity]); return; }
+      const localScreen = room.localParticipant.getTrackPublication(Track.Source.ScreenShare);
+      if (localScreen) {
+        const key = screenShareKey(currentUser?.id, localScreen.trackSid);
+        const wasWatching = (viewingByParticipantRef.current[participant.identity] || []).includes(key);
+        const isWatching = message.watched.includes(key);
+        if (wasWatching !== isWatching) playUiSound(isWatching ? 'streamWatchStart' : 'streamWatchEnd', currentUser?.id);
+      }
+      viewingByParticipantRef.current = { ...viewingByParticipantRef.current, [participant.identity]: message.watched };
+      setViewingByParticipant(viewingByParticipantRef.current);
+    };
+    const syncViewing = () => {
+      if (room.state !== 'connected') return;
+      sendViewingState();
+      const payload = new TextEncoder().encode(JSON.stringify({ type: VIEWING_TOPIC, action: 'request' }));
+      void room.localParticipant.publishData(payload, { reliable: true, topic: VIEWING_TOPIC }).catch(() => {});
+    };
+    const removeViewer = participant => {
+      const next = { ...viewingByParticipantRef.current };
+      delete next[participant.identity];
+      viewingByParticipantRef.current = next;
+      setViewingByParticipant(next);
     };
     room.on(RoomEvent.DataReceived, handleDataReceived);
-    return () => { room.off(RoomEvent.DataReceived, handleDataReceived); };
-  }, [room, currentUser?.id]);
+    room.on(RoomEvent.ParticipantConnected, syncViewing);
+    room.on(RoomEvent.ParticipantDisconnected, removeViewer);
+    room.on(RoomEvent.Reconnected, syncViewing);
+    syncViewing();
+    return () => {
+      room.off(RoomEvent.DataReceived, handleDataReceived);
+      room.off(RoomEvent.ParticipantConnected, syncViewing);
+      room.off(RoomEvent.ParticipantDisconnected, removeViewer);
+      room.off(RoomEvent.Reconnected, syncViewing);
+    };
+  }, [room, currentUser?.id, connectionState, sendViewingState]);
+  const screenShareRosterKey = screenShares.map(track => screenShareKey(track.participant.identity, track.publication.trackSid)).sort().join('|');
+  useEffect(() => {
+    if (connectionState !== 'connected') return;
+    const available = new Set(screenShareRosterKey.split('|').filter(Boolean));
+    const next = new Set([...watchedScreenSharesRef.current].filter(key => available.has(key)));
+    if (next.size === watchedScreenSharesRef.current.size) return;
+    watchedScreenSharesRef.current = next;
+    setWatchedScreenShares(next);
+    sendViewingState();
+  }, [screenShareRosterKey, sendViewingState, connectionState]);
   const publishVoicePresence = () => {
-    if (!serverId || !channelId || !currentUser?.id || connectionState !== 'connected') return;
-    void supabase.rpc('set_server_voice_presence', {
+    // LiveKit can move the room before React receives the new channel. Never
+    // let its old heartbeat put the member back in the source channel.
+    if (!presenceActiveRef.current || !serverId || !channelId || !currentUser?.id || connectionState !== 'connected' || room.name !== channelId) return;
+    if (presenceRequestRef.current) { presenceQueuedRef.current = true; return; }
+    presenceRequestRef.current = queueVoicePresence(currentUser.id, () => presenceActiveRef.current && room.name === channelId ? supabase.rpc('set_server_voice_presence', {
       server_uuid: serverId,
       channel_uuid: channelId,
       mic_enabled: voiceStateRef.current.microphoneEnabled,
       is_deafened: voiceStateRef.current.deafened,
       is_speaking: voiceStateRef.current.speaking,
-    }).then(({ error }) => {
+    }) : { error: null }).then(({ error }) => {
       if (error) {
         if (!presenceWarningShown.current) {
           presenceWarningShown.current = true;
@@ -245,6 +317,9 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
           onPresenceError?.(migrationMissing ? 'Ses kanalı durumu için migration_voice_speaking_presence.sql dosyasını Supabase SQL Editor’da çalıştır.' : `Ses durumu yayınlanamadı: ${error.message}`);
         }
       } else presenceWarningShown.current = false;
+    }).catch(error => console.warn('Ses durumu gönderilemedi:', error)).finally(() => {
+      presenceRequestRef.current = null;
+      if (presenceQueuedRef.current) { presenceQueuedRef.current = false; publishVoicePresence(); }
     });
   };
   useEffect(() => {
@@ -259,11 +334,18 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, channelId, currentUser?.id, connectionState]);
   useEffect(() => { publishVoicePresence(); }, [isMicrophoneEnabled, localDeafened, isSpeaking, connectionState, serverId, channelId, currentUser?.id]);
-  useEffect(() => () => {
-    if (serverId && channelId && currentUser?.id) {
-      void supabase.rpc('clear_server_voice_presence', { channel_uuid: channelId })
-        .then(({ error }) => { if (error) console.warn('Ses kanalından ayrılma durumu temizlenemedi:', error.message); });
-    }
+  useEffect(() => {
+    presenceActiveRef.current = true;
+    return () => {
+      presenceActiveRef.current = false;
+      if (serverId && channelId && currentUser?.id) {
+        // Drain the last write before removing the lease; otherwise an old
+        // in-flight heartbeat can recreate it after the move.
+        void queueVoicePresence(currentUser.id, () => presenceActiveRef.current ? { error: null } : supabase.rpc('clear_server_voice_presence', { channel_uuid: channelId }))
+          .then(({ error }) => { if (error) console.warn('Ses kanalından ayrılma durumu temizlenemedi:', error.message); })
+          .catch(error => console.warn('Ses durumu temizlenemedi:', error));
+      }
+    };
   }, [serverId, channelId, currentUser?.id]);
   const speakingIds = new Set(speakingParticipants.map((participant) => participant.identity));
   const rosterKey = participants.map((participant) => `${participant.identity}:${participant.isMicrophoneEnabled ? 1 : 0}:${speakingIds.has(participant.identity) ? 1 : 0}:${moderationByUser[participant.identity]?.server_muted ? 1 : 0}:${moderationByUser[participant.identity]?.server_deafened ? 1 : 0}`).sort().join('|');
@@ -271,16 +353,12 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   useEffect(() => {
     const syncFullscreenState = () => {
       const next = document.fullscreenElement?.dataset.mediaStage || null;
-      const previous = fullscreenShareRef.current;
       fullscreenShareRef.current = next;
       setExpandedShareId(next);
-      if (previous && previous !== next) publishShareViewingChange(previous, 'end');
-      if (next && next !== previous) publishShareViewingChange(next, 'start');
     };
     document.addEventListener('fullscreenchange', syncFullscreenState);
     return () => {
       document.removeEventListener('fullscreenchange', syncFullscreenState);
-      if (fullscreenShareRef.current) publishShareViewingChange(fullscreenShareRef.current, 'end');
     };
   }, [currentUser?.id, room]);
 
@@ -418,7 +496,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
     if (!serverId || !channelId || !participant?.identity) return;
     setModerationBusy(`${participant.identity}:${action}`);
     setModerationNotice('');
-    const { data, error } = await supabase.functions.invoke('server-voice-control', { body: { serverId, channelId, targetUserId: participant.identity, action } });
+    const { data, error } = await invokeAuthenticatedFunction(supabase, 'server-voice-control', { serverId, channelId, targetUserId: participant.identity, action });
     setModerationBusy('');
     if (error || !data?.success) {
       const detail = data?.error || error?.message || 'Sunucu ses işlemi uygulanamadı.';
@@ -434,9 +512,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
     if (!serverId || !channelId || !participant?.identity || !destinationChannelId || moderationBusy) return;
     setModerationBusy(`${participant.identity}:move_member`);
     setModerationNotice('');
-    const { data, error } = await supabase.functions.invoke('server-voice-control', {
-      body: { serverId, channelId, targetUserId: participant.identity, action: 'move_member', destinationChannelId },
-    });
+    const { data, error } = await invokeAuthenticatedFunction(supabase, 'server-voice-control', { serverId, channelId, targetUserId: participant.identity, action: 'move_member', destinationChannelId });
     setModerationBusy('');
     if (error || !data?.success) {
       setModerationNotice(data?.error || error?.message || 'Üye başka ses kanalına taşınamadı.');
@@ -453,15 +529,13 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
     const { kind } = moderationDialog;
     setModerationBusy(`${participant.identity}:${kind}`);
     setModerationNotice('');
-    const { data, error } = await supabase.functions.invoke('server-voice-control', {
-      body: {
+    const { data, error } = await invokeAuthenticatedFunction(supabase, 'server-voice-control', {
         serverId,
         channelId,
         targetUserId: participant.identity,
         action: kind === 'kick' ? 'kick_member' : 'ban_member',
         reason: moderationReason.trim() || null,
         banDurationHours: banDurationHours === 'permanent' ? null : Number(banDurationHours),
-      },
     });
     setModerationBusy('');
     if (error || !data?.success) {
@@ -487,7 +561,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
         serverMuted: Boolean(moderationByUser[participant.identity]?.server_muted),
         serverDeafened: Boolean(moderationByUser[participant.identity]?.server_deafened),
       };
-    }));
+    }), channelId);
   // rosterKey tracks live membership, mute, and speaking changes; profile updates refresh display names and avatars.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rosterKey, profiles, currentUser, moderationByUser, deafenedByUser, localDeafened, onParticipantsChange]);
@@ -508,9 +582,18 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
         </div>
       </div>
       {(screenShares.length > 0 || cameraShares.length > 0) && <section aria-label="Canlı yayınlar" className="mb-5 grid gap-4">
-        {screenShares.map((track) => <article key={`screen-${track.participant.identity}`} onContextMenu={(event) => openShareMenu(event, track.participant)} ref={(element) => { const key = `screen:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`screen:${track.participant.identity}`} className="screen-share-card overflow-hidden rounded-[22px] border border-violet-300/20 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.32)]">
+        {screenShares.map((track) => {
+          const shareKey = screenShareKey(track.participant.identity, track.publication.trackSid);
+          const isWatching = watchedScreenShares.has(shareKey);
+          const viewers = getShareViewers(participants, track.participant.identity, shareKey, watchedScreenShares, viewingByParticipant);
+          return <article key={shareKey} onContextMenu={(event) => openShareMenu(event, track.participant)} ref={(element) => { const key = `screen:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`screen:${track.participant.identity}`} className="screen-share-card overflow-hidden rounded-[22px] border border-violet-300/20 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.32)]">
           <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[linear-gradient(100deg,rgba(139,92,246,.12),transparent)] px-4 py-3 text-xs font-semibold text-violet-100"><span className="flex min-w-0 items-center gap-2"><MonitorUp className="h-4 w-4 shrink-0"/><span className="truncate">{track.participant.name || track.participant.identity}<span className="ml-1.5 font-normal text-slate-400">ekranını paylaşıyor</span></span></span><button type="button" onClick={() => void toggleShareFullscreen(`screen:${track.participant.identity}`)} aria-label={expandedShareId === `screen:${track.participant.identity}` ? 'Ekran paylaşımını küçült' : 'Ekran paylaşımını büyüt'} title="Büyüt / tam ekran" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-violet-200/25 hover:bg-violet-300/15"><Maximize2 className="h-4 w-4"/></button></div>
           <div onDoubleClick={(event) => { if (!event.target.closest('button')) void toggleShareFullscreen(`screen:${track.participant.identity}`); }} className="screen-share-stage relative aspect-video max-h-[min(68vh,760px)] bg-[#05070b]">
+            <div className="absolute left-3 top-3 z-10 max-w-[calc(100%-24px)]">
+              <button type="button" onClick={() => setViewerListFor(current => current === shareKey ? null : shareKey)} aria-expanded={viewerListFor === shareKey} aria-label="Yayını izleyen kullanıcıları göster" className="flex items-center gap-2 rounded-xl border border-white/15 bg-[#111722]/95 px-3 py-2 text-xs font-semibold text-slate-100 shadow-lg"><Users className="h-4 w-4 text-violet-200" />{viewers.length} izleyici</button>
+              {viewerListFor === shareKey && <div className="mt-2 max-h-48 min-w-44 overflow-y-auto rounded-xl border border-white/15 bg-[#111722]/95 p-2 text-xs text-slate-200 shadow-xl"><p className="px-2 py-1 font-semibold text-violet-200">Yayını izleyenler</p>{viewers.length ? viewers.map(viewer => { const profile = viewer.isLocal ? currentUser : profileById.get(viewer.identity); return <div key={viewer.identity} className="flex items-center gap-2 px-2 py-1.5"><img src={getAvatarUrl(profile?.avatar_url, profile?.username || viewer.name)} alt="" className="h-6 w-6 rounded-full" /><span className="truncate">{profile?.username || viewer.name || 'Katılımcı'}{viewer.isLocal ? ' (sen)' : ''}</span></div>; }) : <p className="px-2 py-2 text-slate-400">Henüz izleyen yok.</p>}</div>}
+            </div>
+            {!track.participant.isLocal && isWatching && <button type="button" onClick={() => stopWatchingScreenShare(track)} className="absolute right-3 top-3 z-10 flex items-center gap-2 rounded-xl border border-white/15 bg-[#111722]/95 px-3 py-2 text-xs font-semibold text-slate-100 shadow-lg hover:bg-rose-950"><X className="h-4 w-4" />İzlemeyi bırak</button>}
             {track.participant.isLocal || watchedScreenShares.has(`screen:${track.participant.identity}:${track.publication.trackSid}`)
               ? <VideoTrack trackRef={track} className="h-full w-full object-contain" />
               : <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-[radial-gradient(ellipse_at_center,rgba(139,92,246,.14),transparent_55%)]"><span className="grid h-14 w-14 place-items-center rounded-2xl border border-violet-200/20 bg-violet-300/10 text-violet-100"><MonitorUp className="h-6 w-6" /></span><span className="text-sm font-semibold text-slate-200">{track.participant.name || track.participant.identity} yayın paylaşıyor</span><button type="button" onClick={() => watchScreenShare(track)} className="rounded-xl bg-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-violet-950/40 transition hover:bg-violet-400">Yayını izle</button></div>}
@@ -519,7 +602,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
               {track.participant.isLocal ? 'Önizleme sessiz' : mutedShares[track.participant.identity] || normalizeVoiceVolume(shareVolumes[track.participant.identity]) === 0 ? 'Yayın sende sessiz' : `Yayın sesi · %${Math.round(normalizeVoiceVolume(shareVolumes[track.participant.identity]) * 100)}`}
             </button>
           </div>
-        </article>)}
+        </article>; })}
         {cameraShares.map((track) => <article key={`camera-${track.participant.identity}`} ref={(element) => { const key = `camera:${track.participant.identity}`; if (element) shareStageRefs.current.set(key, element); else shareStageRefs.current.delete(key); }} data-media-stage={`camera:${track.participant.identity}`} className="camera-stage-card overflow-hidden rounded-[22px] border border-cyan-200/15 bg-[#0b0e14] shadow-[0_20px_65px_rgba(0,0,0,.3)]">
           <div className="flex items-center justify-between gap-3 border-b border-white/[0.07] bg-[linear-gradient(100deg,rgba(34,211,238,.09),transparent)] px-4 py-3 text-xs font-semibold text-cyan-100"><span className="flex min-w-0 items-center gap-2"><Camera className="h-4 w-4 shrink-0"/><span className="truncate">{track.participant.name || track.participant.identity}<span className="ml-1.5 font-normal text-slate-400">kamerada</span></span></span><button type="button" onClick={() => void toggleShareFullscreen(`camera:${track.participant.identity}`)} aria-label="Kamerayı büyüt" title="Büyüt / tam ekran" className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-slate-200 transition hover:border-cyan-200/25 hover:bg-cyan-300/10"><Maximize2 className="h-4 w-4"/></button></div>
           <div onDoubleClick={() => void toggleShareFullscreen(`camera:${track.participant.identity}`)} className="screen-share-stage relative aspect-video max-h-[min(58vh,640px)] bg-[#05070b]"><VideoTrack trackRef={track} className="h-full w-full object-contain"/></div>
@@ -939,10 +1022,12 @@ function matchesVoiceKeybind(event, binding, rightAltHeld = false, rightCtrlHeld
     && expected.includes('Meta') === event.metaKey;
 }
 
-function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, microphoneBeforeDeafen, setMicrophoneBeforeDeafen, compact = false, expanded = false, onToggleExpand }) {
+function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, compact = false, expanded = false, onToggleExpand }) {
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } = useLocalParticipant();
   const connectionState = useConnectionState();
   const [pendingControl, setPendingControl] = useState('');
+  const pendingControlRef = useRef('');
+  const microphoneBeforeDeafenRef = useRef(false);
   const [controlError, setControlError] = useState('');
   const [effectiveKeybinds, setEffectiveKeybinds] = useState(null);
   const [soundboardOpen, setSoundboardOpen] = useState(false);
@@ -951,6 +1036,7 @@ function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, micro
   const [screenShareMenuOpen, setScreenShareMenuOpen] = useState(false);
   const currentUserId = useAuthStore((state) => state.user?.id);
   const [voiceKeyPreferences, setVoiceKeyPreferences] = useState(() => getAppPreferences(currentUserId));
+  const pushToTalkEnabled = Boolean(voiceKeyPreferences.pushToTalkEnabled);
   const microphoneTestActiveRef = useRef(false);
   const microphoneTestRestoreRef = useRef(false);
   const microphoneTestDeafenAttemptRef = useRef(false);
@@ -970,12 +1056,13 @@ function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, micro
   };
 
   const toggle = useCallback(async (control, action) => {
-    if (pendingControl) return;
+    if (pendingControl || pendingControlRef.current) return;
+    pendingControlRef.current = control;
     setPendingControl(control);
     setControlError('');
     try { await action(); }
     catch (error) { setControlError(error instanceof Error ? error.message : 'Medya aygıtı değiştirilemedi.'); }
-    finally { setPendingControl(''); }
+    finally { pendingControlRef.current = ''; setPendingControl(''); }
   }, [pendingControl]);
 
   const startScreenShare = async () => {
@@ -1039,21 +1126,12 @@ function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, micro
   };
 
   const toggleDeafen = useCallback(() => toggle('deafen', async () => {
-    if (isDeafened) {
-      await localParticipant.setMicrophoneEnabled(microphoneBeforeDeafen, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings));
-      onDeafenedChange(false);
-      if (!microphoneTestActiveRef.current && !microphoneTestRestoreRef.current) playUiSound('headphonesOn', currentUserId);
-      return;
-    }
-    setMicrophoneBeforeDeafen(isMicrophoneEnabled);
-    await localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings));
-    onDeafenedChange(true);
-    if (!microphoneTestActiveRef.current && !microphoneTestRestoreRef.current) playUiSound('headphonesOff', currentUserId);
-  }), [toggle, isDeafened, microphoneBeforeDeafen, localParticipant, voiceAudioSettings, isMicrophoneEnabled, onDeafenedChange, currentUserId]);
+    await changeDeafenState({ participant: localParticipant, deafened: isDeafened, microphoneMemory: microphoneBeforeDeafenRef, pushToTalkEnabled, captureOptions: getAudioCaptureOptions(voiceAudioSettings), publishOptions: getAudioPublishOptions(voiceAudioSettings), onChange: onDeafenedChange });
+    if (!microphoneTestActiveRef.current && !microphoneTestRestoreRef.current) playUiSound(isDeafened ? 'headphonesOn' : 'headphonesOff', currentUserId);
+  }), [toggle, isDeafened, localParticipant, voiceAudioSettings, pushToTalkEnabled, onDeafenedChange, currentUserId]);
 
   const keybinds = useMemo(() => ({ toggleMicrophone: 'Ctrl+Alt+KeyM', toggleDeafen: 'Ctrl+Alt+KeyD', pushToTalk: 'KeyV', ...(voiceKeyPreferences.keybinds || {}) }), [voiceKeyPreferences.keybinds]);
   const activeKeybinds = effectiveKeybinds ? { ...keybinds, ...effectiveKeybinds } : keybinds;
-  const pushToTalkEnabled = Boolean(voiceKeyPreferences.pushToTalkEnabled);
   const voiceInputRef = useRef({});
   const pushHeldRef = useRef(false);
   const pushToTalkPressRef = useRef(() => {});
@@ -1246,7 +1324,6 @@ function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, micro
 
 export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, channelName, isStageVisible = true, contextMenuRequest, onContextMenuRequestHandled, onPresenceError, onLeave = () => {}, onReturn = () => {}, onParticipantsChange = () => {} }) {
   const [localDeafened, setLocalDeafened] = useState(false);
-  const [microphoneBeforeDeafen, setMicrophoneBeforeDeafen] = useState(false);
   const [connection, setConnection] = useState({ channelId: null, userId: null, token: null, error: '' });
   const [attempt, setAttempt] = useState(0);
   const [deviceWarning, setDeviceWarning] = useState('');
@@ -1302,7 +1379,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
     playUiSound('join', userId);
   }, [userId]);
   const handleLiveKitDisconnected = useCallback((reason) => {
-    onParticipantsChange([]);
+    onParticipantsChange([], channelId);
     // The SDK emits this for intentional cleanup (including a cancelled
     // in-flight connect). Keep the active session/token intact in that case;
     // treating it as a network failure made the join panel permanently fail.
@@ -1374,6 +1451,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           audio={false}
           options={{ publishDefaults: getAudioPublishOptions(voiceAudioSettings), webAudioMix: true, adaptiveStream: true, dynacast: true }}
           connect={Boolean(token)}
+          connectOptions={{ autoSubscribe: false }}
           token={token || undefined}
           serverUrl={liveKitUrl}
           data-lk-theme="default"
@@ -1390,7 +1468,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
               <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4"><VoiceParticipants serverId={serverId} channelId={channelId} localDeafened={localDeafened} outputVolume={voiceAudioSettings.outputVolume} onPresenceError={onPresenceError} onParticipantsChange={onParticipantsChange} contextMenuRequest={contextMenuRequest} onContextMenuRequestHandled={onContextMenuRequestHandled} /></div>
               {isStageVisible && showVoiceChat && <aside aria-label="Ses kanalı metin sohbeti" className="w-[min(360px,45%)] min-w-[280px] shrink-0 border-l border-white/[0.07] bg-[#0d1119]"><ChatArea activeChannelId={channelId} channelName={`${channelName} sohbeti`} /></aside>}
             </div>
-            <VoiceControls onLeave={onLeave} isDeafened={localDeafened} onDeafenedChange={setLocalDeafened} microphoneBeforeDeafen={microphoneBeforeDeafen} setMicrophoneBeforeDeafen={setMicrophoneBeforeDeafen} compact={!isStageVisible} expanded={isDockExpanded} onToggleExpand={() => setIsDockExpanded((value) => !value)} />
+            <VoiceControls onLeave={onLeave} isDeafened={localDeafened} onDeafenedChange={setLocalDeafened} compact={!isStageVisible} expanded={isDockExpanded} onToggleExpand={() => setIsDockExpanded((value) => !value)} />
           </div>
         </LiveKitRoom>
         </VoiceRoomErrorBoundary>

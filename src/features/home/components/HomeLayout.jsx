@@ -122,6 +122,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
   };
 
   const pendingRequests = friendships.filter(f => f.status === 'pending');
+  const incomingRequestCount = pendingRequests.filter(request => request.addressee_id === user?.id).length;
   const acceptedFriends = friendships.filter(f => f.status === 'accepted');
   const onlineFriends = acceptedFriends.filter((friend) => {
     const profile = friend.requester_id === user.id ? friend.addressee : friend.requester;
@@ -204,7 +205,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
                     <button onClick={() => setActiveTab('all')} className={`px-3 py-1 rounded-md text-sm font-bold transition-all duration-200 ${activeTab === 'all' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}>Tümü</button>
                     <button onClick={() => setActiveTab('pending')} className={`px-3 py-1 rounded-md text-sm font-bold flex items-center gap-1.5 transition-all duration-200 ${activeTab === 'pending' ? 'bg-white/10 text-white shadow-sm' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}>
                       Bekleyen
-                      {pendingRequests.length > 0 && <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full leading-none shadow-[0_0_10px_rgba(244,63,94,0.4)]">{pendingRequests.length}</span>}
+                      {incomingRequestCount > 0 && <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full leading-none shadow-[0_0_10px_rgba(244,63,94,0.4)]">{incomingRequestCount}</span>}
                     </button>
                     <button onClick={() => setActiveTab('add')} className={`px-3 py-1 rounded-md text-sm font-bold transition-all duration-200 ${activeTab === 'add' ? 'bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.3)]' : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'}`}>Arkadaş Ekle</button>
                     <span aria-hidden="true" className="mx-1 h-5 w-px bg-white/10" />

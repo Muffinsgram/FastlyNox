@@ -14,16 +14,24 @@ export function NotificationManager({ onOpenNotification }) {
       subscribeToNotifications();
     }
     const refreshWhenOnline = () => { if (userId) void fetchNotifications(); };
+    let inboxRefreshTimer;
+    const refreshInboxNotifications = () => {
+      clearTimeout(inboxRefreshTimer);
+      inboxRefreshTimer = window.setTimeout(refreshWhenOnline, 120);
+    };
     const refreshWhenVisible = () => {
       if (userId && document.visibilityState === 'visible') void fetchNotifications();
     };
     window.addEventListener('online', refreshWhenOnline);
     window.addEventListener('fastcord:preferences-updated', refreshWhenOnline);
+    window.addEventListener('fastlynox:dm-inbox-recovered', refreshInboxNotifications);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     
     return () => {
+      clearTimeout(inboxRefreshTimer);
       window.removeEventListener('online', refreshWhenOnline);
       window.removeEventListener('fastcord:preferences-updated', refreshWhenOnline);
+      window.removeEventListener('fastlynox:dm-inbox-recovered', refreshInboxNotifications);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       unsubscribe();
     };

@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useCallback, useState, useEffect, useRef } from 'react';
+import React, { lazy, Suspense, useCallback, useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { Zap, Hash, Volume2, Headphones, HeadphoneOff, ShieldAlert, ChevronDown, Plus, GripVertical, Mic, MicOff, Minus, Square, X, CalendarDays, ArrowLeft, LockKeyhole, Flame, FolderPlus, MoreHorizontal, Pencil, Trash2, Copy, WifiOff } from 'lucide-react';
 import { useAuthStore } from './store/useAuthStore';
 import { AuthScreen } from './features/auth/components/AuthScreen';
@@ -32,13 +32,17 @@ import { NsfwConsentModal } from './components/layout/NsfwConsentModal';
 import { MarketingLanding } from './components/layout/MarketingLanding';
 import { ServerInviteModal } from './components/layout/ServerInviteModal';
 import { UserProfileModal } from './components/layout/UserProfileModal';
+import { latestVoicePresence, mergeVoicePresenceEvent, visibleVoiceRoster } from './lib/voicePresence';
+import { prepareVoiceConnection } from './lib/livekit';
+import { invokeAuthenticatedFunction } from './lib/edgeFunctions';
 
 const CreateServerModal = lazy(() => import('./features/servers/components/CreateServerModal').then((module) => ({ default: module.CreateServerModal })));
 const ServerSettingsModal = lazy(() => import('./features/servers/components/ServerSettingsModal').then((module) => ({ default: module.ServerSettingsModal })));
 const CreateChannelModal = lazy(() => import('./features/servers/components/CreateChannelModal').then((module) => ({ default: module.CreateChannelModal })));
 const CategoryModal = lazy(() => import('./features/servers/components/CategoryModal').then((module) => ({ default: module.CategoryModal })));
 const EditChannelModal = lazy(() => import('./features/servers/components/EditChannelModal').then((module) => ({ default: module.EditChannelModal })));
-const VoiceRoom = lazy(() => import('./features/chat/components/VoiceRoom').then((module) => ({ default: module.VoiceRoom })));
+const loadVoiceRoom = () => import('./features/chat/components/VoiceRoom');
+const VoiceRoom = lazy(() => loadVoiceRoom().then((module) => ({ default: module.VoiceRoom })));
 const GlobalSearchModal = lazy(() => import('./components/layout/GlobalSearchModal').then((module) => ({ default: module.GlobalSearchModal })));
 
 export default function App() {
@@ -223,6 +227,7 @@ export default function App() {
   const [incomingCallInvite, setIncomingCallInvite] = useState(null);
   const voiceSessionRef = useRef(null);
   const [voiceParticipants, setVoiceParticipants] = useState([]);
+  const [voiceParticipantsChannelId, setVoiceParticipantsChannelId] = useState(null);
   const [voicePresenceByChannel, setVoicePresenceByChannel] = useState({});
   const voiceProfileCacheRef = useRef(new Map());
   const [voiceMemberMenuRequest, setVoiceMemberMenuRequest] = useState(null);
@@ -259,10 +264,12 @@ export default function App() {
     let timer;
     let refreshing = false;
     let refreshQueued = false;
+    let eventVersion = 0;
     const channelIds = activeVoiceChannelKey.split(',');
     const refresh = async () => {
       if (refreshing) { refreshQueued = true; return; }
       refreshing = true;
+      const snapshotVersion = eventVersion;
       try {
         // Presence heartbeat runs every 12s. A 30s lease tolerates one missed
         // packet while allowing the shorter fallback refresh to clear stale rows.
@@ -282,7 +289,8 @@ export default function App() {
           console.warn('Ses kanalı katılımcıları alınamadı:', presenceError.message);
           return; // Never replace a good roster with an empty one on query failure.
         }
-        const currentRows = rows || [];
+        if (!alive || snapshotVersion !== eventVersion) { refreshQueued = true; return; }
+        const currentRows = latestVoicePresence(rows || []);
         const userIds = [...new Set(currentRows.map((row) => row.user_id))];
         const missingProfileIds = userIds.filter((id) => !voiceProfileCacheRef.current.has(id));
         const buildRoster = (moderationRows = []) => {
@@ -291,7 +299,7 @@ export default function App() {
           currentRows.forEach((row) => {
             const profile = voiceProfileCacheRef.current.get(row.user_id) || {};
             const mod = moderation.get(`${row.channel_id}:${row.user_id}`) || {};
-            (next[row.channel_id] ||= []).push({ id: row.user_id, username: profile.username || 'Fastlynox kullanıcısı', avatar_url: profile.avatar_url || null, microphoneEnabled: row.microphone_enabled, deafened: row.deafened, serverMuted: Boolean(mod.server_muted), serverDeafened: Boolean(mod.server_deafened), speaking: Boolean(row.speaking) });
+            (next[row.channel_id] ||= []).push({ id: row.user_id, username: profile.username || 'Fastlynox kullanıcısı', avatar_url: profile.avatar_url || null, microphoneEnabled: row.microphone_enabled, deafened: row.deafened, serverMuted: Boolean(mod.server_muted), serverDeafened: Boolean(mod.server_deafened), speaking: Boolean(row.speaking), updated_at: row.updated_at });
           });
           return next;
         };
@@ -308,7 +316,7 @@ export default function App() {
         ]);
         if (!alive) return;
         (newProfiles || []).forEach((profile) => voiceProfileCacheRef.current.set(profile.id, profile));
-        setVoicePresenceByChannel(buildRoster(moderationResult.data || []));
+        if (snapshotVersion === eventVersion) setVoicePresenceByChannel(buildRoster(moderationResult.data || []));
       } catch (error) {
         console.warn('Ses kanalı roster yenilenemedi:', error);
       } finally {
@@ -324,7 +332,13 @@ export default function App() {
       // from the payload instead and refresh only for this server's channels.
       .on('postgres_changes', { event: '*', schema: 'public', table: 'server_voice_presence' }, (payload) => {
         const changedChannel = payload.new?.channel_id || payload.old?.channel_id;
-        if (channelIds.includes(changedChannel)) queueRefresh();
+        if (!alive || !channelIds.includes(changedChannel)) return;
+        eventVersion += 1;
+        const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
+        setVoicePresenceByChannel(current => mergeVoicePresenceEvent(current, payload.eventType, row, voiceProfileCacheRef.current.get(row.user_id)));
+        // Mute/speaking heartbeats already contain everything needed to update
+        // the list. Only unknown profiles require another snapshot query.
+        if (payload.eventType !== 'DELETE' && !voiceProfileCacheRef.current.has(row.user_id)) queueRefresh();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'server_voice_moderation' }, (payload) => {
         const changedChannel = payload.new?.channel_id || payload.old?.channel_id;
@@ -340,7 +354,9 @@ export default function App() {
     const timer = window.setInterval(fireDueEventReminders, 15_000);
     return () => window.clearInterval(timer);
   }, []);
-  const handleVoiceParticipantsChange = useCallback((nextParticipants) => {
+  const handleVoiceParticipantsChange = useCallback((nextParticipants, channelId) => {
+    if (channelId !== voiceSessionRef.current?.channelId) return;
+    setVoiceParticipantsChannelId(channelId);
     setVoiceParticipants((current) => {
       const unchanged = current.length === nextParticipants.length && current.every((participant, index) => {
         const next = nextParticipants[index];
@@ -437,7 +453,7 @@ export default function App() {
     }
   }, [voiceSession, currentUserId]);
 
-  useEffect(() => { voiceSessionRef.current = voiceSession; }, [voiceSession]);
+  useLayoutEffect(() => { voiceSessionRef.current = voiceSession; }, [voiceSession]);
 
   useEffect(() => {
     const userId = session?.user?.id;
@@ -558,6 +574,8 @@ export default function App() {
     }
     if (loadedSessionUserId.current === userId) return;
     loadedSessionUserId.current = userId;
+    // Keep the voice code and SDK in memory before the first channel click.
+    void Promise.allSettled([loadVoiceRoom(), prepareVoiceConnection()]);
     resetServers();
     resetChannelMessages();
     resetDMMessages();
@@ -590,16 +608,19 @@ export default function App() {
     if (!userId) return undefined;
     let active = true;
     const subscription = supabase.channel(`voice-move:${userId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'server_voice_presence', filter: `user_id=eq.${userId}` }, async ({ eventType, new: row }) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'server_voice_presence', filter: `user_id=eq.${userId}` }, async ({ eventType, new: row, old: previousRow }) => {
         const current = voiceSessionRef.current;
-        if (!active || eventType === 'DELETE' || !row?.server_id || !row?.channel_id || current?.kind === 'dm' || current?.serverId !== row.server_id || current.channelId === row.channel_id) return;
+        // Moderation moves update the existing row's channel primary key.
+        // Ordinary heartbeats/joins must not undo a manual channel switch.
+        if (!active || eventType !== 'UPDATE' || !previousRow?.channel_id || previousRow.channel_id === row?.channel_id || !row?.server_id || !row?.channel_id || current?.kind === 'dm' || current?.serverId !== row.server_id || current.channelId === row.channel_id) return;
         const knownChannel = useServerStore.getState().servers.find(item => item.id === row.server_id)?.categories?.flatMap(category => category.channels || []).find(item => item.id === row.channel_id);
         let channel = knownChannel;
         if (!channel) {
           const { data } = await supabase.from('channels').select('id,name,server_id,type').eq('id', row.channel_id).eq('server_id', row.server_id).maybeSingle();
           channel = data;
         }
-        if (!active || !channel || channel.type !== 'voice' || voiceSessionRef.current?.channelId === row.channel_id) return;
+        if (!active || !channel || channel.type !== 'voice' || voiceSessionRef.current?.channelId !== current.channelId) return;
+        setVoiceParticipants([]);
         setVoiceSession(previous => previous && previous.serverId === row.server_id ? { ...previous, channelId: channel.id, channelName: channel.name } : previous);
         openServer(row.server_id);
         setActiveChannel(row.channel_id);
@@ -659,11 +680,11 @@ export default function App() {
   const currentChannelName = activeChannel?.name || 'sohbet';
   const activeChannelType = activeChannel?.type || 'text';
   const voiceChannelNameById = new Map((currentServerData?.categories || []).flatMap((category) => category.channels || []).filter((channel) => channel.type === 'voice').map((channel) => [channel.id, channel.name]));
-  const isSelfInVisibleVoiceChannel = (channelId) => voiceSession?.kind !== 'dm' && voiceSession?.channelId === channelId && voiceSession?.serverId === activeServerId;
-  const visibleVoicePresenceByChannel = Object.fromEntries(Object.entries(voicePresenceByChannel).map(([channelId, participants]) => [
-    channelId,
-    participants.filter((participant) => participant.id !== user?.id || isSelfInVisibleVoiceChannel(channelId)),
-  ]));
+  const visibleVoicePresenceByChannel = visibleVoiceRoster(voicePresenceByChannel, {
+    userId: user?.id,
+    channelId: voiceSession?.kind !== 'dm' && voiceSession?.serverId === activeServerId ? voiceSession?.channelId : null,
+    participants: voiceParticipantsChannelId === voiceSession?.channelId ? voiceParticipants : [],
+  });
   const voiceMemberChannels = Object.fromEntries(Object.entries(visibleVoicePresenceByChannel).flatMap(([channelId, participants]) => participants.map((participant) => [participant.id, voiceChannelNameById.get(channelId) || 'Ses kanalında'])));
   const canManageChannels = currentServerData?.owner_id === user?.id || currentServerData?.member_role === 'admin' || (serverCapabilities.serverId === activeServerId && serverCapabilities.manageChannels);
   const canReorderChannels = canManageChannels;
@@ -691,6 +712,7 @@ export default function App() {
           .then(({ error }) => { if (error) console.warn('Önceki ses kanalı durumu temizlenemedi:', error.message); });
       }
       setVoiceNotice('');
+      if (voiceSession?.channelId !== channel.id) setVoiceParticipants([]);
       setVoiceSession({ channelId: channel.id, channelName: channel.name, serverId: activeServerId });
     } else {
       setVoiceNotice('');
@@ -774,9 +796,7 @@ export default function App() {
         setDraggedVoiceMember(null);
         return;
       }
-      const { data, error } = await supabase.functions.invoke('server-voice-control', {
-        body: { serverId: member.serverId, channelId: member.sourceChannelId, targetUserId: member.userId, action: 'move_member', destinationChannelId: targetChannel.id },
-      });
+      const { data, error } = await invokeAuthenticatedFunction(supabase, 'server-voice-control', { serverId: member.serverId, channelId: member.sourceChannelId, targetUserId: member.userId, action: 'move_member', destinationChannelId: targetChannel.id });
       setDraggedVoiceMember(null);
       setDropTargetChannelId(null);
       if (error || !data?.success) {
@@ -804,10 +824,8 @@ export default function App() {
       return;
     }
     const sourceChannelId = voiceSession?.channelId || member.sourceChannelId;
-    if (sourceChannelId) {
-      const { error: clearError } = await supabase.rpc('clear_server_voice_presence', { channel_uuid: sourceChannelId });
-      if (clearError) console.warn('Eski ses odası katılımcı kaydı temizlenemedi:', clearError.message);
-    }
+    if (sourceChannelId) void supabase.rpc('clear_server_voice_presence', { channel_uuid: sourceChannelId });
+    setVoiceParticipants([]);
     setVoiceSession({ channelId: targetChannel.id, channelName: targetChannel.name, serverId: member.serverId });
     openServer(member.serverId);
     setActiveChannel(targetChannel.id);
@@ -942,10 +960,10 @@ export default function App() {
                                 <span className="flex shrink-0 items-center gap-2">{ch.is_private && <LockKeyhole className="h-3 w-3 text-violet-200/70" aria-label="Gizli kanal" />}{ch.nsfw && <Flame className="h-3 w-3 text-rose-300/80" aria-label="18+ kanal" />}{channelUnreadCounts[ch.id] > 0 && <span aria-label={`${channelUnreadCounts[ch.id]} okunmamış bildirim`} className="grid h-4 min-w-4 place-items-center rounded-full bg-violet-400 px-1 text-[9px] font-black text-white">{channelUnreadCounts[ch.id] > 9 ? '9+' : channelUnreadCounts[ch.id]}</span>}{voiceSession?.channelId === ch.id && <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold text-emerald-300"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Bağlı</span>}</span>
                               </button>
                               {canManageChannels && <button type="button" aria-label={`${ch.name} kanal seçenekleri`} title="Kanal seçenekleri" onClick={(event) => { event.stopPropagation(); const bounds = event.currentTarget.getBoundingClientRect(); setManagementContext({ kind: 'channel', channel: ch, x: bounds.right, y: bounds.bottom }); }} className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-md text-slate-500 opacity-0 transition hover:bg-white/10 hover:text-white group-hover/channel:opacity-100 focus:opacity-100"><MoreHorizontal className="h-4 w-4" /></button>}
-                              {ch.type === 'voice' && (visibleVoicePresenceByChannel[ch.id]?.length > 0 || (voiceSession?.channelId === ch.id && voiceSession?.kind !== 'dm' && voiceParticipants.length > 0)) && (
+                              {ch.type === 'voice' && visibleVoicePresenceByChannel[ch.id]?.length > 0 && (
                                 <div aria-label={`${ch.name} ses kanalındaki kişiler`} className="ml-7 mt-1 space-y-1 pb-1">
-                                  {(visibleVoicePresenceByChannel[ch.id]?.length ? visibleVoicePresenceByChannel[ch.id] : (voiceSession?.channelId === ch.id && voiceSession?.kind !== 'dm' ? voiceParticipants : [])).map((presence) => {
-                                    const participant = voiceSession?.channelId === ch.id ? voiceParticipants.find((item) => item.id === presence.id) || presence : presence;
+                                  {visibleVoicePresenceByChannel[ch.id].map((presence) => {
+                                    const participant = presence;
                                     const isSelf = participant.id === user?.id;
                                     const canDragMember = isSelf ? voiceSession?.channelId === ch.id : serverCapabilities.serverId === activeServerId && serverCapabilities.moveMembers;
                                     return <div key={participant.id} draggable={canDragMember} title={canDragMember ? 'Sürükleyip başka ses kanalına bırak · tıkla: profil' : 'Tıkla: profili görüntüle · sağ tık: ses seçenekleri'} onClick={(event) => { event.stopPropagation(); void fetchProfiles([participant.id]).then((profiles) => { const profile = profiles[0] || { id: participant.id, username: participant.username, avatar_url: participant.avatar_url }; setSelectedVoiceProfile(profile); }); }} onDragStart={(event) => { if (!canDragMember) { event.preventDefault(); return; } event.stopPropagation(); event.dataTransfer.setData('application/x-fastlynox-voice-member', participant.id); event.dataTransfer.effectAllowed = 'move'; setDraggedVoiceMember({ userId: participant.id, username: participant.username, sourceChannelId: ch.id, serverId: activeServerId }); }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (voiceSession?.channelId === ch.id) setVoiceMemberMenuRequest({ participantId: participant.id, x: event.clientX, y: event.clientY, requestId: Date.now() }); }} className={`flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-[11px] text-slate-400 transition hover:bg-white/[0.045] hover:text-slate-200 ${canDragMember ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${draggedVoiceMember?.userId === participant.id ? 'opacity-40' : ''}`}>
@@ -998,6 +1016,7 @@ export default function App() {
       {voiceSession && (
         <Suspense fallback={<div className="absolute bottom-4 left-[84px] z-40 rounded-xl border border-white/10 bg-[#111722] px-4 py-3 text-xs text-slate-300 shadow-xl">Ses odası hazırlanıyor…</div>}>
           <VoiceRoom
+            key={voiceSession.channelId}
             channelId={voiceSession.channelId}
             serverId={voiceSession.kind === 'dm' ? null : voiceSession.serverId}
             dmChannelId={voiceSession.kind === 'dm' ? voiceSession.dmChannelId : null}

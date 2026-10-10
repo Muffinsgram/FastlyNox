@@ -92,20 +92,28 @@ Deno.serve(async (request) => {
       if (!canView) return respond(403, { error: 'Hedef kanalı görme yetkin yok.' });
       if (!targetPresence) return respond(409, { error: 'Üye artık bu ses kanalında görünmüyor.' });
       const roomServiceUrl = liveKitUrl.replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:');
-      try {
-        await new RoomServiceClient(roomServiceUrl, liveKitApiKey, liveKitApiSecret).moveParticipant(channelId, targetUserId, destination.id);
-      } catch (error) {
-        console.error('LiveKit participant move failed:', error);
-        return respond(502, { error: 'Üye LiveKit ses odasına taşınamadı. Bağlantısı kesilmiş olabilir.' });
+      // MoveParticipant is a Cloud-only API. Self-hosted clients follow the
+      // authenticated presence update and reconnect using a fresh room token.
+      const cloudMove = new URL(roomServiceUrl).hostname.endsWith('.livekit.cloud');
+      if (cloudMove) {
+        try {
+          await new RoomServiceClient(roomServiceUrl, liveKitApiKey, liveKitApiSecret).moveParticipant(channelId, targetUserId, destination.id);
+        } catch (error) {
+          console.error('LiveKit participant move failed:', error);
+          return respond(502, { error: 'Üye LiveKit ses odasına taşınamadı. Bağlantısı kesilmiş olabilir.' });
+        }
       }
-      await admin.from('server_voice_presence').delete().eq('channel_id', channelId).eq('user_id', targetUserId);
-      const { error: presenceError } = await admin.from('server_voice_presence').upsert({
-        server_id: serverId, channel_id: destination.id, user_id: targetUserId,
-        microphone_enabled: targetPresence.microphone_enabled, deafened: targetPresence.deafened,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'channel_id,user_id' });
-      if (presenceError) console.warn('Moved voice presence could not be refreshed:', presenceError.message);
-      return respond(200, { success: true, moved: true, destinationChannelId: destination.id, destinationChannelName: destination.name });
+      const { error: cleanupError } = await admin.from('server_voice_presence').delete()
+        .eq('server_id', serverId).eq('user_id', targetUserId).neq('channel_id', channelId);
+      if (cleanupError) return respond(500, { error: 'Eski ses kaydı temizlenemedi. Yeniden dene.' });
+      const { data: movedPresence, error: presenceError } = await admin.from('server_voice_presence')
+        .update({ channel_id: destination.id, updated_at: new Date().toISOString() })
+        .eq('server_id', serverId).eq('channel_id', channelId).eq('user_id', targetUserId).select('user_id').maybeSingle();
+      if (presenceError || !movedPresence) {
+        console.warn('Moved voice presence could not be refreshed:', presenceError?.message);
+        return respond(409, { error: 'Üyenin ses konumu güncellenemedi. Kanal listesini yenileyip yeniden dene.' });
+      }
+      return respond(200, { success: true, moved: true, transferMode: cloudMove ? 'cloud' : 'reconnect', destinationChannelId: destination.id, destinationChannelName: destination.name });
     }
     if (memberAction) {
       const { error: moderationError } = await userClient.rpc('moderate_server_member_with_expiry', {

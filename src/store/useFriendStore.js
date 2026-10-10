@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useAuthStore } from './useAuthStore';
 import { fetchProfiles } from '../lib/profileMedia';
 import { useDMChatStore } from './useDMChatStore';
+import { createDMActivityReceiver } from '../lib/dmActivity';
 
 export const useFriendStore = create((set, get) => ({
   friendships: [],
@@ -247,53 +248,77 @@ export const useFriendStore = create((set, get) => ({
     if (get().activeDMActivitySubscription) void supabase.removeChannel(get().activeDMActivitySubscription);
     let refreshTimer;
     let subscription;
+    let active = true;
+    let recoveryPending = false;
+    let recoveryCursor = new Date(Date.now() - 5_000).toISOString();
+    const isCurrent = () => active && useAuthStore.getState().user?.id === userId;
     const refresh = () => {
       clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => { void get().fetchDMs(); }, 120);
+      refreshTimer = setTimeout(() => { if (isCurrent()) void get().fetchDMs(); }, 120);
+    };
+    const receive = createDMActivityReceiver({
+      userId, isCurrent, getChannels: () => get().dmChannels,
+      updateChannels: updater => set(state => ({ dmChannels: updater(state.dmChannels), dmActivityVersion: state.dmActivityVersion + 1 })),
+      receiveMessage: (...args) => useDMChatStore.getState().receiveRealtimeMessage(...args),
+      removeMessage: (...args) => useDMChatStore.getState().removeRealtimeMessage(...args),
+      notify: message => window.dispatchEvent(new CustomEvent('fastlynox:incoming-message', { detail: { message, isDM: true } })),
+      refresh,
+    });
+    // Recover missed publication events without requiring any DM to be open.
+    // RLS limits this small incremental query to this account's conversations.
+    const recover = async () => {
+      if (!isCurrent() || recoveryPending || navigator.onLine === false) return;
+      recoveryPending = true;
+      try {
+        const { data, error } = await supabase.from('dm_messages').select('id,dm_channel_id,user_id,content,image_url,reply_to,is_edited,created_at')
+          .gte('created_at', recoveryCursor).order('created_at', { ascending: true }).limit(200);
+        if (!isCurrent() || error || !data) return;
+        let changed = false;
+        data.forEach(message => { if (receive('INSERT', message)) changed = true; });
+        if (data.length) {
+          recoveryCursor = new Date(Date.parse(data[data.length - 1].created_at) - 1).toISOString();
+          if (changed) window.dispatchEvent(new CustomEvent('fastlynox:dm-inbox-recovered'));
+        }
+      } catch (error) { console.warn('DM gelen kutusu eşitlenemedi:', error); }
+      finally { recoveryPending = false; }
     };
     subscription = supabase.channel(`dm-activity:${userId}`)
+      .on('broadcast', { event: 'dm_changed' }, async ({ payload }) => {
+        if (!isCurrent() || !payload?.id || !payload?.dm_channel_id) return;
+        // A broadcast is only an invalidation hint. Read the persisted message
+        // through RLS instead of trusting data sent by another client.
+        const { data, error } = await supabase.from('dm_messages').select('*, profiles:user_id(id,username,avatar_url)')
+          .eq('id', payload.id).eq('dm_channel_id', payload.dm_channel_id).maybeSingle();
+        if (!isCurrent() || error) return;
+        if (data) receive(payload.kind === 'insert' ? 'INSERT' : 'UPDATE', data);
+        else if (payload.kind === 'delete') receive('DELETE', { id: payload.id, dm_channel_id: payload.dm_channel_id });
+        window.dispatchEvent(new CustomEvent('fastlynox:dm-inbox-recovered'));
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'dm_channels' }, () => {
+        if (!isCurrent()) return;
         set((state) => ({ dmActivityVersion: state.dmActivityVersion + 1 }));
         refresh();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'dm_messages' }, (payload) => {
-        set((state) => ({ dmActivityVersion: state.dmActivityVersion + 1 }));
-        const message = payload.new;
-        const channelId = message?.dm_channel_id || payload.old?.dm_channel_id;
-        if (!channelId) return refresh();
-        const currentChannel = get().dmChannels.find((channel) => channel.id === channelId);
-        const senderProfile = currentChannel
-          ? (currentChannel.user1_id === message?.user_id ? currentChannel.user1 : currentChannel.user2)
-          : null;
-        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          useDMChatStore.getState().receiveRealtimeMessage(channelId, message, senderProfile);
-          if (payload.eventType === 'INSERT' && message?.user_id !== userId) {
-            window.dispatchEvent(new CustomEvent('fastlynox:incoming-message', { detail: { message, isDM: true } }));
-          }
-        } else if (payload.eventType === 'DELETE') {
-          useDMChatStore.getState().removeRealtimeMessage(channelId, payload.old?.id);
-        }
-        if (payload.eventType !== 'INSERT') return refresh();
-        set((state) => {
-          const channel = state.dmChannels.find((item) => item.id === channelId);
-          if (!channel) return state;
-          if (Date.parse(channel.last_message?.created_at || '') >= Date.parse(message.created_at || '')) return state;
-          return { dmChannels: state.dmChannels.map((channel) => channel.id === channelId ? { ...channel, last_message: message } : channel).sort((left, right) => new Date(right.last_message?.created_at || right.created_at) - new Date(left.last_message?.created_at || left.created_at)) };
-        });
+        receive(payload.eventType, payload.eventType === 'DELETE' ? payload.old : payload.new);
       })
       .subscribe((status, error) => {
         if (status === 'SUBSCRIBED') {
           refresh();
+          void recover();
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           console.warn('DM aktivite kanalı bağlantı sorunu:', status, error?.message || error || 'Sunucu ayrıntı göndermedi');
         }
       });
-    const refreshOnReconnect = () => refresh();
+    const refreshOnReconnect = () => { refresh(); void recover(); };
     const refreshOnVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
     window.addEventListener('online', refreshOnReconnect);
     document.addEventListener('visibilitychange', refreshOnVisibility);
+    const recoveryTimer = window.setInterval(() => void recover(), 5_000);
     const cleanup = () => {
+      active = false;
       clearTimeout(refreshTimer);
+      clearInterval(recoveryTimer);
       window.removeEventListener('online', refreshOnReconnect);
       document.removeEventListener('visibilitychange', refreshOnVisibility);
       void supabase.removeChannel(subscription);

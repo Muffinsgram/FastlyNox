@@ -1,4 +1,13 @@
 import { supabase } from './supabase';
+import { readFunctionError } from './edgeFunctions';
+
+let connectionWarmup;
+export function prepareVoiceConnection() {
+  const url = import.meta.env.VITE_LIVEKIT_URL;
+  if (!url) return Promise.resolve();
+  connectionWarmup ||= import('livekit-client').then(({ Room }) => new Room().prepareConnection(url));
+  return connectionWarmup;
+}
 
 /** Request a short-lived LiveKit token from the trusted server endpoint.
  * LiveKit API secrets must never be included in browser code.
@@ -29,7 +38,7 @@ export async function generateLiveKitToken(channelId, { dmChannelId = null } = {
       });
     }
     const { data, error } = result;
-    if (error) throw new Error(data?.error || 'Ses odasına erişim doğrulanamadı. Oturumunu yenileyip tekrar dene.');
+    if (error) throw new Error(await readFunctionError(result, 'Ses odasına erişim doğrulanamadı. Oturumunu yenileyip tekrar dene.'));
     if (!data?.token) throw new Error('The voice token service returned no token.');
     return data.token;
   }
