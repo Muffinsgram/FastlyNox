@@ -24,6 +24,13 @@ contextBridge.exposeInMainWorld('fastlynoxDesktop', {
   },
   getAutoStart: () => ipcRenderer.invoke('fastlynox:get-auto-start'),
   setAutoStart: (enabled) => ipcRenderer.invoke('fastlynox:set-auto-start', Boolean(enabled)),
+  setVoiceKeybinds: (bindings) => ipcRenderer.invoke('fastlynox:set-voice-keybinds', bindings),
+  setVoiceHotkeysEnabled: (enabled) => ipcRenderer.invoke('fastlynox:set-voice-hotkeys-enabled', Boolean(enabled)),
+  onVoiceHotkey: (callback) => {
+    const listener = (_event, action) => callback(action);
+    ipcRenderer.on('fastlynox:voice-hotkey', listener);
+    return () => ipcRenderer.removeListener('fastlynox:voice-hotkey', listener);
+  },
   checkForUpdates: () => ipcRenderer.invoke('fastlynox:check-update'),
   installUpdate: () => ipcRenderer.invoke('fastlynox:install-update'),
   listScreenSources: () => ipcRenderer.invoke('fastlynox:list-screen-sources'),

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, Tray, desktopCapturer, session } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, desktopCapturer, session, globalShortcut } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -60,6 +60,65 @@ function applyAutoStart(enabled) {
 }
 let selectedScreenShareAudio = false;
 let lastUpdateStatus = { state: 'idle' };
+let voiceHotkeysEnabled = false;
+let voiceKeybinds = { toggleMicrophone: '', toggleDeafen: '' };
+const registeredVoiceHotkeys = new Set();
+
+function toElectronAccelerator(binding) {
+  if (typeof binding !== 'string' || !binding || binding.includes('Mouse')) return '';
+  const parts = binding.split('+');
+  const code = parts.pop();
+  const keyNames = {
+    Space: 'Space', Enter: 'Enter', NumpadEnter: 'Enter', Escape: 'Esc', Backspace: 'Backspace',
+    Tab: 'Tab', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+    Delete: 'Delete', Insert: 'Insert', Home: 'Home', End: 'End', PageUp: 'PageUp', PageDown: 'PageDown',
+    Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';',
+    Quote: "'", Backquote: '`', Comma: ',', Period: '.', Slash: '/',
+  };
+  let key = keyNames[code];
+  if (!key && /^Key[A-Z]$/u.test(code)) key = code.slice(3);
+  if (!key && /^Digit[0-9]$/u.test(code)) key = code.slice(5);
+  if (!key && /^F(?:[1-9]|1[0-9]|2[0-4])$/u.test(code)) key = code;
+  if (!key) return '';
+  const modifiers = [];
+  for (const part of parts) {
+    if (part === 'Ctrl') modifiers.push('Control');
+    else if (part === 'Alt' || part === 'AltRight' || part === 'AltGraph') modifiers.push('Alt');
+    else if (part === 'Shift') modifiers.push('Shift');
+    else if (part === 'Meta') modifiers.push('Super');
+    else return '';
+  }
+  // Unmodified letters would steal ordinary typing from other applications.
+  if (!modifiers.length) return '';
+  return [...new Set(modifiers), key].join('+');
+}
+
+function refreshVoiceHotkeys() {
+  for (const accelerator of registeredVoiceHotkeys) globalShortcut.unregister(accelerator);
+  registeredVoiceHotkeys.clear();
+  if (!voiceHotkeysEnabled) return true;
+  let allRegistered = true;
+  for (const action of ['toggleMicrophone', 'toggleDeafen']) {
+    const accelerator = toElectronAccelerator(voiceKeybinds[action]);
+    if (!accelerator) {
+      if (voiceKeybinds[action]) allRegistered = false;
+      continue;
+    }
+    const registered = globalShortcut.register(accelerator, () => {
+      // The renderer handles focused-window input itself; global shortcuts
+      // should only reach it while Fastlynox is in the background.
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) {
+        mainWindow.webContents.send('fastlynox:voice-hotkey', action);
+      }
+    });
+    if (registered) registeredVoiceHotkeys.add(accelerator);
+    else {
+      allRegistered = false;
+      console.warn(`Ses kısayolu kaydedilemedi (${action}): ${accelerator}`);
+    }
+  }
+  return allRegistered;
+}
 
 function publishUpdateStatus(status) {
   lastUpdateStatus = { ...status, checkedAt: Date.now() };
@@ -251,6 +310,20 @@ ipcMain.handle('fastlynox:window-control', (event, action) => {
   return true;
 });
 
+ipcMain.handle('fastlynox:set-voice-keybinds', (event, bindings = {}) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return false;
+  voiceKeybinds = {
+    toggleMicrophone: typeof bindings.toggleMicrophone === 'string' ? bindings.toggleMicrophone.slice(0, 80) : '',
+    toggleDeafen: typeof bindings.toggleDeafen === 'string' ? bindings.toggleDeafen.slice(0, 80) : '',
+  };
+  return refreshVoiceHotkeys();
+});
+ipcMain.handle('fastlynox:set-voice-hotkeys-enabled', (event, enabled) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return false;
+  voiceHotkeysEnabled = Boolean(enabled);
+  return refreshVoiceHotkeys();
+});
+
 ipcMain.handle('fastlynox:app-version', () => app.getVersion());
 ipcMain.handle('fastlynox:spotify-oauth-start', async (_event, request = {}) => {
   const { clientId, state, codeChallenge } = request;
@@ -431,7 +504,7 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('before-quit', () => { quitting = true; });
+app.on('before-quit', () => { quitting = true; globalShortcut.unregisterAll(); });
 app.on('window-all-closed', () => {
   if (process.platform === 'darwin' && quitting) app.quit();
 });

@@ -955,8 +955,33 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const deafenActionRef = useRef(toggleDeafen);
   useLayoutEffect(() => {
     deafenActionRef.current = toggleDeafen;
-    voiceInputRef.current = { localParticipant, keybinds, pushToTalkEnabled, isDeafened, isMicrophoneEnabled, pendingControl, voiceAudioSettings, onDeafenedChange, currentUserId };
-  }, [localParticipant, keybinds, pushToTalkEnabled, isDeafened, isMicrophoneEnabled, pendingControl, voiceAudioSettings, onDeafenedChange, toggleDeafen]);
+    voiceInputRef.current = { localParticipant, keybinds, pushToTalkEnabled, isDeafened, isMicrophoneEnabled, pendingControl, voiceAudioSettings, onDeafenedChange, currentUserId, toggleMicrophone: () => toggle('mic', async () => { const enabled = !isMicrophoneEnabled; await localParticipant.setMicrophoneEnabled(enabled, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings)); playUiSound(enabled ? 'microphoneOn' : 'microphoneOff', currentUserId); }) };
+  }, [localParticipant, keybinds, pushToTalkEnabled, isDeafened, isMicrophoneEnabled, pendingControl, voiceAudioSettings, onDeafenedChange, currentUserId, toggleDeafen, toggle]);
+  useEffect(() => {
+    const desktop = window.fastlynoxDesktop;
+    if (!desktop?.onVoiceHotkey) return undefined;
+    return desktop.onVoiceHotkey((action) => {
+      const state = voiceInputRef.current;
+      if (action === 'toggleMicrophone') {
+        if (state.pendingControl || state.isDeafened || state.pushToTalkEnabled) return;
+        void state.toggleMicrophone?.();
+      } else if (action === 'toggleDeafen' && !state.pendingControl) {
+        deafenActionRef.current();
+      }
+    });
+  }, []);
+  useEffect(() => {
+    const desktop = window.fastlynoxDesktop;
+    if (!desktop?.setVoiceKeybinds || !desktop?.setVoiceHotkeysEnabled) return undefined;
+    let active = true;
+    void desktop.setVoiceKeybinds(keybinds)
+      .then(() => desktop.setVoiceHotkeysEnabled(connectionState === 'connected'))
+      .then((registered) => {
+        if (active && connectionState === 'connected' && !registered) setControlError('Arka plan ses kısayollarından biri başka bir uygulama tarafından kullanılıyor veya desteklenmiyor.');
+      })
+      .catch(() => { if (active) setControlError('Arka plan ses kısayolları kaydedilemedi.'); });
+    return () => { active = false; void desktop.setVoiceHotkeysEnabled(false); };
+  }, [keybinds, connectionState]);
   useEffect(() => {
     const handleMicrophoneTest = event => {
       const active = Boolean(event.detail?.active);
