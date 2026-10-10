@@ -1,5 +1,5 @@
 import { getClipboardImage } from '../../../lib/clipboardImage';
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { Info, Plus, Loader2, Pencil, Trash2, Send, X, Reply, Forward, PanelRight, Phone, PhoneOff } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
 import { uploadStorageFile } from '../../../lib/storageUpload';
@@ -28,7 +28,9 @@ export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser,
   const { messages, drafts, isLoading, setDraft, clearDraft, fetchMessages, subscribeToChannel, unsubscribe, sendMessage, editMessage, deleteMessage, toggleReaction } = useDMChatStore();
   const input = drafts[activeChannelId] ?? readDraft(user?.id, `dm:${activeChannelId}`) ?? '';
   const chatScrollRef = useRef(null);
+  const messageListRef = useRef(null);
   const shouldAutoScroll = useRef(true);
+  const pendingInitialScroll = useRef(true);
   const fileInputRef = useRef(null);
   const inputRef = useRef(null);
   const inputPreviewRef = useRef(null);
@@ -126,8 +128,13 @@ export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser,
 
   useEffect(() => () => window.clearTimeout(typingTimerRef.current), []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    pendingInitialScroll.current = true;
     shouldAutoScroll.current = true;
+    if (chatScrollRef.current) chatScrollRef.current.scrollTop = 0;
+  }, [activeChannelId]);
+
+  useEffect(() => {
     if (activeChannelId) {
       fetchMessages(activeChannelId);
       subscribeToChannel(activeChannelId);
@@ -137,12 +144,30 @@ export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser,
     };
   }, [activeChannelId, fetchMessages, subscribeToChannel, unsubscribe]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = chatScrollRef.current;
-    if (container && shouldAutoScroll.current && !editingId) {
+    if (!container || editingId) return;
+    if (pendingInitialScroll.current || shouldAutoScroll.current) {
       container.scrollTop = container.scrollHeight;
+      pendingInitialScroll.current = false;
+      shouldAutoScroll.current = true;
     }
   }, [channelMessages, editingId]);
+
+  useEffect(() => {
+    const container = chatScrollRef.current;
+    const messageList = messageListRef.current;
+    if (!container || !messageList || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(() => {
+      if (pendingInitialScroll.current || shouldAutoScroll.current) {
+        container.scrollTop = container.scrollHeight;
+        pendingInitialScroll.current = false;
+        shouldAutoScroll.current = true;
+      }
+    });
+    observer.observe(messageList);
+    return () => observer.disconnect();
+  }, [activeChannelId]);
 
   useEffect(() => {
     const textarea = inputRef.current;
@@ -337,7 +362,7 @@ export function DMChatArea({ activeChannelId, channelName, avatarUrl, otherUser,
                 </div>
              )}
 
-             <div className="flex flex-col min-w-0">
+             <div ref={messageListRef} className="flex flex-col min-w-0">
                {channelMessages.map((m, index) => {
                    const isSelf = m.user_id === user?.id;
                    const msgDate = new Date(m.created_at);

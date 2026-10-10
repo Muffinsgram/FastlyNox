@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from './useAuthStore';
 import { mergeFetchedMessages, mergeMessage, replaceOptimisticMessage } from '../lib/messageList';
-import { appendReaction, attachReactions, MESSAGE_REACTIONS, removeReaction } from '../lib/messageReactions';
+import { appendReaction, MESSAGE_REACTIONS, removeReaction } from '../lib/messageReactions';
 import { writeDraft } from '../lib/draftStorage';
 
 export const useChatStore = create((set, get) => ({
@@ -21,6 +21,8 @@ export const useChatStore = create((set, get) => ({
     const generation = get().requestGeneration;
     const eventVersion = get().messageEventVersions[channelId] || 0;
     const requestId = (get().fetchRequests[channelId] || 0) + 1;
+    const initialMessages = get().messages[channelId] || [];
+    const initialIds = new Set(initialMessages.map((message) => message.id));
     set((state) => ({ isLoading: true, fetchRequests: { ...state.fetchRequests, [channelId]: requestId } }));
     
     const { data, error } = await supabase
@@ -32,20 +34,39 @@ export const useChatStore = create((set, get) => ({
 
     if (generation !== get().requestGeneration || get().fetchRequests[channelId] !== requestId) return;
     if (!error && data) {
-      const messageIds = data.map((message) => message.id);
-      const { data: reactions, error: reactionError } = messageIds.length
-        ? await supabase.from('message_reactions').select('id, message_id, channel_id, user_id, emoji').eq('channel_id', channelId).in('message_id', messageIds)
-        : { data: [] };
-      if (generation !== get().requestGeneration || get().fetchRequests[channelId] !== requestId) return;
+      const current = get().messages[channelId] || [];
+      const previousById = new Map(current.map((message) => [message.id, message]));
+      const fetched = data.reverse().map((message) => ({ ...message, reactions: previousById.get(message.id)?.reactions || [] }));
+      const arrivals = current.filter((message) => !initialIds.has(message.id) && !message.isOptimistic);
+      const pendingSends = current.filter((message) => message.isOptimistic);
+      const reconciled = mergeFetchedMessages([...arrivals, ...pendingSends], fetched);
+      // Show the message snapshot as soon as it arrives. Reactions can load in
+      // parallel afterwards and should not hold the whole chat behind another
+      // database round-trip.
+      set((state) => ({ messages: { ...state.messages, [channelId]: reconciled }, isLoading: false }));
       if ((get().messageEventVersions[channelId] || 0) !== eventVersion) {
         window.setTimeout(() => {
           if (generation === get().requestGeneration) void get().fetchMessages(channelId);
         }, 150);
         return;
       }
-      if (reactionError) console.warn('Kanal tepkileri eşitlenemedi:', reactionError.message);
-      const fetched = attachReactions(data.reverse(), reactions || []);
-      set((state) => ({ messages: { ...state.messages, [channelId]: mergeFetchedMessages(state.messages[channelId] || [], fetched) }, isLoading: false }));
+      const messageIds = data.map((message) => message.id);
+      if (messageIds.length) {
+        const { data: reactions, error: reactionError } = await supabase.from('message_reactions')
+          .select('id, message_id, channel_id, user_id, emoji').eq('channel_id', channelId).in('message_id', messageIds);
+        if (generation !== get().requestGeneration || get().fetchRequests[channelId] !== requestId) return;
+        if (reactionError) console.warn('Kanal tepkileri eşitlenemedi:', reactionError.message);
+        else {
+          const reactionsByMessage = new Map();
+          (reactions || []).forEach((reaction) => reactionsByMessage.set(reaction.message_id, [...(reactionsByMessage.get(reaction.message_id) || []), reaction]));
+          set((state) => ({ messages: {
+            ...state.messages,
+            [channelId]: (state.messages[channelId] || []).map((message) => messageIds.includes(message.id)
+              ? { ...message, reactions: reactionsByMessage.get(message.id) || [] }
+              : message),
+          } }));
+        }
+      }
     } else {
       console.error('Kanal mesajları yüklenemedi:', error?.message || 'Bilinmeyen veritabanı hatası');
       set({ isLoading: false });
@@ -85,6 +106,7 @@ export const useChatStore = create((set, get) => ({
     if (activeSubscription) void supabase.removeChannel(activeSubscription);
 
     let subscription;
+    let subscribedOnce = false;
     const isCurrent = () => get().subscriptionToken === subscriptionToken && generation === get().requestGeneration;
     subscription = supabase.channel(`public:messages:${channelId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${channelId}` }, async (payload) => {
@@ -118,7 +140,10 @@ export const useChatStore = create((set, get) => ({
         set((state) => ({ messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id, messages.map((message) => message.id === payload.old.message_id ? removeReaction(message, payload.old) : message)])) }));
       })
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED' && isCurrent()) void get().fetchMessages(channelId);
+        if (status === 'SUBSCRIBED' && isCurrent()) {
+          if (subscribedOnce) void get().fetchMessages(channelId);
+          subscribedOnce = true;
+        }
         else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') console.warn(`Sunucu mesaj kanalı bağlantı sorunu (${channelId}):`, status);
       });
 

@@ -116,6 +116,7 @@ export const useServerStore = create((set, get) => ({
   subscribeToServer: (serverId) => {
     if (!serverId) return () => {};
     let refreshTimer;
+    let subscribedOnce = false;
     const queueRefresh = () => {
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => { void get().refreshServer(serverId); }, 180);
@@ -126,8 +127,9 @@ export const useServerStore = create((set, get) => ({
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'servers', filter: `id=eq.${serverId}` }, queueRefresh)
       .subscribe((status) => {
         // Realtime can reconnect after a brief network interruption. Reload a
-        // snapshot when it comes back so a missed event never leaves stale UI.
-        if (status === 'SUBSCRIBED') queueRefresh();
+        // snapshot on reconnect; the initial server snapshot is already loaded.
+        if (status === 'SUBSCRIBED' && subscribedOnce) queueRefresh();
+        if (status === 'SUBSCRIBED') subscribedOnce = true;
       });
     return () => {
       clearTimeout(refreshTimer);
@@ -138,6 +140,7 @@ export const useServerStore = create((set, get) => ({
   subscribeToMembership: (userId) => {
     if (!userId) return () => {};
     let refreshTimer;
+    let subscribedOnce = false;
     const queueRefresh = () => {
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => { void get().fetchServers(); }, 180);
@@ -145,7 +148,8 @@ export const useServerStore = create((set, get) => ({
     const subscription = supabase.channel(`server-membership-live:${userId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'server_members', filter: `user_id=eq.${userId}` }, queueRefresh)
       .subscribe((status) => {
-        if (status === 'SUBSCRIBED') queueRefresh();
+        if (status === 'SUBSCRIBED' && subscribedOnce) queueRefresh();
+        if (status === 'SUBSCRIBED') subscribedOnce = true;
       });
     return () => {
       clearTimeout(refreshTimer);
