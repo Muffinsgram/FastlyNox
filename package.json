@@ -75,7 +75,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": false,
       "allowElevation": false,
-      "differentialPackage": "store-asar",
+      "differentialPackage": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     },
