@@ -20,7 +20,7 @@ const DEFAULT_KEYBINDS = { toggleMicrophone: 'Ctrl+Shift+KeyM', toggleDeafen: 'C
 
 function formatKeybind(binding) {
   if (!binding) return 'Atanmamış';
-  return binding.split('+').map(part => part.startsWith('Key') ? part.slice(3) : part.startsWith('Digit') ? part.slice(5) : part).join(' + ');
+  return binding.split('+').map(part => ({ AltRight: 'Sağ Alt', AltGraph: 'Sağ Alt', Mouse4: 'Fare 4', Mouse5: 'Fare 5' }[part] || (part.startsWith('Key') ? part.slice(3) : part.startsWith('Digit') ? part.slice(5) : part))).join(' + ');
 }
 
 function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalkChange, launchAtStartup, onLaunchAtStartupChange }) {
@@ -32,17 +32,32 @@ function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalk
   useEffect(() => { if (!window.fastlynoxDesktop?.setAutoStart) return; void window.fastlynoxDesktop.setAutoStart(launchAtStartup !== false).then(ok => setLaunchError(ok ? '' : 'Otomatik başlatma ayarı uygulanamadı.')).catch(() => setLaunchError('Otomatik başlatma ayarı uygulanamadı.')); }, [launchAtStartup]);
   useEffect(() => {
     if (!recording) return undefined;
+    let rightAltHeld = false;
     const capture = event => {
+      if (event.code === 'AltRight') rightAltHeld = event.type === 'keydown';
+      if (event.type === 'keydown') {
+        event.preventDefault(); event.stopPropagation();
+        if (event.key === 'Escape') { setRecording(''); return; }
+        if (['Shift', 'Control', 'Alt', 'Meta', 'AltGraph'].includes(event.key)) return;
+        const altGraph = event.getModifierState?.('AltGraph');
+        const chord = [event.ctrlKey && !altGraph && 'Ctrl', (rightAltHeld || altGraph) ? 'AltRight' : event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta', event.code].filter(Boolean).join('+');
+        const conflict = Object.entries(bindings).find(([key, binding]) => key !== recording && binding === chord);
+        if (conflict) { setNotice('Bu tuş başka bir işlemde kullanılıyor.'); return; }
+        onChange({ ...bindings, [recording]: chord }); setRecording(''); setNotice('Tuş ataması kaydedildi.');
+      }
+    };
+    const captureMouse = event => {
+      if (event.button !== 3 && event.button !== 4) return;
       event.preventDefault(); event.stopPropagation();
-      if (event.key === 'Escape') { setRecording(''); return; }
-      if (['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return;
-      const chord = [event.ctrlKey && 'Ctrl', event.altKey && 'Alt', event.shiftKey && 'Shift', event.metaKey && 'Meta', event.code].filter(Boolean).join('+');
+      const chord = event.button === 3 ? 'Mouse4' : 'Mouse5';
       const conflict = Object.entries(bindings).find(([key, binding]) => key !== recording && binding === chord);
       if (conflict) { setNotice('Bu tuş başka bir işlemde kullanılıyor.'); return; }
-      onChange({ ...bindings, [recording]: chord }); setRecording(''); setNotice('Tuş ataması kaydedildi.');
+      onChange({ ...bindings, [recording]: chord }); setRecording(''); setNotice('Fare tuşu ataması kaydedildi.');
     };
     window.addEventListener('keydown', capture, true);
-    return () => window.removeEventListener('keydown', capture, true);
+    window.addEventListener('keyup', capture, true);
+    window.addEventListener('mousedown', captureMouse, true);
+    return () => { window.removeEventListener('keydown', capture, true); window.removeEventListener('keyup', capture, true); window.removeEventListener('mousedown', captureMouse, true); };
   }, [recording, onChange, bindings]);
   const rows = [
     ['toggleMicrophone', 'Mikrofonu aç / kapat', 'Ses odasındayken mikrofon durumunu değiştir.'],
@@ -64,9 +79,9 @@ function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalk
     } catch { setLaunchCheck('Durum okunamadı. Uygulamayı yeniden başlatıp tekrar dene.'); }
   };
   return <section className="max-w-2xl space-y-3">
-    <div className="rounded-2xl border border-violet-200/10 bg-violet-300/[0.04] p-4 text-xs leading-5 text-slate-300">Bir atamaya tıkla, ardından istediğin tuş bileşimini bas. <kbd className="rounded border border-white/10 bg-black/20 px-1.5 py-0.5">Esc</kbd> ile vazgeçebilirsin.</div>
+    <div className="rounded-2xl border border-violet-200/10 bg-violet-300/[0.04] p-4 text-xs leading-5 text-slate-300">Bir atamaya tıkla, ardından tuş bileşimini bas. Sağ Alt ve yan fare tuşları (Fare 4/5) da atanabilir. <kbd className="rounded border border-white/10 bg-black/20 px-1.5 py-0.5">Esc</kbd> ile vazgeçebilirsin.</div>
     <PreferenceRow icon={<Mic className="h-4 w-4" />} title="Bas-konuş modu" description="Mikrofon, atadığın tuşa basılı tuttuğun sürece açılır." checked={Boolean(pushToTalkEnabled)} onChange={onPushToTalkChange} />
-    {rows.map(([key, title, description]) => <div key={key} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><span><span className="block text-sm font-semibold text-white">{title}</span><span className="mt-1 block text-xs text-slate-400">{description}</span></span><button type="button" onClick={() => { setNotice(''); setRecording(key); }} className={`min-w-36 rounded-xl border px-3 py-2 text-xs font-semibold transition ${recording === key ? 'border-violet-200/30 bg-violet-300/15 text-violet-100 animate-pulse' : 'border-white/10 bg-white/[0.05] text-slate-200 hover:bg-white/10'}`}>{recording === key ? 'Bir tuşa bas…' : formatKeybind(bindings[key])}</button></div>)}
+    {rows.map(([key, title, description]) => <div key={key} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><span><span className="block text-sm font-semibold text-white">{title}</span><span className="mt-1 block text-xs text-slate-400">{description}</span></span><button type="button" onClick={() => { setNotice(''); setRecording(key); }} className={`min-w-36 rounded-xl border px-3 py-2 text-xs font-semibold transition ${recording === key ? 'border-violet-200/30 bg-violet-300/15 text-violet-100 animate-pulse' : 'border-white/10 bg-white/[0.05] text-slate-200 hover:bg-white/10'}`}>{recording === key ? 'Tuş veya fare tuşu…' : formatKeybind(bindings[key])}</button></div>)}
     <div className="flex justify-end"><button type="button" onClick={resetBindings} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-white/[0.06]">Kısayolları varsayılana döndür</button></div>
     <PreferenceRow icon={<Settings2 className="h-4 w-4" />} title="Bilgisayar açılınca başlat" description="Fastlynox Windows oturum açılışında çalışır." checked={launchAtStartup !== false} onChange={onLaunchAtStartupChange} />
     {launchError && <p role="status" className="px-2 text-xs text-rose-200">{launchError}</p>}
@@ -239,7 +254,8 @@ export function UserSettingsModal({ onClose }) {
               <PreferenceRow icon={<Bell className="h-4 w-4" />} title="Rahatsız etmeyin" description="Masaüstü bildirimi ve açılır uyarıları sessize alır. Okunmamış rozetleri yine birikir." checked={preferences.doNotDisturb} onChange={(value) => updatePreference('doNotDisturb', value)} />
               <PreferenceRow icon={<Bell className="h-4 w-4" />} title="Masaüstü bildirimleri" description="Yeni bildirimleri uygulama arka plandayken göster." checked={preferences.desktopNotifications} onChange={(value) => updatePreference('desktopNotifications', value)} />
               {preferences.desktopNotifications && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><div><p className="text-sm font-semibold text-white">Masaüstü izni</p><p className="mt-1 text-xs text-slate-400">Durum: {notificationPermission === 'granted' ? 'İzin verildi' : notificationPermission === 'denied' ? 'Engellendi · işletim sistemi ayarlarından aç' : notificationPermission === 'unsupported' ? 'Bu ortam bildirimleri desteklemiyor' : 'Henüz izin istenmedi'}. Rahatsız Etme ve sessiz saatler bildirimleri bastırır.</p></div>{notificationPermission === 'granted' ? <button type="button" onClick={sendTestDesktopNotification} className="rounded-xl border border-violet-200/15 bg-violet-300/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-300/15">Test bildirimi</button> : notificationPermission !== 'unsupported' && <button type="button" onClick={() => void enableDesktopNotifications()} className="rounded-xl border border-violet-200/15 bg-violet-300/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-300/15">İzin iste</button>}</div>}
-              <PreferenceRow icon={<Volume2 className="h-4 w-4" />} title="Bildirim sesi" description="Bildirim geldiğinde kısa, hafif bir ses çal." checked={preferences.notificationSound} onChange={(value) => updatePreference('notificationSound', value)} />
+              <PreferenceRow icon={<Volume2 className="h-4 w-4" />} title="Bildirim sesi" description="Bildirim geldiğinde kısa bir ses çal." checked={preferences.notificationSound} onChange={(value) => updatePreference('notificationSound', value)} />
+              {preferences.notificationSound && <label className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-3"><span className="shrink-0 text-xs font-medium text-slate-300">Bildirim ses düzeyi</span><input aria-label="Bildirim ses düzeyi" type="range" min="0" max="100" value={preferences.notificationSoundVolume ?? 65} onChange={(event) => updatePreference('notificationSoundVolume', Number(event.target.value))} className="min-w-0 flex-1 accent-violet-400" /><span className="w-9 text-right text-xs tabular-nums text-slate-400">{preferences.notificationSoundVolume ?? 65}%</span></label>}
               <ServerNotificationSettings preferences={preferences} onChange={updatePreference} />
               <PreferenceRow icon={<Accessibility className="h-4 w-4" />} title="Hareketi azalt" description="Arayüz geçişlerini ve dikkat dağıtan animasyonları azalt." checked={preferences.reduceMotion} onChange={(value) => updatePreference('reduceMotion', value)} />
               <p className="px-1 pt-2 text-xs text-slate-500">Bu tercihler bu cihaz ve tarayıcıda saklanır.</p>

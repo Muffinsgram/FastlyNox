@@ -54,6 +54,26 @@ export const useDMChatStore = create((set, get) => ({
 
   bumpMessageEvent: (channelId) => set((state) => ({ messageEventVersions: { ...state.messageEventVersions, [channelId]: (state.messageEventVersions[channelId] || 0) + 1 } })),
 
+  receiveRealtimeMessage: (channelId, message, profile = null) => {
+    if (!channelId || !message?.id) return;
+    get().bumpMessageEvent(channelId);
+    set((state) => {
+      const current = state.messages[channelId] || [];
+      const existing = current.find((item) => item.id === message.id);
+      const incoming = { ...message, profiles: profile || message.profiles || existing?.profiles || null, isOptimistic: false };
+      const messages = existing
+        ? current.map((item) => item.id === message.id ? { ...item, ...incoming } : item)
+        : mergeMessage(current, incoming);
+      return { messages: { ...state.messages, [channelId]: messages } };
+    });
+  },
+
+  removeRealtimeMessage: (channelId, messageId) => {
+    if (!channelId || !messageId) return;
+    get().bumpMessageEvent(channelId);
+    set((state) => ({ messages: { ...state.messages, [channelId]: (state.messages[channelId] || []).filter((message) => message.id !== messageId) } }));
+  },
+
   subscribeToChannel: (channelId) => {
     if (!channelId) return;
     const generation = get().requestGeneration;
@@ -65,7 +85,6 @@ export const useDMChatStore = create((set, get) => ({
     if (activeSubscription) void supabase.removeChannel(activeSubscription);
 
     let subscription;
-    let subscribedOnce = false;
     const isCurrent = () => get().subscriptionToken === subscriptionToken && generation === get().requestGeneration;
     subscription = supabase.channel(`public:dm_messages:${channelId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages', filter: `dm_channel_id=eq.${channelId}` }, async (payload) => {
@@ -103,9 +122,8 @@ export const useDMChatStore = create((set, get) => ({
         set((state) => ({ messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id, messages.map((message) => message.id === payload.old.message_id ? removeReaction(message, payload.old) : message)])) }));
       })
       .subscribe((status) => {
-        if (status !== 'SUBSCRIBED' || !isCurrent()) return;
-        if (subscribedOnce) void get().fetchMessages(channelId);
-        subscribedOnce = true;
+        if (status === 'SUBSCRIBED' && isCurrent()) void get().fetchMessages(channelId);
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') console.warn(`DM mesaj kanalı bağlantı sorunu (${channelId}):`, status);
       });
 
     const refreshWhenConnected = () => { if (isCurrent() && document.visibilityState === 'visible') void get().fetchMessages(channelId); };

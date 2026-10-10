@@ -15,6 +15,8 @@ const FOLDER_ICONS = ['📁', '🎮', '👥', '💼', '🎨', '⭐'];
 export function ServerSidebar({ layout, setLayout, setShowCreateServer, setShowSettings }) {
   const { servers, activeServerId, isLoading, openServer, setActiveServer } = useServerStore();
   const serverUnreadCounts = useNotificationStore((state) => state.serverUnreadCounts);
+  const dmUnreadCounts = useNotificationStore((state) => state.dmUnreadCounts);
+  const totalDMUnread = Object.values(dmUnreadCounts).reduce((total, count) => total + (Number(count) || 0), 0);
   const user = useAuthStore((state) => state.user);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
@@ -387,10 +389,11 @@ export function ServerSidebar({ layout, setLayout, setShowCreateServer, setShowS
       )}
 
       <div className="macos-server-dock-items flex max-w-[calc(100vw-36px)] flex-row items-center gap-1 overflow-x-auto px-1">
-        <button type="button" aria-label="Direkt mesajlar" onClick={() => { setLayout('home'); setActiveServer(null); }} className="relative group server-icon flex h-11 w-11 shrink-0 items-center justify-center has-tooltip">
+        <button type="button" aria-label={`Direkt mesajlar${totalDMUnread ? `, ${totalDMUnread} okunmamış mesaj` : ''}`} onClick={() => { setLayout('home'); setActiveServer(null); }} className="relative group server-icon flex h-11 w-11 shrink-0 items-center justify-center has-tooltip">
           <div className={`server-icon-bg flex h-10 w-10 items-center justify-center rounded-[14px] text-white transition-all ${layout === 'home' ? 'bg-gradient-to-br from-violet-500 to-cyan-500 shadow-[0_4px_18px_rgba(113,133,255,.35)]' : 'bg-white/[0.06] hover:bg-white/[0.12]'}`}>
             <MessageSquare className="h-5 w-5" />
           </div>
+          {totalDMUnread > 0 && <span aria-label={`${totalDMUnread} okunmamış DM`} className="absolute -right-0.5 -top-0.5 grid h-5 min-w-5 place-items-center rounded-full border-2 border-[#151a24] bg-rose-400 px-1 text-[8px] font-black text-[#200b0b]">{totalDMUnread > 99 ? '99+' : totalDMUnread}</span>}
           <div className="fast-tooltip">Direkt Mesajlar</div>
         </button>
 

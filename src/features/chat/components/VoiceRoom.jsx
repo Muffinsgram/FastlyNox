@@ -812,12 +812,15 @@ function ScreenSourcePicker({ sources, settings, onSettingChange, pending, onCho
   </div>, document.body);
 }
 
-function matchesVoiceKeybind(event, binding) {
+function matchesVoiceKeybind(event, binding, rightAltHeld = false) {
   if (!binding) return false;
   const expected = binding.split('+');
+  if (expected.at(-1)?.startsWith('Mouse')) return false;
+  const expectsRightAlt = expected.includes('AltRight') || expected.includes('AltGraph');
   return expected.at(-1) === event.code
-    && expected.includes('Ctrl') === event.ctrlKey
-    && expected.includes('Alt') === event.altKey
+    && (expected.includes('Ctrl') || (expectsRightAlt && event.getModifierState?.('AltGraph'))) === event.ctrlKey
+    && (expected.includes('Alt') || expectsRightAlt) === event.altKey
+    && (!expectsRightAlt || rightAltHeld || event.getModifierState?.('AltGraph'))
     && expected.includes('Shift') === event.shiftKey
     && expected.includes('Meta') === event.metaKey;
 }
@@ -946,6 +949,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const pushToTalkEnabled = Boolean(voiceKeyPreferences.pushToTalkEnabled);
   const voiceInputRef = useRef({});
   const pushHeldRef = useRef(false);
+  const rightAltHeldRef = useRef(false);
   const pushEnablePromiseRef = useRef(Promise.resolve());
   const pushRestoreMicRef = useRef(false);
   const deafenActionRef = useRef(toggleDeafen);
@@ -987,34 +991,60 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
       }
     };
     const handleKeyDown = event => {
+      if (event.code === 'AltRight') rightAltHeldRef.current = true;
       const state = voiceInputRef.current;
       if (event.repeat || isEditable(event.target)) return;
-      if (matchesVoiceKeybind(event, state.keybinds.toggleMicrophone)) {
+      if (matchesVoiceKeybind(event, state.keybinds.toggleMicrophone, rightAltHeldRef.current)) {
         event.preventDefault();
         if (!state.pendingControl && !state.isDeafened && !state.pushToTalkEnabled) {
           const enabled = !state.isMicrophoneEnabled;
           void state.localParticipant.setMicrophoneEnabled(enabled, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).then(() => playUiSound(enabled ? 'microphoneOn' : 'microphoneOff', state.currentUserId)).catch(() => {});
         }
-      } else if (matchesVoiceKeybind(event, state.keybinds.toggleDeafen)) {
+      } else if (matchesVoiceKeybind(event, state.keybinds.toggleDeafen, rightAltHeldRef.current)) {
         event.preventDefault();
         deafenActionRef.current();
-      } else if (state.pushToTalkEnabled && matchesVoiceKeybind(event, state.keybinds.pushToTalk) && !state.isDeafened && !state.pendingControl) {
+      } else if (state.pushToTalkEnabled && matchesVoiceKeybind(event, state.keybinds.pushToTalk, rightAltHeldRef.current) && !state.isDeafened && !state.pendingControl) {
         event.preventDefault();
         if (pushHeldRef.current) return;
         pushHeldRef.current = true;
-        pushRestoreMicRef.current = state.pushToTalkEnabled ? false : state.isMicrophoneEnabled;
+        pushRestoreMicRef.current = state.isMicrophoneEnabled;
         if (!state.isMicrophoneEnabled) {
           pushEnablePromiseRef.current = state.localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).catch(error => { pushHeldRef.current = false; throw error; });
           void pushEnablePromiseRef.current.catch(() => {});
         }
       }
     };
-    const handleKeyUp = event => { if (pushHeldRef.current && event.code === voiceInputRef.current.keybinds.pushToTalk?.split('+').at(-1)) releasePushToTalk(); };
+    const handleKeyUp = event => { if (event.code === 'AltRight') rightAltHeldRef.current = false; if (pushHeldRef.current && event.code === voiceInputRef.current.keybinds.pushToTalk?.split('+').at(-1)) releasePushToTalk(); };
+    const handleMouseDown = event => {
+      const state = voiceInputRef.current;
+      const buttonKey = event.button === 3 ? 'Mouse4' : event.button === 4 ? 'Mouse5' : '';
+      if (!buttonKey) return;
+      const toggleMic = state.keybinds.toggleMicrophone === buttonKey;
+      const toggleHeadphones = state.keybinds.toggleDeafen === buttonKey;
+      const pushToTalk = state.keybinds.pushToTalk === buttonKey;
+      if (!toggleMic && !toggleHeadphones && !(pushToTalk && state.pushToTalkEnabled)) return;
+      event.preventDefault();
+      if (toggleMic && !state.pendingControl && !state.isDeafened && !state.pushToTalkEnabled) {
+        const enabled = !state.isMicrophoneEnabled;
+        void state.localParticipant.setMicrophoneEnabled(enabled, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).then(() => playUiSound(enabled ? 'microphoneOn' : 'microphoneOff', state.currentUserId)).catch(() => {});
+      } else if (toggleHeadphones) deafenActionRef.current();
+      else if (pushToTalk && !state.isDeafened && !state.pendingControl && !pushHeldRef.current) {
+        pushHeldRef.current = true;
+        pushRestoreMicRef.current = state.isMicrophoneEnabled;
+        if (!state.isMicrophoneEnabled) {
+          pushEnablePromiseRef.current = state.localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(state.voiceAudioSettings), getAudioPublishOptions(state.voiceAudioSettings)).catch(error => { pushHeldRef.current = false; throw error; });
+          void pushEnablePromiseRef.current.catch(() => {});
+        }
+      }
+    };
+    const handleMouseUp = event => { if ((event.button === 3 || event.button === 4) && pushHeldRef.current && voiceInputRef.current.keybinds.pushToTalk === (event.button === 3 ? 'Mouse4' : 'Mouse5')) releasePushToTalk(); };
     const handleBlur = () => releasePushToTalk();
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mousedown', handleMouseDown, true);
+    window.addEventListener('mouseup', handleMouseUp, true);
     window.addEventListener('blur', handleBlur);
-    return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); window.removeEventListener('blur', handleBlur); releasePushToTalk(); };
+    return () => { window.removeEventListener('keydown', handleKeyDown); window.removeEventListener('keyup', handleKeyUp); window.removeEventListener('mousedown', handleMouseDown, true); window.removeEventListener('mouseup', handleMouseUp, true); window.removeEventListener('blur', handleBlur); releasePushToTalk(); };
   }, [keybinds.toggleMicrophone, keybinds.toggleDeafen, keybinds.pushToTalk, pushToTalkEnabled]);
 
   const controls = [

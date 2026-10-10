@@ -7,8 +7,8 @@ import { usePresenceStore } from './usePresenceStore';
 const toastTimers = new Map();
 let notificationAudioContext;
 
-function playNotificationSound() {
-  if (typeof window === 'undefined') return;
+function playNotificationSound(volume = 65) {
+  if (typeof window === 'undefined' || Number(volume) <= 0) return;
   const AudioContextClass = window.AudioContext || window.webkitAudioContext;
   if (!AudioContextClass) return;
   try {
@@ -23,7 +23,7 @@ function playNotificationSound() {
       oscillator.type = 'sine';
       oscillator.frequency.setValueAtTime(frequency, start);
       gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(0.045, start + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.045 * Math.min(100, Math.max(0, Number(volume) || 0)) / 65, start + 0.012);
       gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.12);
       oscillator.connect(gain);
       gain.connect(context.destination);
@@ -232,7 +232,7 @@ export const useNotificationStore = create((set, get) => ({
           catch { /* Keep in-app notification delivery working if the OS blocks a desktop popup. */ }
         }
 
-        if (!doNotDisturb && !isOpenDM && preferences.notificationSound) playNotificationSound();
+        if (!doNotDisturb && !isOpenDM && preferences.notificationSound) playNotificationSound(preferences.notificationSoundVolume);
 
         if (isOpenDM) void supabase.from('notifications').update({ is_read: true }).eq('id', newNotif.id).eq('user_id', user.id);
         const notification = isOpenDM ? { ...newNotif, is_read: true } : newNotif;

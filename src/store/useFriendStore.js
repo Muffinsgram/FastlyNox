@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from './useAuthStore';
 import { fetchProfiles } from '../lib/profileMedia';
+import { useDMChatStore } from './useDMChatStore';
 
 export const useFriendStore = create((set, get) => ({
   friendships: [],
@@ -262,18 +263,27 @@ export const useFriendStore = create((set, get) => ({
         const message = payload.new;
         const channelId = message?.dm_channel_id || payload.old?.dm_channel_id;
         if (!channelId) return refresh();
+        const currentChannel = get().dmChannels.find((channel) => channel.id === channelId);
+        const senderProfile = currentChannel
+          ? (currentChannel.user1_id === message?.user_id ? currentChannel.user1 : currentChannel.user2)
+          : null;
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          useDMChatStore.getState().receiveRealtimeMessage(channelId, message, senderProfile);
+        } else if (payload.eventType === 'DELETE') {
+          useDMChatStore.getState().removeRealtimeMessage(channelId, payload.old?.id);
+        }
         if (payload.eventType !== 'INSERT') return refresh();
         set((state) => {
-          const currentChannel = state.dmChannels.find((channel) => channel.id === channelId);
-          if (!currentChannel) return state;
-          if (Date.parse(currentChannel.last_message?.created_at || '') >= Date.parse(message.created_at || '')) return state;
+          const channel = state.dmChannels.find((item) => item.id === channelId);
+          if (!channel) return state;
+          if (Date.parse(channel.last_message?.created_at || '') >= Date.parse(message.created_at || '')) return state;
           return { dmChannels: state.dmChannels.map((channel) => channel.id === channelId ? { ...channel, last_message: message } : channel).sort((left, right) => new Date(right.last_message?.created_at || right.created_at) - new Date(left.last_message?.created_at || left.created_at)) };
         });
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           refresh();
-        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           console.warn('DM aktivite kanalı bağlantı sorunu:', status);
         }
       });

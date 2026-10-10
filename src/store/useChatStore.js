@@ -54,6 +54,26 @@ export const useChatStore = create((set, get) => ({
 
   bumpMessageEvent: (channelId) => set((state) => ({ messageEventVersions: { ...state.messageEventVersions, [channelId]: (state.messageEventVersions[channelId] || 0) + 1 } })),
 
+  receiveRealtimeMessage: (channelId, message, profile = null) => {
+    if (!channelId || !message?.id) return;
+    get().bumpMessageEvent(channelId);
+    set((state) => {
+      const current = state.messages[channelId] || [];
+      const existing = current.find((item) => item.id === message.id);
+      const incoming = { ...message, profiles: profile || message.profiles || existing?.profiles || null, isOptimistic: false };
+      const messages = existing
+        ? current.map((item) => item.id === message.id ? { ...item, ...incoming } : item)
+        : mergeMessage(current, incoming);
+      return { messages: { ...state.messages, [channelId]: messages } };
+    });
+  },
+
+  removeRealtimeMessage: (channelId, messageId) => {
+    if (!channelId || !messageId) return;
+    get().bumpMessageEvent(channelId);
+    set((state) => ({ messages: { ...state.messages, [channelId]: (state.messages[channelId] || []).filter((message) => message.id !== messageId) } }));
+  },
+
   subscribeToChannel: (channelId) => {
     if (!channelId) return;
     const generation = get().requestGeneration;
@@ -65,34 +85,26 @@ export const useChatStore = create((set, get) => ({
     if (activeSubscription) void supabase.removeChannel(activeSubscription);
 
     let subscription;
-    let subscribedOnce = false;
     const isCurrent = () => get().subscriptionToken === subscriptionToken && generation === get().requestGeneration;
     subscription = supabase.channel(`public:messages:${channelId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `channel_id=eq.${channelId}` }, async (payload) => {
         if (!isCurrent()) return;
-        get().bumpMessageEvent(channelId);
         const newMsg = payload.new;
+        if (newMsg.channel_id !== channelId) return;
         const stateMessages = get().messages[channelId] || [];
         if (stateMessages.find(m => m.id === newMsg.id)) return;
-        const { data: profile } = await supabase.from('profiles').select('id, username, avatar_url').eq('id', newMsg.user_id).single();
-        if (!isCurrent()) return;
-        set((state) => ({ messages: { ...state.messages, [channelId]: mergeMessage(state.messages[channelId] || [], { ...newMsg, profiles: profile }) } }));
+        get().receiveRealtimeMessage(channelId, { ...newMsg, profiles: { id: newMsg.user_id, username: 'Yükleniyor', avatar_url: null } });
+        void supabase.from('profiles').select('id, username, avatar_url').eq('id', newMsg.user_id).single().then(({ data: profile }) => {
+          if (isCurrent() && profile) get().receiveRealtimeMessage(channelId, newMsg, profile);
+        }).catch((error) => console.warn('Canlı mesaj profili yüklenemedi:', error));
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `channel_id=eq.${channelId}` }, (payload) => {
         if (!isCurrent()) return;
-        get().bumpMessageEvent(channelId);
-        set((state) => {
-          const msgs = state.messages[channelId] || [];
-          return { messages: { ...state.messages, [channelId]: msgs.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m) } };
-        });
+        if (payload.new.channel_id === channelId) get().receiveRealtimeMessage(channelId, payload.new);
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages', filter: `channel_id=eq.${channelId}` }, (payload) => {
         if (!isCurrent()) return;
-        get().bumpMessageEvent(channelId);
-        set((state) => {
-          const msgs = state.messages[channelId] || [];
-          return { messages: { ...state.messages, [channelId]: msgs.filter(m => m.id !== payload.old.id) } };
-        });
+        if (payload.old.channel_id === channelId) get().removeRealtimeMessage(channelId, payload.old.id);
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions', filter: `channel_id=eq.${channelId}` }, (payload) => {
         if (!isCurrent()) return;
@@ -103,9 +115,8 @@ export const useChatStore = create((set, get) => ({
         set((state) => ({ messages: Object.fromEntries(Object.entries(state.messages).map(([id, messages]) => [id, messages.map((message) => message.id === payload.old.message_id ? removeReaction(message, payload.old) : message)])) }));
       })
       .subscribe((status) => {
-        if (status !== 'SUBSCRIBED' || !isCurrent()) return;
-        if (subscribedOnce) void get().fetchMessages(channelId);
-        subscribedOnce = true;
+        if (status === 'SUBSCRIBED' && isCurrent()) void get().fetchMessages(channelId);
+        else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') console.warn(`Sunucu mesaj kanalı bağlantı sorunu (${channelId}):`, status);
       });
 
     const refreshWhenConnected = () => { if (isCurrent() && document.visibilityState === 'visible') void get().fetchMessages(channelId); };
