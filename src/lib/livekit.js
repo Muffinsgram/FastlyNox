@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { readFunctionError } from './edgeFunctions';
+import { createVoiceTokenRequests } from './voiceTokenRequests';
 
 let connectionWarmup;
 export function prepareVoiceConnection() {
@@ -12,7 +13,7 @@ export function prepareVoiceConnection() {
 /** Request a short-lived LiveKit token from the trusted server endpoint.
  * LiveKit API secrets must never be included in browser code.
  */
-export async function generateLiveKitToken(channelId, { dmChannelId = null } = {}) {
+async function requestLiveKitToken(channelId, { dmChannelId = null } = {}) {
   const readSession = async (refresh = false) => {
     const { data: { session } } = await supabase.auth.getSession();
     if (refresh || !session?.access_token || (session.expires_at && session.expires_at * 1000 < Date.now() + 60_000)) {
@@ -62,4 +63,19 @@ export async function generateLiveKitToken(channelId, { dmChannelId = null } = {
   const { token } = await response.json();
   if (!token) throw new Error('The voice token service returned no token.');
   return token;
+}
+
+const voiceTokens = createVoiceTokenRequests(requestLiveKitToken);
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'SIGNED_OUT' || event === 'SIGNED_IN' || event === 'USER_UPDATED') voiceTokens.clear();
+});
+
+export function prefetchVoiceToken(userId, channelId, dmChannelId = null) {
+  if (userId && channelId) voiceTokens.prefetch(userId, channelId, dmChannelId);
+}
+
+export async function generateLiveKitToken(channelId, { dmChannelId = null } = {}) {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.user?.id) throw new Error('Ses odasına katılmak için tekrar giriş yap.');
+  return voiceTokens.join(session.user.id, channelId, dmChannelId);
 }

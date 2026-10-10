@@ -74,19 +74,15 @@ function EnableMicrophoneAfterConnect({ settings, deafened, pushToTalkEnabled, o
   return null;
 }
 
-function VoiceConnectionOverlay({ channelName, onLeave }) {
+function VoiceConnectionStatus() {
   const connectionState = useConnectionState();
   if (connectionState === 'connected') return null;
   const isReconnecting = connectionState === 'reconnecting';
 
   return (
-    <div className="fixed inset-0 z-[210] grid place-items-center bg-[#0b0e14] p-6 text-center" role="status" aria-live="polite">
-      <div className="flex flex-col items-center">
-        <span aria-hidden="true" className="mb-5 h-6 w-6 animate-spin rounded-full border-2 border-emerald-400 border-r-transparent" />
-        <h1 className="text-base font-bold text-white">{isReconnecting ? 'Ses odasına yeniden bağlanılıyor…' : `${channelName} odasına bağlanılıyor…`}</h1>
-        <p className="mt-2 text-sm text-slate-500">Bağlantı kurulurken mikrofon izni istenebilir.</p>
-        <button type="button" onClick={onLeave} className="mt-5 inline-flex items-center gap-2 rounded-xl border border-rose-300/20 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-500/20"><PhoneOff className="h-4 w-4" /> Ayrıl</button>
-      </div>
+    <div className="flex shrink-0 items-center gap-2 border-b border-emerald-300/10 bg-emerald-400/[0.04] px-4 py-2 text-xs text-emerald-200" role="status" aria-live="polite">
+      <span aria-hidden="true" className="h-3 w-3 shrink-0 animate-spin rounded-full border border-emerald-400 border-r-transparent" />
+      {isReconnecting ? 'Ses bağlantısı yenileniyor…' : 'Ses bağlantısı kuruluyor…'}
     </div>
   );
 }
@@ -134,9 +130,9 @@ function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened, outputVol
   })}</div>;
 }
 
-function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, onPresenceError, onParticipantsChange, contextMenuRequest, onContextMenuRequestHandled }) {
+function VoiceParticipants({ serverId, channelId, initialParticipants = [], localDeafened, outputVolume, onPresenceError, onParticipantsChange, contextMenuRequest, onContextMenuRequestHandled }) {
   const room = useRoomContext();
-  const participants = useParticipants();
+  const participants = useParticipants().filter(participant => participant.identity);
   const { isMicrophoneEnabled } = useLocalParticipant();
   const speakingParticipants = useSpeakingParticipants();
   const connectionState = useConnectionState();
@@ -574,7 +570,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-white">Ses odasındakiler</h2>
-          <p className="mt-1 text-xs text-slate-500">{participants.length} kişi bağlı</p>
+          <p className="mt-1 text-xs text-slate-500">{connectionState === 'connected' ? `${participants.length} kişi bağlı` : 'Odaya katılıyorsun'}</p>
         </div>
         <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300">
         <span className={`h-2 w-2 rounded-full ${connectionState === 'connected' ? 'bg-emerald-400' : connectionState === 'reconnecting' ? 'bg-amber-400 animate-pulse' : 'bg-slate-500'}`} />
@@ -634,11 +630,9 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
           })}
         </ul>
       ) : (
-        <div className="flex flex-1 flex-col items-center justify-center py-20 text-center">
-          <div className="mb-4 grid h-14 w-14 place-items-center rounded-2xl border border-white/10 bg-white/[0.04] text-slate-400"><Users className="h-6 w-6" /></div>
-          <p className="font-semibold text-slate-200">Henüz kimse bağlanmadı</p>
-          <p className="mt-1 text-xs text-slate-500">Odaya ilk katılan sen olabilirsin.</p>
-        </div>
+        <ul aria-label="Ses odası hazırlanıyor" className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-3">
+          {[currentUser, ...initialParticipants.filter(person => person.id !== currentUser?.id)].filter(Boolean).map(person => <li key={person.id} className="flex min-h-36 flex-col items-center justify-center gap-3 rounded-[22px] border border-white/[0.08] bg-[#111722]/85 p-5"><img src={getAvatarUrl(person.avatar_url, person.username)} alt="" className="h-[4.5rem] w-[4.5rem] rounded-full border-2 border-[#111722]" /><span className="max-w-full truncate text-sm font-semibold text-white">{person.username || 'Sen'}{person.id === currentUser?.id ? ' (Sen)' : ''}</span><span className="text-xs text-slate-500">{person.id === currentUser?.id ? 'Bağlanıyor…' : 'Ses kanalında'}</span></li>)}
+        </ul>
       )}
       {moderationNotice && <p role="status" className="mt-3 text-center text-[11px] text-slate-400">{moderationNotice}</p>}
       {contextMenu && (() => {
@@ -1322,10 +1316,11 @@ function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, compa
   );
 }
 
-export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, channelName, isStageVisible = true, contextMenuRequest, onContextMenuRequestHandled, onPresenceError, onLeave = () => {}, onReturn = () => {}, onParticipantsChange = () => {} }) {
+export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, channelName, initialParticipants = [], isStageVisible = true, contextMenuRequest, onContextMenuRequestHandled, onPresenceError, onLeave = () => {}, onReturn = () => {}, onParticipantsChange = () => {} }) {
   const [localDeafened, setLocalDeafened] = useState(false);
   const [connection, setConnection] = useState({ channelId: null, userId: null, token: null, error: '' });
   const [attempt, setAttempt] = useState(0);
+  const [connectedRoom, setConnectedRoom] = useState(null);
   const [deviceWarning, setDeviceWarning] = useState('');
   const [showVoiceChat, setShowVoiceChat] = useState(false);
   const [isDockExpanded, setIsDockExpanded] = useState(false);
@@ -1334,6 +1329,12 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
   const [pushToTalkEnabled, setPushToTalkEnabled] = useState(() => Boolean(getAppPreferences(userId).pushToTalkEnabled));
 
   const [voiceAudioSettings, setVoiceAudioSettings] = useState(() => ({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) }));
+  // Keep the actual connection stable when audio settings change. Individual
+  // microphone publications apply their new settings without rebuilding Room.
+  const room = useMemo(() => new LiveKitClientRoom({
+    publishDefaults: getAudioPublishOptions({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) }),
+    webAudioMix: true, adaptiveStream: true, dynacast: true,
+  }), [channelId, userId, attempt]);
 
   useEffect(() => {
     setVoiceAudioSettings({ ...DEFAULT_VOICE_AUDIO_SETTINGS, ...(getAppPreferences(userId).voiceAudioSettings || {}) });
@@ -1352,6 +1353,8 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
   useEffect(() => {
     let isCurrent = true;
     if (!channelId || !userId) return () => { isCurrent = false; };
+    const url = import.meta.env.VITE_LIVEKIT_URL;
+    if (url) void room.prepareConnection(url).catch(() => {});
 
     generateLiveKitToken(channelId, { dmChannelId })
       .then((token) => {
@@ -1367,7 +1370,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
       });
 
     return () => { isCurrent = false; };
-  }, [channelId, dmChannelId, userId, attempt]);
+  }, [channelId, dmChannelId, userId, attempt, room]);
 
   const isCurrentConnection = connection.channelId === channelId && connection.userId === userId;
   const token = isCurrentConnection ? connection.token : null;
@@ -1375,10 +1378,12 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
   const error = isCurrentConnection ? connection.error : '';
   const connectionError = error || (token && !liveKitUrl ? 'LiveKit sunucu adresi yapılandırılmamış.' : '');
   const handleLiveKitConnected = useCallback(() => {
+    setConnectedRoom(room);
     setDeviceWarning('');
     playUiSound('join', userId);
-  }, [userId]);
+  }, [userId, room]);
   const handleLiveKitDisconnected = useCallback((reason) => {
+    setConnectedRoom(null);
     onParticipantsChange([], channelId);
     // The SDK emits this for intentional cleanup (including a cancelled
     // in-flight connect). Keep the active session/token intact in that case;
@@ -1428,7 +1433,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           {!isStageVisible && <button type="button" onClick={onReturn} className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-slate-300 transition hover:bg-white/10 hover:text-white" aria-label="Ses odasına dön" title="Ses odasına dön"><Expand className="h-4 w-4" /></button>}
           {isStageVisible && <button type="button" aria-pressed={showVoiceChat} onClick={() => setShowVoiceChat((value) => !value)} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${showVoiceChat ? 'border-violet-300/20 bg-violet-400/15 text-violet-100' : 'border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]'}`}><MessageSquare className="h-4 w-4" /> Sesli sohbet</button>}
           <div className="flex items-center gap-2 rounded-md bg-white/5 px-3 py-1 text-sm font-medium text-slate-400">
-            {token ? 'Canlı ses' : 'Bağlanıyor…'}
+            {connectedRoom === room ? 'Canlı ses' : 'Bağlanıyor…'}
           </div>
         </div>
       </div>}
@@ -1437,7 +1442,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-emerald-300/15 bg-emerald-400/10 text-emerald-300"><Headphones className="h-4 w-4" /></div>
           <div className="min-w-0 flex-1">
             <p className="max-w-28 truncate text-xs font-bold text-white">{channelName}</p>
-            <p className="flex items-center gap-1 text-[9px] text-emerald-200"><span className={`h-1.5 w-1.5 rounded-full bg-emerald-400 ${token ? 'animate-pulse' : 'animate-spin border border-emerald-200 border-t-transparent bg-transparent'}`} /> {token ? 'Canlı' : 'Bağlanıyor…'}</p>
+            <p className="flex items-center gap-1 text-[9px] text-emerald-200"><span className={`h-1.5 w-1.5 rounded-full bg-emerald-400 ${connectedRoom === room ? 'animate-pulse' : 'animate-spin border border-emerald-200 border-t-transparent bg-transparent'}`} /> {connectedRoom === room ? 'Canlı' : 'Bağlanıyor…'}</p>
           </div>
           <button type="button" onClick={onReturn} className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/10 text-slate-300 transition hover:bg-white/10 hover:text-white" aria-label="Ses odasına dön" title="Ses odasına dön"><Expand className="h-4 w-4" /></button>
         </div>
@@ -1449,7 +1454,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           key={`${channelId}:${attempt}`}
           video={false}
           audio={false}
-          options={{ publishDefaults: getAudioPublishOptions(voiceAudioSettings), webAudioMix: true, adaptiveStream: true, dynacast: true }}
+          room={room}
           connect={Boolean(token)}
           connectOptions={{ autoSubscribe: false }}
           token={token || undefined}
@@ -1461,11 +1466,11 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           onMediaDeviceFailure={handleMediaDeviceFailure}
           onError={handleLiveKitError}
         >
-          <VoiceConnectionOverlay channelName={channelName} onLeave={onLeave} />
           <EnableMicrophoneAfterConnect settings={voiceAudioSettings} deafened={localDeafened} pushToTalkEnabled={pushToTalkEnabled} onFailure={handleMediaDeviceFailure} />
           <div className={`flex min-h-0 flex-col ${isStageVisible || isDockExpanded ? 'h-full' : ''}`}>
+            {(isStageVisible || isDockExpanded) && <VoiceConnectionStatus />}
             <div className={isStageVisible || isDockExpanded ? 'flex min-h-0 flex-1' : 'pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0'}>
-              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4"><VoiceParticipants serverId={serverId} channelId={channelId} localDeafened={localDeafened} outputVolume={voiceAudioSettings.outputVolume} onPresenceError={onPresenceError} onParticipantsChange={onParticipantsChange} contextMenuRequest={contextMenuRequest} onContextMenuRequestHandled={onContextMenuRequestHandled} /></div>
+              <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4"><VoiceParticipants serverId={serverId} channelId={channelId} initialParticipants={initialParticipants} localDeafened={localDeafened} outputVolume={voiceAudioSettings.outputVolume} onPresenceError={onPresenceError} onParticipantsChange={onParticipantsChange} contextMenuRequest={contextMenuRequest} onContextMenuRequestHandled={onContextMenuRequestHandled} /></div>
               {isStageVisible && showVoiceChat && <aside aria-label="Ses kanalı metin sohbeti" className="w-[min(360px,45%)] min-w-[280px] shrink-0 border-l border-white/[0.07] bg-[#0d1119]"><ChatArea activeChannelId={channelId} channelName={`${channelName} sohbeti`} /></aside>}
             </div>
             <VoiceControls onLeave={onLeave} isDeafened={localDeafened} onDeafenedChange={setLocalDeafened} compact={!isStageVisible} expanded={isDockExpanded} onToggleExpand={() => setIsDockExpanded((value) => !value)} />

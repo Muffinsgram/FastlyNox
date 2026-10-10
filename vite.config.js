@@ -41,21 +41,26 @@ function installLiveKitTokenRoute(server, env) {
         global: { headers: { Authorization: `Bearer ${accessToken}` } },
         auth: { persistSession: false, autoRefreshToken: false },
       });
-      const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
+      const [authResult, roomResult] = await Promise.all([
+        supabase.auth.getUser(accessToken),
+        dmChannelId
+          ? supabase.from('dm_channels').select('id,user1_id,user2_id').eq('id', dmChannelId).maybeSingle()
+          : supabase.from('channels').select('id,server_id,type').eq('id', channelId).maybeSingle(),
+      ]);
+      const { data: authData, error: authError } = authResult;
       if (authError || !authData.user) return respond(401, { error: 'Authentication expired. Sign in again.' });
 
       const profilePromise = Promise.resolve(supabase.from('profiles').select('username').eq('id', authData.user.id).maybeSingle());
 
       let roomId;
       if (dmChannelId) {
-        const { data: dm, error: dmError } = await supabase.from('dm_channels').select('id, user1_id, user2_id').eq('id', dmChannelId).maybeSingle();
+        const { data: dm, error: dmError } = roomResult;
         if (dmError) throw dmError;
         if (!dm) return respond(404, { error: 'DM call room not found.' });
         if (![dm.user1_id, dm.user2_id].includes(authData.user.id)) return respond(403, { error: 'You are not a participant in this DM.' });
         roomId = `direct-${dm.id}`;
       } else {
-        const { data: channel, error: channelError } = await supabase
-          .from('channels').select('id, server_id, type').eq('id', channelId).maybeSingle();
+        const { data: channel, error: channelError } = roomResult;
         if (channelError) throw channelError;
         if (!channel || channel.type !== 'voice') return respond(404, { error: 'Voice channel not found.' });
 

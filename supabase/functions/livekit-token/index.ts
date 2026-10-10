@@ -47,7 +47,15 @@ Deno.serve(async (request) => {
       global: { headers: { Authorization: `Bearer ${accessToken}` } },
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    // Both requests are authenticated with the caller's bearer token. Begin
+    // the RLS-protected room lookup alongside auth, but never issue a token
+    // until authentication and every permission check have succeeded.
+    const [authResult, channelResult, dmResult] = await Promise.all([
+      supabase.auth.getUser(accessToken),
+      !dmChannelId ? supabase.from('channels').select('id,server_id,type').eq('id', channelId).maybeSingle() : null,
+      dmChannelId ? supabase.from('dm_channels').select('id,user1_id,user2_id').eq('id', dmChannelId).maybeSingle() : null,
+    ]);
+    const { data: { user }, error: authError } = authResult;
     if (authError || !user) return respond(401, { error: 'Authentication expired. Sign in again.' });
     // Fetch the display name while room and permission checks run, instead of
     // adding another sequential database round trip before signing the token.
@@ -55,8 +63,7 @@ Deno.serve(async (request) => {
 
     if (action === 'list_participants') {
       if (dmChannelId) return respond(400, { error: 'DM roster is not supported by this action.' });
-      const { data: channel, error: channelError } = await supabase
-        .from('channels').select('id, server_id, type').eq('id', channelId).maybeSingle();
+      const { data: channel, error: channelError } = channelResult!;
       if (channelError) throw channelError;
       if (!channel || channel.type !== 'voice') return respond(404, { error: 'Voice channel not found.' });
       const { data: membership, error: membershipError } = await supabase.from('server_members')
@@ -103,15 +110,13 @@ Deno.serve(async (request) => {
     let canSubscribe = true;
     let canPublishSources = ['microphone', 'camera', 'screen_share', 'screen_share_audio'];
     if (dmChannelId) {
-      const { data: dm, error: dmError } = await supabase.from('dm_channels')
-        .select('id, user1_id, user2_id').eq('id', dmChannelId).maybeSingle();
+      const { data: dm, error: dmError } = dmResult!;
       if (dmError) throw dmError;
       if (!dm) return respond(404, { error: 'DM call room not found.' });
       if (![dm.user1_id, dm.user2_id].includes(user.id)) return respond(403, { error: 'You are not a participant in this DM.' });
       roomId = `direct-${dm.id}`;
     } else {
-      const { data: channel, error: channelError } = await supabase
-        .from('channels').select('id, server_id, type').eq('id', channelId).maybeSingle();
+      const { data: channel, error: channelError } = channelResult!;
       if (channelError) throw channelError;
       if (!channel || channel.type !== 'voice') return respond(404, { error: 'Voice channel not found.' });
 

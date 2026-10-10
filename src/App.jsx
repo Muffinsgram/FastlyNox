@@ -33,7 +33,7 @@ import { MarketingLanding } from './components/layout/MarketingLanding';
 import { ServerInviteModal } from './components/layout/ServerInviteModal';
 import { UserProfileModal } from './components/layout/UserProfileModal';
 import { latestVoicePresence, mergeVoicePresenceEvent, visibleVoiceRoster } from './lib/voicePresence';
-import { prepareVoiceConnection } from './lib/livekit';
+import { prepareVoiceConnection, prefetchVoiceToken } from './lib/livekit';
 import { invokeAuthenticatedFunction } from './lib/edgeFunctions';
 
 const CreateServerModal = lazy(() => import('./features/servers/components/CreateServerModal').then((module) => ({ default: module.CreateServerModal })));
@@ -224,6 +224,19 @@ export default function App() {
   const [channelOrderError, setChannelOrderError] = useState('');
   const [serverCapabilities, setServerCapabilities] = useState({ serverId: null, manageChannels: false, moveMembers: false });
   const [voiceSession, setVoiceSession] = useState(null);
+  const voiceIntentTimer = useRef(null);
+  useEffect(() => () => clearTimeout(voiceIntentTimer.current), [user?.id]);
+  const prepareVoiceIntent = (channel, immediate = false) => {
+    clearTimeout(voiceIntentTimer.current);
+    if (channel.type !== 'voice' || voiceSession?.channelId === channel.id || voiceSession?.kind === 'dm') return;
+    if (channel.nsfw && !sessionStorage.getItem('fastcord:nsfw-consent')) return;
+    const prepare = () => {
+      void Promise.allSettled([loadVoiceRoom(), prepareVoiceConnection()]);
+      prefetchVoiceToken(user?.id, channel.id);
+    };
+    if (immediate) prepare();
+    else voiceIntentTimer.current = setTimeout(prepare, 180);
+  };
   const [incomingCallInvite, setIncomingCallInvite] = useState(null);
   const voiceSessionRef = useRef(null);
   const [voiceParticipants, setVoiceParticipants] = useState([]);
@@ -949,6 +962,11 @@ export default function App() {
                               className={`group/channel relative ${dropTargetChannelId === ch.id ? 'rounded-md border-t-2 border-violet-300' : 'border-t-2 border-transparent'} ${draggedChannelId === ch.id ? 'opacity-45' : ''}`}
                             >
                               <button 
+                                onPointerEnter={() => prepareVoiceIntent(ch)}
+                                onPointerLeave={() => clearTimeout(voiceIntentTimer.current)}
+                                onFocus={() => prepareVoiceIntent(ch)}
+                                onBlur={() => clearTimeout(voiceIntentTimer.current)}
+                                onPointerDown={() => prepareVoiceIntent(ch, true)}
                                 onClick={() => handleChannelSelect(ch)} 
                                 className={`w-full flex justify-between items-center px-2 py-1.5 pr-8 rounded-md transition-colors group ${activeChannelId === ch.id ? 'bg-white/10 text-white' : voiceSession?.channelId === ch.id ? 'bg-emerald-400/[0.06] text-emerald-100' : 'hover:bg-white/5 text-slate-400 hover:text-slate-200'}`}
                               >
@@ -1021,6 +1039,7 @@ export default function App() {
             serverId={voiceSession.kind === 'dm' ? null : voiceSession.serverId}
             dmChannelId={voiceSession.kind === 'dm' ? voiceSession.dmChannelId : null}
             channelName={voiceSession.channelName}
+            initialParticipants={voicePresenceByChannel[voiceSession.channelId] || []}
             contextMenuRequest={voiceMemberMenuRequest}
             onContextMenuRequestHandled={() => setVoiceMemberMenuRequest(null)}
             isStageVisible={voiceSession.kind === 'dm' ? layout === 'home' : layout === 'server' && activeServerId === voiceSession.serverId && activeChannelId === voiceSession.channelId}
