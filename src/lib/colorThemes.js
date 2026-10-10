@@ -24,6 +24,14 @@ export const COLOR_THEMES = [
   { id: 'blueprint', name: 'Blueprint', description: 'Teknik mavi · ince çerçeveler', style: 'outline', bg: '#0d162a', sidebar: '#080f20', panel: '#172640', surface: '#253c5b', accent: '#91cafa', secondary: '#a8e2df' },
   { id: 'obsidian', name: 'Obsidian', description: 'Siyah taş · sade yüzeyler', style: 'sharp', bg: '#08090b', sidebar: '#040507', panel: '#121519', surface: '#22272e', accent: '#bcc7d6', secondary: '#849cc4' },
   { id: 'cherry', name: 'Cherry Noir', description: 'Vişne · dumanlı cam', style: 'glass', bg: '#1a0e15', sidebar: '#11090e', panel: '#2d1724', surface: '#442438', accent: '#e98fad', secondary: '#c4a8d7' },
+  { id: 'origami', name: 'Origami', description: 'Katlanmış köşeler · mürekkep ve kayısı', style: 'asymmetric', bg: '#181e2b', sidebar: '#101521', panel: '#252f42', surface: '#34435b', accent: '#bc9471', secondary: '#719caa' },
+  { id: 'river-stone', name: 'River Stone', description: 'Organik taşlar · adaçayı ve kum', style: 'pebble', bg: '#17221c', sidebar: '#101912', panel: '#25382c', surface: '#354b3b', accent: '#88ab79', secondary: '#b39b73' },
+  { id: 'paper-moon', name: 'Paper Moon', description: 'Katmanlı kartlar · koyu füme', style: 'layered', bg: '#202025', sidebar: '#16161b', panel: '#2d2e36', surface: '#3d3e48', accent: '#aaa6bb', secondary: '#819bad' },
+  { id: 'arcade', name: 'Arcade', description: 'Siyah zemin · neon çerçeveler', style: 'neon', bg: '#000000', sidebar: '#050506', panel: '#111014', surface: '#201c29', accent: '#946bca', secondary: '#579f94' },
+  { id: 'atelier', name: 'Atelier', description: 'Çift çerçeve · koyu ceviz', style: 'double', bg: '#241a15', sidebar: '#19110e', panel: '#35261e', surface: '#473329', accent: '#b59673', secondary: '#86916d' },
+  { id: 'night-ticket', name: 'Night Ticket', description: 'Bilet çizgileri · turuncu ve petrol', style: 'ticket', bg: '#13232e', sidebar: '#0d1922', panel: '#203747', surface: '#2c4a59', accent: '#b8895e', secondary: '#629da2' },
+  { id: 'pop-art', name: 'Pop Art', description: 'Grafit gri · sert gölgeler', style: 'brutalist', bg: '#212226', sidebar: '#17181b', panel: '#303238', surface: '#43464e', accent: '#a2aa61', secondary: '#957cae' },
+  { id: 'ribbon', name: 'Ribbon', description: 'Renk şeritleri · böğürtlen ve buz', style: 'ribbon', bg: '#281b28', sidebar: '#1b121d', panel: '#3a293d', surface: '#4b3651', accent: '#b785a5', secondary: '#72a7ae' },
 ];
 
 export const SURFACE_STYLES = [
@@ -32,6 +40,14 @@ export const SURFACE_STYLES = [
   { id: 'glass', name: 'Cam', radius: 24, blur: 12, shadow: '0 12px 36px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.09)' },
   { id: 'sharp', name: 'Düz ve köşeli', radius: 8, blur: 0, shadow: 'none' },
   { id: 'outline', name: 'Çerçeveli', radius: 12, blur: 0, shadow: 'inset 0 0 0 1px color-mix(in srgb, var(--theme-accent) 20%, transparent)' },
+  { id: 'asymmetric', name: 'Origami', description: 'Çapraz, asimetrik köşeler', radius: 28, corners: '28px 6px 28px 6px', blur: 0, shadow: 'inset 3px 0 0 color-mix(in srgb, var(--theme-accent) 65%, transparent), 0 8px 24px rgba(0,0,0,.18)' },
+  { id: 'pebble', name: 'Çakıl taşı', description: 'Organik, oval köşeler', radius: 28, corners: '28px 14px 32px 18px / 18px 28px 16px 30px', blur: 0, shadow: 'inset 0 1px 0 rgba(255,255,255,.1), 0 8px 24px rgba(0,0,0,.2)' },
+  { id: 'layered', name: 'Katmanlı', description: 'Üst üste duran kartlar', radius: 16, blur: 0, shadow: '2px 2px 0 var(--theme-bg), 4px 4px 0 color-mix(in srgb, var(--theme-accent) 35%, var(--theme-panel)), 6px 6px 0 var(--theme-bg), 8px 8px 0 color-mix(in srgb, var(--theme-secondary) 22%, var(--theme-panel))' },
+  { id: 'neon', name: 'Neon', description: 'Sabit ışıklı çift renk', radius: 14, blur: 0, shadow: 'inset 0 0 0 1px color-mix(in srgb, var(--theme-accent) 55%, transparent), 0 0 16px color-mix(in srgb, var(--theme-accent) 13%, transparent)' },
+  { id: 'double', name: 'Galeri', description: 'İç içe ince çerçeveler', radius: 18, blur: 0, shadow: 'inset 0 0 0 4px var(--theme-panel), inset 0 0 0 5px color-mix(in srgb, var(--theme-accent) 28%, transparent)' },
+  { id: 'ticket', name: 'Bilet', description: 'Kesikli çizgiler, çapraz köşeler', radius: 18, corners: '6px 24px 6px 24px', blur: 0, shadow: 'inset 0 0 0 4px var(--theme-panel)' },
+  { id: 'brutalist', name: 'Pop kutu', description: 'Sert gölge, grafik çerçeve', radius: 8, blur: 0, shadow: '5px 5px 0 color-mix(in srgb, var(--theme-accent) 50%, var(--theme-bg))' },
+  { id: 'ribbon', name: 'Şerit', description: 'İki renkte kenar şeritleri', radius: 22, corners: '6px 22px 22px 6px', blur: 0, shadow: 'inset 4px 0 0 var(--theme-accent), inset 0 -3px 0 color-mix(in srgb, var(--theme-secondary) 55%, transparent), 0 8px 24px rgba(0,0,0,.16)' },
 ];
 
 export function getSurfaceStyle(themeId, override = 'auto') {
@@ -40,7 +56,7 @@ export function getSurfaceStyle(themeId, override = 'auto') {
 }
 
 export function surfaceVariables(style) {
-  return { '--theme-radius': `${style.radius}px`, '--theme-blur': `${style.blur}px`, '--theme-shadow': style.shadow };
+  return { '--theme-radius': style.corners || `${style.radius}px`, '--theme-blur': `${style.blur}px`, '--theme-shadow': style.shadow };
 }
 
 export const getColorTheme = (id) => COLOR_THEMES.find((theme) => theme.id === id) || COLOR_THEMES[0];

@@ -91,3 +91,35 @@ html[data-surface-style="soft"] .macos-surface {
 html[data-surface-style="sharp"] :is(.theme-card, .macos-surface, .macos-composer) {
   background: var(--theme-panel) !important;
 }
+
+/* Previews share the actual frame treatment, scoped to their own palette. */
+[data-surface-preview] {
+  border-radius: var(--theme-radius);
+  box-shadow: var(--theme-shadow);
+  background: var(--theme-panel);
+  border-color: color-mix(in srgb, var(--theme-accent) 24%, transparent);
+}
+:is(html[data-surface-style="asymmetric"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="asymmetric"]) {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--theme-accent) 9%, var(--theme-panel)), var(--theme-panel) 45%) !important;
+}
+:is(html[data-surface-style="pebble"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="pebble"]) {
+  background: radial-gradient(ellipse at top left, color-mix(in srgb, var(--theme-secondary) 9%, var(--theme-panel)), var(--theme-panel) 75%) !important;
+}
+:is(html[data-surface-style="layered"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="layered"]) {
+  background: linear-gradient(165deg, var(--theme-panel), color-mix(in srgb, var(--theme-panel) 85%, var(--theme-bg))) !important;
+}
+:is(html[data-surface-style="neon"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="neon"]) {
+  background: radial-gradient(ellipse at bottom right, color-mix(in srgb, var(--theme-secondary) 7%, var(--theme-panel)), var(--theme-panel) 70%) !important;
+}
+:is(html[data-surface-style="double"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="double"]) {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--theme-secondary) 5%, var(--theme-panel)), var(--theme-panel)) !important;
+}
+:is(html[data-surface-style="ticket"] :is(.theme-card, .macos-surface, .macos-composer, .screen-share-card:not(:fullscreen), .camera-stage-card:not(:fullscreen)), [data-surface-preview="ticket"]) {
+  border-style: dashed;
+}
+:is(html[data-surface-style="brutalist"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="brutalist"]) {
+  background: var(--theme-panel) !important;
+}
+:is(html[data-surface-style="ribbon"] :is(.theme-card, .macos-surface, .macos-composer), [data-surface-preview="ribbon"]) {
+  background: linear-gradient(100deg, color-mix(in srgb, var(--theme-accent) 7%, var(--theme-panel)), var(--theme-panel) 30%) !important;
+}
