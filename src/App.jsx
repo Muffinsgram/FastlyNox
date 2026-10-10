@@ -148,10 +148,17 @@ export default function App() {
         // Presence heartbeat runs every 12s. A 36s lease tolerates a missed
         // packet while clearing disconnected users promptly.
         const cutoff = new Date(Date.now() - 36_000).toISOString();
-        const { data: rows, error: presenceError } = await supabase.from('server_voice_presence')
-          .select('channel_id,user_id,microphone_enabled,deafened,updated_at')
+        let { data: rows, error: presenceError } = await supabase.from('server_voice_presence')
+          .select('channel_id,user_id,microphone_enabled,deafened,speaking,updated_at')
           .eq('server_id', activeServerId).in('channel_id', channelIds).gt('updated_at', cutoff);
         if (!alive) return;
+        if (presenceError && /speaking|column/i.test(presenceError.message || '')) {
+          const fallback = await supabase.from('server_voice_presence')
+            .select('channel_id,user_id,microphone_enabled,deafened,updated_at')
+            .eq('server_id', activeServerId).in('channel_id', channelIds).gt('updated_at', cutoff);
+          rows = fallback.data;
+          presenceError = fallback.error;
+        }
         if (presenceError) {
           console.warn('Ses kanalı katılımcıları alınamadı:', presenceError.message);
           return; // Never replace a good roster with an empty one on query failure.
@@ -165,7 +172,7 @@ export default function App() {
           currentRows.forEach((row) => {
             const profile = voiceProfileCacheRef.current.get(row.user_id) || {};
             const mod = moderation.get(`${row.channel_id}:${row.user_id}`) || {};
-            (next[row.channel_id] ||= []).push({ id: row.user_id, username: profile.username || 'Fastlynox kullanıcısı', avatar_url: profile.avatar_url || null, microphoneEnabled: row.microphone_enabled, deafened: row.deafened, serverMuted: Boolean(mod.server_muted), serverDeafened: Boolean(mod.server_deafened), speaking: false });
+            (next[row.channel_id] ||= []).push({ id: row.user_id, username: profile.username || 'Fastlynox kullanıcısı', avatar_url: profile.avatar_url || null, microphoneEnabled: row.microphone_enabled, deafened: row.deafened, serverMuted: Boolean(mod.server_muted), serverDeafened: Boolean(mod.server_deafened), speaking: Boolean(row.speaking) });
           });
           return next;
         };
@@ -424,6 +431,8 @@ export default function App() {
     resetFriendData();
     resetNotifications();
     fetchServers();
+    void useFriendStore.getState().fetchFriendships();
+    void useFriendStore.getState().fetchDMs();
   }, [session?.user?.id, fetchServers, resetServers, resetChannelMessages, resetDMMessages, resetFriendData, resetNotifications]);
 
   // Keep the server rail in sync when this account is added to or removed from
@@ -442,6 +451,45 @@ export default function App() {
     if (!session?.user?.id) return undefined;
     return subscribeToDMActivity(session.user.id);
   }, [session?.user?.id, subscribeToDMActivity]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId) return undefined;
+    let active = true;
+    const subscription = supabase.channel(`voice-move:${userId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'server_voice_presence', filter: `user_id=eq.${userId}` }, async ({ eventType, new: row }) => {
+        const current = voiceSessionRef.current;
+        if (!active || eventType === 'DELETE' || !row?.server_id || !row?.channel_id || current?.kind === 'dm' || current?.serverId !== row.server_id || current.channelId === row.channel_id) return;
+        const knownChannel = useServerStore.getState().servers.find(item => item.id === row.server_id)?.categories?.flatMap(category => category.channels || []).find(item => item.id === row.channel_id);
+        let channel = knownChannel;
+        if (!channel) {
+          const { data } = await supabase.from('channels').select('id,name,server_id,type').eq('id', row.channel_id).eq('server_id', row.server_id).maybeSingle();
+          channel = data;
+        }
+        if (!active || !channel || channel.type !== 'voice' || voiceSessionRef.current?.channelId === row.channel_id) return;
+        setVoiceSession(previous => previous && previous.serverId === row.server_id ? { ...previous, channelId: channel.id, channelName: channel.name } : previous);
+        openServer(row.server_id);
+        setActiveChannel(row.channel_id);
+        setLayout('server');
+        setVoiceNotice(`Ses odası ${channel.name} olarak değiştirildi.`);
+        playUiSound('move', userId);
+      })
+      .subscribe();
+    return () => { active = false; void supabase.removeChannel(subscription); };
+  }, [session?.user?.id, openServer, setActiveChannel]);
+
+  useEffect(() => {
+    const openDirectMessage = async (event) => {
+      const targetId = event.detail?.userId;
+      if (!targetId || targetId === user?.id) return;
+      const dm = await useFriendStore.getState().getOrCreateDM(targetId);
+      if (!dm) return;
+      setPendingDMId(dm.id);
+      setLayout('home');
+    };
+    window.addEventListener('fastlynox:open-dm', openDirectMessage);
+    return () => window.removeEventListener('fastlynox:open-dm', openDirectMessage);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!isInitialized || !sharedInviteCode) return;

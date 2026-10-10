@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from './useAuthStore';
+import { fetchProfiles } from '../lib/profileMedia';
 
 export const useFriendStore = create((set, get) => ({
   friendships: [],
@@ -27,7 +28,7 @@ export const useFriendStore = create((set, get) => ({
     if (!get().friendships.length) set({ isLoading: true });
 
     // Fetch friendships where user is requester or addressee
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('friendships')
       .select(`
         *,
@@ -36,13 +37,31 @@ export const useFriendStore = create((set, get) => ({
       `)
       .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`);
 
+    // The embedded profile relation can fail independently when PostgREST's
+    // schema cache is stale. Keep the friendship rows visible and hydrate names
+    // from profiles as a fallback instead of dropping the whole list.
+    if (error) {
+      const fallback = await supabase.from('friendships').select('*')
+        .or(`requester_id.eq.${user.id},addressee_id.eq.${user.id}`);
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (generation !== get().friendRequestGeneration) return;
     if (eventVersion !== get().friendshipEventVersion) {
       window.setTimeout(() => void get().fetchFriendships(), 120);
       return;
     }
     if (!error && data) {
-      set({ friendships: data, isLoading: false });
+      const ids = [...new Set(data.flatMap(item => [item.requester_id, item.addressee_id]).filter(id => id && id !== user.id))];
+      const profiles = await fetchProfiles(ids).catch(() => []);
+      const profileMap = new Map(profiles.map(profile => [profile.id, profile]));
+      const hydrated = data.map(item => ({
+        ...item,
+        requester: item.requester || (item.requester_id === user.id ? useAuthStore.getState().user : profileMap.get(item.requester_id) || null),
+        addressee: item.addressee || (item.addressee_id === user.id ? useAuthStore.getState().user : profileMap.get(item.addressee_id) || null),
+      }));
+      if (generation === get().friendRequestGeneration) set({ friendships: hydrated, isLoading: false });
     } else {
       console.error('Arkadaşlıklar yüklenemedi:', error?.message || 'Bilinmeyen veritabanı hatası');
       set({ isLoading: false });
@@ -52,6 +71,7 @@ export const useFriendStore = create((set, get) => ({
   subscribeToFriendships: (userId) => {
     if (!userId) return () => {};
     let refreshTimer;
+    const recoveryTimer = window.setInterval(() => { if (document.visibilityState === 'visible') void get().fetchFriendships(); }, 45_000);
     const refresh = () => {
       clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => { void get().fetchFriendships(); }, 100);
@@ -78,6 +98,7 @@ export const useFriendStore = create((set, get) => ({
     document.addEventListener('visibilitychange', handleVisibility);
     return () => {
       clearTimeout(refreshTimer);
+      clearInterval(recoveryTimer);
       window.removeEventListener('online', handleOnline);
       document.removeEventListener('visibilitychange', handleVisibility);
       void supabase.removeChannel(channel);
@@ -85,6 +106,10 @@ export const useFriendStore = create((set, get) => ({
   },
 
   sendFriendRequest: async (username) => {
+    return get().sendFriendRequestToUser(username, false);
+  },
+
+  sendFriendRequestToUser: async (target, isUserId = true) => {
     const user = useAuthStore.getState().user;
     if (!user) return { success: false, error: 'Not authenticated' };
 
@@ -92,8 +117,8 @@ export const useFriendStore = create((set, get) => ({
     const { data: targetUser, error: searchError } = await supabase
       .from('profiles')
       .select('id, username, avatar_url, status_text, status_expires_at')
-      .eq('username', username)
-      .single();
+      .eq(isUserId ? 'id' : 'username', target)
+      .maybeSingle();
 
     if (searchError || !targetUser) return { success: false, error: 'Kullanıcı bulunamadı.' };
     if (targetUser.id === user.id) return { success: false, error: 'Kendinize arkadaşlık isteği gönderemezsiniz.' };
@@ -170,7 +195,7 @@ export const useFriendStore = create((set, get) => ({
     const generation = get().dmRequestGeneration + 1;
     set({ dmRequestGeneration: generation });
     
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('dm_channels')
       .select(`
         *,
@@ -180,12 +205,23 @@ export const useFriendStore = create((set, get) => ({
       .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
       .order('created_at', { ascending: false });
 
+    if (error) {
+      const fallback = await supabase.from('dm_channels').select('*')
+        .or(`user1_id.eq.${user.id},user2_id.eq.${user.id}`)
+        .order('created_at', { ascending: false });
+      data = fallback.data;
+      error = fallback.error;
+    }
+
     if (generation !== get().dmRequestGeneration) return;
     if (eventVersion !== get().dmActivityVersion) {
       window.setTimeout(() => void get().fetchDMs(), 150);
       return;
     }
     if (error || !data) { console.error('DM listesi eşitlenemedi:', error?.message || 'Bilinmeyen veritabanı hatası'); return; }
+    const profiles = await fetchProfiles([...new Set(data.flatMap(channel => [channel.user1_id, channel.user2_id]).filter(id => id && id !== user.id))]).catch(() => []);
+    const profileMap = new Map(profiles.map(profile => [profile.id, profile]));
+    const hydratedChannels = data.map(channel => ({ ...channel, user1: channel.user1 || (channel.user1_id === user.id ? user : profileMap.get(channel.user1_id) || null), user2: channel.user2 || (channel.user2_id === user.id ? user : profileMap.get(channel.user2_id) || null) }));
     const channelIds = data.map((channel) => channel.id);
     let latestByChannel = {};
     if (channelIds.length) {
@@ -202,7 +238,7 @@ export const useFriendStore = create((set, get) => ({
       window.setTimeout(() => void get().fetchDMs(), 150);
       return;
     }
-    set({ dmChannels: data.map((channel) => ({ ...channel, last_message: latestByChannel[channel.id] || null }))
+    set({ dmChannels: hydratedChannels.map((channel) => ({ ...channel, last_message: latestByChannel[channel.id] || null }))
       .sort((left, right) => Date.parse(right.last_message?.created_at || right.created_at) - Date.parse(left.last_message?.created_at || left.created_at)) });
   },
 
@@ -242,11 +278,13 @@ export const useFriendStore = create((set, get) => ({
         }
       });
     const refreshOnReconnect = () => refresh();
+    const recoveryTimer = window.setInterval(refresh, 45_000);
     const refreshOnVisibility = () => { if (document.visibilityState === 'visible') refresh(); };
     window.addEventListener('online', refreshOnReconnect);
     document.addEventListener('visibilitychange', refreshOnVisibility);
     const cleanup = () => {
       clearTimeout(refreshTimer);
+      clearInterval(recoveryTimer);
       window.removeEventListener('online', refreshOnReconnect);
       document.removeEventListener('visibilitychange', refreshOnVisibility);
       void supabase.removeChannel(subscription);
@@ -259,13 +297,19 @@ export const useFriendStore = create((set, get) => ({
     const user = useAuthStore.getState().user;
     if (!user) return null;
 
-    // Check if DM already exists in state
+    if (!otherUserId || otherUserId === user.id) return null;
+    // Consult the database as well as the local list. A second device can have
+    // created the conversation moments ago while this client's cache is stale.
     const existing = get().dmChannels.find(
       dm => (dm.user1_id === user.id && dm.user2_id === otherUserId) || 
             (dm.user1_id === otherUserId && dm.user2_id === user.id)
     );
 
     if (existing) return existing;
+
+    const pairFilter = `and(user1_id.eq.${user.id},user2_id.eq.${otherUserId}),and(user1_id.eq.${otherUserId},user2_id.eq.${user.id})`;
+    const { data: found } = await supabase.from('dm_channels').select(`*, user1:user1_id(id, public_id, username, avatar_url, status_text, status_expires_at), user2:user2_id(id, public_id, username, avatar_url, status_text, status_expires_at)`).or(pairFilter).limit(1).maybeSingle();
+    if (found) { set(state => ({ dmChannels: [found, ...state.dmChannels.filter(channel => channel.id !== found.id)] })); return found; }
 
     // Create new DM channel
     const { data, error } = await supabase
@@ -284,6 +328,10 @@ export const useFriendStore = create((set, get) => ({
     if (!error && data) {
       set(state => ({ dmChannels: [data, ...state.dmChannels] }));
       return data;
+    }
+    if (error?.code === '23505') {
+      const { data: duplicate } = await supabase.from('dm_channels').select(`*, user1:user1_id(id, public_id, username, avatar_url, status_text, status_expires_at), user2:user2_id(id, public_id, username, avatar_url, status_text, status_expires_at)`).or(pairFilter).limit(1).maybeSingle();
+      if (duplicate) { set(state => ({ dmChannels: [duplicate, ...state.dmChannels.filter(channel => channel.id !== duplicate.id)] })); return duplicate; }
     }
     return null;
   }

@@ -34,21 +34,23 @@ Deno.serve(async (request) => {
 
   try {
     const body = await request.json();
-    const { serverId, channelId, targetUserId, action } = body ?? {};
+    const { serverId, channelId, targetUserId, action, destinationChannelId } = body ?? {};
     const memberAction = action === 'kick_member' || action === 'ban_member';
     const invalidIdentity = ![serverId, channelId, targetUserId]
       .every(value => typeof value === 'string' && value.length <= 128);
     const invalidAction = ![
       'server_mute', 'server_unmute', 'server_deafen', 'server_undeafen',
-      'kick_member', 'ban_member',
+      'kick_member', 'ban_member', 'move_member',
     ].includes(action);
+    const invalidDestination = action === 'move_member'
+      && (typeof destinationChannelId !== 'string' || destinationChannelId.length > 128 || destinationChannelId === channelId);
     const invalidReason = memberAction
       && typeof body?.reason === 'string'
       && body.reason.length > 500;
     const invalidBanDuration = action === 'ban_member'
       && body?.banDurationHours != null
       && ![1, 24, 168, 720].includes(Number(body.banDurationHours));
-    if (invalidIdentity || invalidAction || invalidReason || invalidBanDuration) {
+    if (invalidIdentity || invalidAction || invalidDestination || invalidReason || invalidBanDuration) {
       return respond(400, { error: 'Ses işlemi geçersiz.' });
     }
 
@@ -62,6 +64,7 @@ Deno.serve(async (request) => {
 
     const permission = action === 'kick_member' ? 'kick_members'
       : action === 'ban_member' ? 'ban_members'
+        : action === 'move_member' ? 'move_members'
         : action.includes('deafen') ? 'deafen_members' : 'mute_members';
     const { data: allowed, error: permissionError } = await userClient.rpc('has_server_permission', {
       server_uuid: serverId,
@@ -78,6 +81,32 @@ Deno.serve(async (request) => {
     if (targetError || !target) return respond(404, { error: 'Üye bu sunucuda bulunamadı.' });
 
     const admin = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    if (action === 'move_member') {
+      const { data: destination, error: destinationError } = await userClient.from('channels')
+        .select('id,server_id,type,name,is_private').eq('id', destinationChannelId).eq('server_id', serverId).maybeSingle();
+      if (destinationError || !destination || destination.type !== 'voice') return respond(404, { error: 'Hedef ses kanalı bulunamadı.' });
+      const [{ data: canView }, { data: targetPresence }] = await Promise.all([
+        userClient.rpc('has_channel_permission', { channel_uuid: destination.id, permission_key: 'view_channel' }),
+        admin.from('server_voice_presence').select('microphone_enabled,deafened').eq('server_id', serverId).eq('channel_id', channelId).eq('user_id', targetUserId).maybeSingle(),
+      ]);
+      if (!canView) return respond(403, { error: 'Hedef kanalı görme yetkin yok.' });
+      if (!targetPresence) return respond(409, { error: 'Üye artık bu ses kanalında görünmüyor.' });
+      const roomServiceUrl = liveKitUrl.replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:');
+      try {
+        await new RoomServiceClient(roomServiceUrl, liveKitApiKey, liveKitApiSecret).moveParticipant(channelId, targetUserId, destination.id);
+      } catch (error) {
+        console.error('LiveKit participant move failed:', error);
+        return respond(502, { error: 'Üye LiveKit ses odasına taşınamadı. Bağlantısı kesilmiş olabilir.' });
+      }
+      await admin.from('server_voice_presence').delete().eq('channel_id', channelId).eq('user_id', targetUserId);
+      const { error: presenceError } = await admin.from('server_voice_presence').upsert({
+        server_id: serverId, channel_id: destination.id, user_id: targetUserId,
+        microphone_enabled: targetPresence.microphone_enabled, deafened: targetPresence.deafened,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'channel_id,user_id' });
+      if (presenceError) console.warn('Moved voice presence could not be refreshed:', presenceError.message);
+      return respond(200, { success: true, moved: true, destinationChannelId: destination.id, destinationChannelName: destination.name });
+    }
     if (memberAction) {
       const { error: moderationError } = await userClient.rpc('moderate_server_member_with_expiry', {
         server_uuid: serverId,

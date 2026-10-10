@@ -6,6 +6,7 @@ import { AudioPresets, DisconnectReason, Room as LiveKitClientRoom, Track, suppo
 import { Activity, AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Minimize2, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, Shield, ShieldAlert, Signal, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
 import { generateLiveKitToken } from '../../../lib/livekit';
 import { useAuthStore } from '../../../store/useAuthStore';
+import { useServerStore } from '../../../store/useServerStore';
 import { fetchProfiles, getAvatarUrl } from '../../../lib/profileMedia';
 import { ChatArea } from './ChatArea';
 import { playUiSound } from '../../../lib/uiSounds';
@@ -119,12 +120,13 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
   const connectionState = useConnectionState();
   const videoTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: true });
   const currentUser = useAuthStore((state) => state.user);
+  const server = useServerStore((state) => state.servers.find((item) => item.id === serverId));
   const [profiles, setProfiles] = useState([]);
   const [expandedShareId, setExpandedShareId] = useState(null);
   const [shareFullscreenError, setShareFullscreenError] = useState('');
   const [moderationByUser, setModerationByUser] = useState({});
   const [deafenedByUser, setDeafenedByUser] = useState({});
-  const [canModerateVoice, setCanModerateVoice] = useState({ mute: false, deafen: false, kick: false, ban: false });
+  const [canModerateVoice, setCanModerateVoice] = useState({ mute: false, deafen: false, kick: false, ban: false, move: false });
   const [contextMenu, setContextMenu] = useState(null);
   const [moderationDialog, setModerationDialog] = useState(null);
   const [moderationReason, setModerationReason] = useState('');
@@ -144,9 +146,10 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
     && !track.publication.isMuted
     && track.publication.track?.mediaStreamTrack?.readyState === 'live');
 
-  const voiceStateRef = useRef({ microphoneEnabled: false, deafened: false });
+  const isSpeaking = speakingParticipants.some(participant => participant.identity === currentUser?.id);
+  const voiceStateRef = useRef({ microphoneEnabled: false, deafened: false, speaking: false });
   const presenceWarningShown = useRef(false);
-  voiceStateRef.current = { microphoneEnabled: Boolean(isMicrophoneEnabled && !localDeafened), deafened: Boolean(localDeafened) };
+  voiceStateRef.current = { microphoneEnabled: Boolean(isMicrophoneEnabled && !localDeafened), deafened: Boolean(localDeafened), speaking: Boolean(isSpeaking) };
   const publishVoicePresence = () => {
     if (!serverId || !channelId || !currentUser?.id || connectionState !== 'connected') return;
     void supabase.rpc('set_server_voice_presence', {
@@ -154,12 +157,13 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
       channel_uuid: channelId,
       mic_enabled: voiceStateRef.current.microphoneEnabled,
       is_deafened: voiceStateRef.current.deafened,
+      is_speaking: voiceStateRef.current.speaking,
     }).then(({ error }) => {
       if (error) {
         if (!presenceWarningShown.current) {
           presenceWarningShown.current = true;
           const migrationMissing = /set_server_voice_presence|schema cache|function.*not found/i.test(error.message);
-          onPresenceError?.(migrationMissing ? 'Ses kanalındaki kişileri göstermek için güncel migration_server_voice_presence.sql dosyasını Supabase SQL Editor’da yeniden çalıştır.' : `Ses durumu yayınlanamadı: ${error.message}`);
+          onPresenceError?.(migrationMissing ? 'Ses kanalı durumu için migration_voice_speaking_presence.sql dosyasını Supabase SQL Editor’da çalıştır.' : `Ses durumu yayınlanamadı: ${error.message}`);
         }
       } else presenceWarningShown.current = false;
     });
@@ -175,7 +179,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
   // briefly leave the connected state, and an async delete can race the next heartbeat.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, channelId, currentUser?.id, connectionState]);
-  useEffect(() => { publishVoicePresence(); }, [isMicrophoneEnabled, localDeafened, connectionState, serverId, channelId, currentUser?.id]);
+  useEffect(() => { publishVoicePresence(); }, [isMicrophoneEnabled, localDeafened, isSpeaking, connectionState, serverId, channelId, currentUser?.id]);
   const speakingIds = new Set(speakingParticipants.map((participant) => participant.identity));
   const rosterKey = participants.map((participant) => `${participant.identity}:${participant.isMicrophoneEnabled ? 1 : 0}:${speakingIds.has(participant.identity) ? 1 : 0}:${moderationByUser[participant.identity]?.server_muted ? 1 : 0}:${moderationByUser[participant.identity]?.server_deafened ? 1 : 0}`).sort().join('|');
 
@@ -207,7 +211,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
   }, [participantKey]);
 
   useEffect(() => {
-    if (!serverId || !channelId) { setModerationByUser({}); setDeafenedByUser({}); setCanModerateVoice({ mute: false, deafen: false, kick: false, ban: false }); return undefined; }
+    if (!serverId || !channelId) { setModerationByUser({}); setDeafenedByUser({}); setCanModerateVoice({ mute: false, deafen: false, kick: false, ban: false, move: false }); return undefined; }
     let active = true;
     void supabase.from('server_voice_moderation').select('user_id,server_muted,server_deafened').eq('channel_id', channelId)
       .then(({ data }) => { if (active) setModerationByUser(Object.fromEntries((data || []).map(row => [row.user_id, row]))); });
@@ -218,7 +222,8 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
       supabase.rpc('has_server_permission', { server_uuid: serverId, permission_key: 'deafen_members' }),
       supabase.rpc('has_server_permission', { server_uuid: serverId, permission_key: 'kick_members' }),
       supabase.rpc('has_server_permission', { server_uuid: serverId, permission_key: 'ban_members' }),
-    ]).then(([muteResult, deafenResult, kickResult, banResult]) => { if (active) setCanModerateVoice({ mute: Boolean(muteResult.data), deafen: Boolean(deafenResult.data), kick: Boolean(kickResult.data), ban: Boolean(banResult.data) }); });
+      supabase.rpc('has_server_permission', { server_uuid: serverId, permission_key: 'move_members' }),
+    ]).then(([muteResult, deafenResult, kickResult, banResult, moveResult]) => { if (active) setCanModerateVoice({ mute: Boolean(muteResult.data), deafen: Boolean(deafenResult.data), kick: Boolean(kickResult.data), ban: Boolean(banResult.data), move: Boolean(moveResult.data) }); });
     const subscription = supabase.channel(`voice-moderation:${channelId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'server_voice_presence', filter: `channel_id=eq.${channelId}` }, payload => {
         const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
@@ -327,6 +332,23 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
     }
     setModerationByUser(current => ({ ...current, [participant.identity]: { user_id: participant.identity, server_muted: data.serverMuted, server_deafened: data.serverDeafened } }));
     setModerationNotice(data.activeSessionUpdated ? 'Sunucu ses durumu güncellendi.' : 'Durum kaydedildi; aktif bağlantıya ulaşılmadı, yeniden bağlanınca uygulanacak.');
+    setContextMenu(null);
+  };
+
+  const moveMemberToVoiceChannel = async (participant, destinationChannelId) => {
+    if (!serverId || !channelId || !participant?.identity || !destinationChannelId || moderationBusy) return;
+    setModerationBusy(`${participant.identity}:move_member`);
+    setModerationNotice('');
+    const { data, error } = await supabase.functions.invoke('server-voice-control', {
+      body: { serverId, channelId, targetUserId: participant.identity, action: 'move_member', destinationChannelId },
+    });
+    setModerationBusy('');
+    if (error || !data?.success) {
+      setModerationNotice(data?.error || error?.message || 'Üye başka ses kanalına taşınamadı.');
+      return;
+    }
+    const destination = (server?.categories || []).flatMap(category => category.channels || []).find(item => item.id === destinationChannelId);
+    setModerationNotice(`${participant.name || 'Üye'} ${destination?.name || 'başka bir ses kanalına'} taşındı.`);
     setContextMenu(null);
   };
 
@@ -478,6 +500,11 @@ function VoiceParticipants({ serverId, channelId, localDeafened, onPresenceError
             {serverId && !participant.isLocal && (canModerateVoice.kick || canModerateVoice.ban) && <div className="mt-2 space-y-1 border-t border-white/[0.07] pt-2">
               {canModerateVoice.kick && <button type="button" disabled={moderationBusy !== ''} onClick={() => { setModerationReason(''); setModerationDialog({ participantId: participant.identity, kind: 'kick' }); setContextMenu(null); }} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-medium text-amber-100 transition hover:bg-amber-300/[0.08] disabled:opacity-50"><UserMinus className="h-4 w-4" />Sunucudan at</button>}
               {canModerateVoice.ban && <button type="button" disabled={moderationBusy !== ''} onClick={() => { setModerationReason(''); setBanDurationHours('permanent'); setModerationDialog({ participantId: participant.identity, kind: 'ban' }); setContextMenu(null); }} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-medium text-rose-200 transition hover:bg-rose-300/[0.08] disabled:opacity-50"><Ban className="h-4 w-4" />Sunucudan yasakla…</button>}
+            </div>}
+            {serverId && !participant.isLocal && canModerateVoice.move && <div className="mt-2 border-t border-white/[0.07] pt-2">
+              <div className="px-2.5 pb-1 text-[9px] font-bold uppercase tracking-wider text-slate-500">Başka ses kanalına taşı</div>
+              <div className="max-h-32 space-y-0.5 overflow-y-auto">{(server?.categories || []).flatMap(category => (category.channels || []).map(channel => ({ ...channel, categoryName: category.name }))).filter(channel => channel.type === 'voice' && channel.id !== channelId).map(channel => <button key={channel.id} type="button" disabled={moderationBusy !== ''} onClick={() => void moveMemberToVoiceChannel(participant, channel.id)} className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs text-slate-200 transition hover:bg-violet-300/[0.09] disabled:opacity-50"><Volume2 className="h-3.5 w-3.5 text-violet-200" /><span className="min-w-0 flex-1 truncate">{channel.name}</span><span className="max-w-20 truncate text-[9px] text-slate-600">{channel.categoryName}</span>{moderationBusy === `${participant.identity}:move_member` && <RefreshCw className="h-3 w-3 animate-spin" />}</button>)}</div>
+              {!(server?.categories || []).some(category => (category.channels || []).some(channel => channel.type === 'voice' && channel.id !== channelId)) && <p className="px-2.5 py-2 text-[10px] text-slate-500">Taşınabilecek başka ses kanalı yok.</p>}
             </div>}
             {participant.isLocal && <p className="rounded-xl bg-white/[0.035] px-3 py-2 text-[10px] text-slate-400">Kendi ses ve bağlantı kontrollerin alttaki ses çubuğunda.</p>}
             <p className="mt-2 px-1 text-[9px] leading-4 text-slate-600">Kişisel ses düzeyi yalnızca bu cihazda saklanır.</p>
@@ -805,6 +832,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const [soundboardOpen, setSoundboardOpen] = useState(false);
   const [screenSources, setScreenSources] = useState([]);
   const [screenSourcePickerOpen, setScreenSourcePickerOpen] = useState(false);
+  const [screenShareMenuOpen, setScreenShareMenuOpen] = useState(false);
   const currentUserId = useAuthStore((state) => state.user?.id);
   const [voiceKeyPreferences, setVoiceKeyPreferences] = useState(() => getAppPreferences(currentUserId));
   const microphoneTestActiveRef = useRef(false);
@@ -841,7 +869,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
 
   const startScreenShare = async () => {
     if (isScreenShareEnabled) {
-      await toggle('screen', () => localParticipant.setScreenShareEnabled(false));
+      setScreenShareMenuOpen(value => !value);
       return;
     }
     if (!window.fastlynoxDesktop?.listScreenSources) {
@@ -865,11 +893,28 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     }
   };
 
+  const openScreenShareSettings = async () => {
+    setScreenShareMenuOpen(false);
+    if (!window.fastlynoxDesktop?.listScreenSources) {
+      setControlError('Yayın kaynağı ayarları masaüstü uygulamasında kullanılabilir.');
+      return;
+    }
+    setPendingControl('screen');
+    try {
+      const sources = await window.fastlynoxDesktop.listScreenSources();
+      setScreenSources(sources || []);
+      setScreenSourcePickerOpen(true);
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : 'Yayın kaynakları alınamadı.');
+    } finally { setPendingControl(''); }
+  };
+
   const chooseScreenSource = async (source) => {
     if (pendingControl) return;
     setPendingControl('screen');
     setControlError('');
     try {
+      if (isScreenShareEnabled) await localParticipant.setScreenShareEnabled(false);
       const selected = await window.fastlynoxDesktop.selectScreenSource(source.id, screenShareSettings.audio);
       if (!selected) throw new Error('Ekran kaynağı seçilemedi. Yeniden dene.');
       await localParticipant.setScreenShareEnabled(true, getScreenShareCaptureOptions(screenShareSettings), getScreenSharePublishOptions(screenShareSettings));
@@ -983,16 +1028,18 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
     <div className={`${compact ? 'shrink-0' : 'shrink-0 border-t border-white/[0.07] bg-[#0b0e14]/75 px-4 py-3 backdrop-blur-2xl'}`}>
       {controlError && <p role="alert" className="mx-auto mb-2 max-w-xl rounded-lg border border-rose-300/15 bg-rose-400/5 px-3 py-2 text-center text-xs text-rose-200">{controlError}</p>}
       <div className={`mx-auto flex items-center justify-center gap-1.5 rounded-full border border-white/10 bg-white/[0.055] p-1 shadow-[0_12px_36px_rgba(0,0,0,.28)] ${compact ? 'w-fit max-w-full' : 'max-w-3xl gap-2 rounded-2xl p-2'}`}>
-        {controls.filter(({ key }) => !compact || expanded || key === 'mic' || key === 'deafen').map(({ key, label, active, icon: Icon, action }) => {
+    {controls.filter(({ key }) => !compact || expanded || key === 'mic' || key === 'deafen').map(({ key, label, active, icon: Icon, action }) => {
           const tone = key === 'deafen'
             ? active ? 'border-rose-300/15 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20' : 'border-white/10 bg-white/[0.07] text-white hover:bg-white/10'
             : key === 'screen'
               ? active ? 'border-violet-300/25 bg-violet-400/15 text-violet-100' : 'border-white/10 bg-white/[0.07] text-white hover:bg-white/10'
               : active ? 'border-white/10 bg-white/[0.07] text-white hover:bg-white/10' : 'border-rose-300/15 bg-rose-400/10 text-rose-200 hover:bg-rose-400/20';
           return (
-          <button key={key} type="button" aria-label={label} aria-pressed={active} aria-busy={pendingControl === key} title={label} disabled={(pendingControl !== '' && pendingControl !== key) || (key === 'mic' && (isDeafened || pushToTalkEnabled))} onClick={action} className={`group grid place-items-center rounded-xl border transition-all disabled:opacity-50 ${compact ? 'h-9 w-9' : 'h-11 w-12'} ${tone}`}>
+          <div key={key} className="relative"><button type="button" aria-label={label} aria-pressed={active} aria-busy={pendingControl === key} title={label} disabled={(pendingControl !== '' && pendingControl !== key) || (key === 'mic' && (isDeafened || pushToTalkEnabled))} onClick={action} className={`group grid place-items-center rounded-xl border transition-all disabled:opacity-50 ${compact ? 'h-9 w-9' : 'h-11 w-12'} ${tone}`}>
             <Icon className="h-[18px] w-[18px] transition-transform group-hover:scale-105" />
           </button>
+          {key === 'screen' && screenShareMenuOpen && <div role="menu" className="absolute bottom-[calc(100%+10px)] right-0 z-[120] w-48 rounded-2xl border border-white/10 bg-[#171d29]/[.98] p-1.5 shadow-[0_18px_54px_rgba(0,0,0,.65)] backdrop-blur-xl"><button type="button" role="menuitem" onClick={() => { setScreenShareMenuOpen(false); void toggle('screen', () => localParticipant.setScreenShareEnabled(false)); }} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-rose-200 transition hover:bg-rose-300/[.08]"><MonitorUp className="h-4 w-4" />Yayını durdur</button><button type="button" role="menuitem" onClick={() => void openScreenShareSettings()} className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-xs font-semibold text-slate-200 transition hover:bg-white/[.07]"><Settings2 className="h-4 w-4 text-violet-200" />Yayın ayarları</button></div>}
+          </div>
           );
         })}
         <VoiceAudioSettings currentUserId={currentUserId} />
