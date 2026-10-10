@@ -1,9 +1,9 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionQualityIndicator, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTrackVolume, useTracks } from '@livekit/components-react';
+import { AudioTrack, LiveKitRoom, VideoTrack, useConnectionQualityIndicator, useConnectionState, useLocalParticipant, useParticipants, useRoomContext, useSpeakingParticipants, useTracks } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { AudioPresets, DisconnectReason, Room as LiveKitClientRoom, RoomEvent, Track, supportsAudioOutputSelection } from 'livekit-client';
-import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Loader2, Maximize2, MessageSquare, Mic, MicOff, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
+import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphones, HeadphoneOff, Maximize2, MessageSquare, Mic, MicOff, Monitor, MonitorUp, MoreHorizontal, PhoneOff, RefreshCw, Settings2, ShieldAlert, UserMinus, Users, Volume2, VolumeX, X } from 'lucide-react';
 import { generateLiveKitToken } from '../../../lib/livekit';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { useServerStore } from '../../../store/useServerStore';
@@ -35,7 +35,7 @@ function getAudioPublishOptions(settings = DEFAULT_VOICE_AUDIO_SETTINGS) {
   return { audioPreset: settings.audioQuality === 'high' ? AudioPresets.musicHighQuality : AudioPresets.speech };
 }
 
-function EnableMicrophoneAfterConnect({ settings, onFailure }) {
+function EnableMicrophoneAfterConnect({ settings, deafened, onFailure }) {
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const connectionState = useConnectionState();
   const attemptedRef = useRef(false);
@@ -45,13 +45,18 @@ function EnableMicrophoneAfterConnect({ settings, onFailure }) {
       attemptedRef.current = false;
       return undefined;
     }
+    if (deafened) {
+      attemptedRef.current = true;
+      if (isMicrophoneEnabled) void localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(settings), getAudioPublishOptions(settings)).catch((error) => onFailure(error));
+      return undefined;
+    }
     if (attemptedRef.current || isMicrophoneEnabled) return undefined;
     attemptedRef.current = true;
     let active = true;
     void localParticipant.setMicrophoneEnabled(true, getAudioCaptureOptions(settings), getAudioPublishOptions(settings))
       .catch((error) => { if (active) onFailure(error); });
     return () => { active = false; };
-  }, [connectionState, isMicrophoneEnabled, localParticipant, onFailure, settings]);
+  }, [connectionState, deafened, isMicrophoneEnabled, localParticipant, onFailure, settings]);
 
   return null;
 }
@@ -102,8 +107,7 @@ function VoicePlayback({ volumes, shareVolumes, mutedShares, deafened, outputVol
 function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, onPresenceError, onParticipantsChange, contextMenuRequest, onContextMenuRequestHandled }) {
   const room = useRoomContext();
   const participants = useParticipants();
-  const { isMicrophoneEnabled, microphoneTrack } = useLocalParticipant();
-  const localMicrophoneLevel = useTrackVolume(microphoneTrack?.track, { fftSize: 32, smoothingTimeConstant: 0 });
+  const { isMicrophoneEnabled } = useLocalParticipant();
   const speakingParticipants = useSpeakingParticipants();
   const connectionState = useConnectionState();
   const videoTracks = useTracks([Track.Source.Camera, Track.Source.ScreenShare], { onlySubscribed: false });
@@ -230,6 +234,12 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, channelId, currentUser?.id, connectionState]);
   useEffect(() => { publishVoicePresence(); }, [isMicrophoneEnabled, localDeafened, isSpeaking, connectionState, serverId, channelId, currentUser?.id]);
+  useEffect(() => () => {
+    if (serverId && channelId && currentUser?.id) {
+      void supabase.rpc('clear_server_voice_presence', { channel_uuid: channelId })
+        .then(({ error }) => { if (error) console.warn('Ses kanalından ayrılma durumu temizlenemedi:', error.message); });
+    }
+  }, [serverId, channelId, currentUser?.id]);
   const speakingIds = new Set(speakingParticipants.map((participant) => participant.identity));
   const rosterKey = participants.map((participant) => `${participant.identity}:${participant.isMicrophoneEnabled ? 1 : 0}:${speakingIds.has(participant.identity) ? 1 : 0}:${moderationByUser[participant.identity]?.server_muted ? 1 : 0}:${moderationByUser[participant.identity]?.server_deafened ? 1 : 0}`).sort().join('|');
 
@@ -496,8 +506,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
         <ul aria-label="Ses katılımcıları" className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] gap-3">
           {participants.map((participant) => {
             const profile = participant.identity === currentUser?.id ? currentUser : profileById.get(participant.identity);
-            const speaking = speakingIds.has(participant.identity)
-              || (participant.isLocal && isMicrophoneEnabled && !localDeafened && localMicrophoneLevel > 0.04);
+            const speaking = speakingIds.has(participant.identity);
             return (
               <li key={participant.identity} role="button" tabIndex={0} aria-label={`${profile?.username || participant.name || 'Katılımcı'} profilini görüntüle`} onClick={() => void openParticipantProfile(participant)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void openParticipantProfile(participant); } }} onContextMenu={event => { event.preventDefault(); if (!participant.isLocal) setContextMenu({ x: event.clientX, y: event.clientY, participantId: participant.identity }); }} className={`macos-surface relative min-h-36 cursor-pointer rounded-[22px] border bg-[#111722]/85 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60 ${speaking && !moderationByUser[participant.identity]?.server_muted ? 'border-emerald-300/70 shadow-[0_0_0_1px_rgba(52,211,153,.16),0_0_32px_rgba(16,185,129,.12)]' : 'border-white/[0.08]'}`}>
                 <div className="relative flex h-full min-h-36 flex-col items-center justify-center gap-3 bg-[radial-gradient(ellipse_at_top,rgba(139,92,246,.08),transparent_65%)] p-5">
@@ -905,14 +914,12 @@ function matchesVoiceKeybind(event, binding, rightAltHeld = false, rightCtrlHeld
     && expected.includes('Meta') === event.metaKey;
 }
 
-function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, expanded = false, onToggleExpand }) {
+function VoiceControls({ onLeave, isDeafened, onDeafenedChange = () => {}, microphoneBeforeDeafen, setMicrophoneBeforeDeafen, compact = false, expanded = false, onToggleExpand }) {
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } = useLocalParticipant();
   const connectionState = useConnectionState();
-  const [isDeafened, setIsDeafened] = useState(false);
   const [pendingControl, setPendingControl] = useState('');
   const [controlError, setControlError] = useState('');
   const [effectiveKeybinds, setEffectiveKeybinds] = useState(null);
-  const [microphoneBeforeDeafen, setMicrophoneBeforeDeafen] = useState(false);
   const [soundboardOpen, setSoundboardOpen] = useState(false);
   const [screenSources, setScreenSources] = useState([]);
   const [screenSourcePickerOpen, setScreenSourcePickerOpen] = useState(false);
@@ -1014,14 +1021,12 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
   const toggleDeafen = useCallback(() => toggle('deafen', async () => {
     if (isDeafened) {
       await localParticipant.setMicrophoneEnabled(microphoneBeforeDeafen, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings));
-      setIsDeafened(false);
       onDeafenedChange(false);
       if (!microphoneTestActiveRef.current && !microphoneTestRestoreRef.current) playUiSound('headphonesOn', currentUserId);
       return;
     }
     setMicrophoneBeforeDeafen(isMicrophoneEnabled);
     await localParticipant.setMicrophoneEnabled(false, getAudioCaptureOptions(voiceAudioSettings), getAudioPublishOptions(voiceAudioSettings));
-    setIsDeafened(true);
     onDeafenedChange(true);
     if (!microphoneTestActiveRef.current && !microphoneTestRestoreRef.current) playUiSound('headphonesOff', currentUserId);
   }), [toggle, isDeafened, microphoneBeforeDeafen, localParticipant, voiceAudioSettings, isMicrophoneEnabled, onDeafenedChange, currentUserId]);
@@ -1221,6 +1226,7 @@ function VoiceControls({ onLeave, onDeafenedChange = () => {}, compact = false, 
 
 export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, channelName, isStageVisible = true, contextMenuRequest, onContextMenuRequestHandled, onPresenceError, onLeave = () => {}, onReturn = () => {}, onParticipantsChange = () => {} }) {
   const [localDeafened, setLocalDeafened] = useState(false);
+  const [microphoneBeforeDeafen, setMicrophoneBeforeDeafen] = useState(false);
   const [connection, setConnection] = useState({ channelId: null, userId: null, token: null, error: '' });
   const [attempt, setAttempt] = useState(0);
   const [deviceWarning, setDeviceWarning] = useState('');
@@ -1308,19 +1314,6 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
     );
   }
 
-  if (!token) {
-    return (
-      <div className={`${panelClass} flex items-center justify-center gap-3 text-white ${isStageVisible ? 'flex-col' : 'px-4 py-3'}`}>
-        <Loader2 className="h-6 w-6 shrink-0 animate-spin text-emerald-400" />
-        <div className={isStageVisible ? 'text-center' : 'min-w-0 flex-1'}>
-          <h1 className="text-sm font-bold">{channelName} odasına bağlanılıyor…</h1>
-          <p className="mt-1 text-xs text-slate-500">Mikrofon izni istenebilir.</p>
-        </div>
-        <button type="button" onClick={onLeave} className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-rose-300/15 bg-rose-500/15 px-3 py-2 text-xs font-semibold text-rose-100 hover:bg-rose-500/25"><PhoneOff className="h-3.5 w-3.5" /> Ayrıl</button>
-      </div>
-    );
-  }
-
   return (
     <div className={`${panelClass} ${isStageVisible ? '' : isDockExpanded ? '' : 'rounded-full'}`} data-lk-theme="default">
       {(isStageVisible || isDockExpanded) && <div className="h-12 border-b border-white/5 flex items-center px-4 shrink-0 justify-between bg-fastcord-panel z-10 shadow-sm">
@@ -1332,7 +1325,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           {!isStageVisible && <button type="button" onClick={onReturn} className="grid h-8 w-8 place-items-center rounded-lg border border-white/10 text-slate-300 transition hover:bg-white/10 hover:text-white" aria-label="Ses odasına dön" title="Ses odasına dön"><Expand className="h-4 w-4" /></button>}
           {isStageVisible && <button type="button" aria-pressed={showVoiceChat} onClick={() => setShowVoiceChat((value) => !value)} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${showVoiceChat ? 'border-violet-300/20 bg-violet-400/15 text-violet-100' : 'border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]'}`}><MessageSquare className="h-4 w-4" /> Sesli sohbet</button>}
           <div className="flex items-center gap-2 rounded-md bg-white/5 px-3 py-1 text-sm font-medium text-slate-400">
-            Canlı ses
+            {token ? 'Canlı ses' : 'Bağlanıyor…'}
           </div>
         </div>
       </div>}
@@ -1341,7 +1334,7 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-emerald-300/15 bg-emerald-400/10 text-emerald-300"><Headphones className="h-4 w-4" /></div>
           <div className="min-w-0 flex-1">
             <p className="max-w-28 truncate text-xs font-bold text-white">{channelName}</p>
-            <p className="flex items-center gap-1 text-[9px] text-emerald-200"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Canlı</p>
+            <p className="flex items-center gap-1 text-[9px] text-emerald-200"><span className={`h-1.5 w-1.5 rounded-full bg-emerald-400 ${token ? 'animate-pulse' : 'animate-spin border border-emerald-200 border-t-transparent bg-transparent'}`} /> {token ? 'Canlı' : 'Bağlanıyor…'}</p>
           </div>
           <button type="button" onClick={onReturn} className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-white/10 text-slate-300 transition hover:bg-white/10 hover:text-white" aria-label="Ses odasına dön" title="Ses odasına dön"><Expand className="h-4 w-4" /></button>
         </div>
@@ -1354,8 +1347,8 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           video={false}
           audio={false}
           options={{ publishDefaults: getAudioPublishOptions(voiceAudioSettings), webAudioMix: true, adaptiveStream: true, dynacast: true }}
-          connect
-          token={token}
+          connect={Boolean(token)}
+          token={token || undefined}
           serverUrl={liveKitUrl}
           data-lk-theme="default"
           style={{ height: isStageVisible || isDockExpanded ? '100%' : 'auto' }}
@@ -1364,13 +1357,13 @@ export function VoiceRoom({ channelId, serverId = null, dmChannelId = null, chan
           onMediaDeviceFailure={handleMediaDeviceFailure}
           onError={handleLiveKitError}
         >
-          <EnableMicrophoneAfterConnect settings={voiceAudioSettings} onFailure={handleMediaDeviceFailure} />
+          <EnableMicrophoneAfterConnect settings={voiceAudioSettings} deafened={localDeafened} onFailure={handleMediaDeviceFailure} />
           <div className={`flex min-h-0 flex-col ${isStageVisible || isDockExpanded ? 'h-full' : ''}`}>
             <div className={isStageVisible || isDockExpanded ? 'flex min-h-0 flex-1' : 'pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0'}>
               <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4"><VoiceParticipants serverId={serverId} channelId={channelId} localDeafened={localDeafened} outputVolume={voiceAudioSettings.outputVolume} onPresenceError={onPresenceError} onParticipantsChange={onParticipantsChange} contextMenuRequest={contextMenuRequest} onContextMenuRequestHandled={onContextMenuRequestHandled} /></div>
               {isStageVisible && showVoiceChat && <aside aria-label="Ses kanalı metin sohbeti" className="w-[min(360px,45%)] min-w-[280px] shrink-0 border-l border-white/[0.07] bg-[#0d1119]"><ChatArea activeChannelId={channelId} channelName={`${channelName} sohbeti`} /></aside>}
             </div>
-            <VoiceControls onLeave={onLeave} onDeafenedChange={setLocalDeafened} compact={!isStageVisible} expanded={isDockExpanded} onToggleExpand={() => setIsDockExpanded((value) => !value)} />
+            <VoiceControls onLeave={onLeave} isDeafened={localDeafened} onDeafenedChange={setLocalDeafened} microphoneBeforeDeafen={microphoneBeforeDeafen} setMicrophoneBeforeDeafen={setMicrophoneBeforeDeafen} compact={!isStageVisible} expanded={isDockExpanded} onToggleExpand={() => setIsDockExpanded((value) => !value)} />
           </div>
         </LiveKitRoom>
         </VoiceRoomErrorBoundary>

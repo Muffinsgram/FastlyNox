@@ -73,13 +73,19 @@ export function isNotificationLocationMuted(notification, preferences = defaults
   const serverId = notification?.server_id;
   if (serverId && preferences.mutedServerIds?.includes(serverId)) return true;
   if (serverId && Number(preferences.serverMuteUntil?.[serverId]) > Date.now()) return true;
-  if (serverId && preferences.serverNotificationModes?.[serverId] === 'none') return true;
-  if (serverId && preferences.serverNotificationModes?.[serverId] === 'mentions' && !isMentionNotification(notification)) return true;
+  const mode = getServerNotificationMode(serverId, preferences);
+  if (serverId && mode === 'none') return true;
+  if (serverId && mode === 'mentions' && !isMentionNotification(notification)) return true;
   return Boolean(notification?.channel_id && preferences.mutedChannelIds?.includes(notification.channel_id));
 }
 
+export function getServerNotificationMode(serverId, preferences = defaults) {
+  const mode = serverId ? preferences.serverNotificationModes?.[serverId] : null;
+  return ['all', 'mentions', 'none'].includes(mode) ? mode : 'all';
+}
+
 export function isMentionNotification(notification) {
-  return Boolean(notification?.is_mention || /mention|etiket/iu.test(notification?.type || '') || /@everyone|@here|<@(?:&)?[\w-]+>|@\w+/iu.test(`${notification?.title || ''} ${notification?.body || ''}`));
+  return Boolean(notification?.is_mention || /mention|etiket/iu.test(notification?.type || '') || /^@(everyone|here)(?:\s|$)/iu.test(notification?.title || ''));
 }
 
 export function isQuietHoursActive(preferences = defaults, date = new Date()) {

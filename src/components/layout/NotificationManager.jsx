@@ -18,10 +18,12 @@ export function NotificationManager({ onOpenNotification }) {
       if (userId && document.visibilityState === 'visible') void fetchNotifications();
     };
     window.addEventListener('online', refreshWhenOnline);
+    window.addEventListener('fastcord:preferences-updated', refreshWhenOnline);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     
     return () => {
       window.removeEventListener('online', refreshWhenOnline);
+      window.removeEventListener('fastcord:preferences-updated', refreshWhenOnline);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       unsubscribe();
     };

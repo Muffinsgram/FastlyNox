@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from './useAuthStore';
-import { getAppPreferences, isNotificationLocationMuted, shouldSuppressNotification } from '../lib/appPreferences';
+import { getAppPreferences, getServerNotificationMode, isNotificationLocationMuted, shouldSuppressNotification } from '../lib/appPreferences';
 import { usePresenceStore } from './usePresenceStore';
 import { useDMChatStore } from './useDMChatStore';
 import { useFriendStore } from './useFriendStore';
@@ -10,6 +10,7 @@ import { useServerStore } from './useServerStore';
 const toastTimers = new Map();
 const recentMessageToastKeys = new Map();
 const senderNameCache = new Map();
+const processedServerMessages = new Map();
 let notificationAudioContext;
 
 function showDesktopNotification(title, body) {
@@ -66,6 +67,9 @@ async function getSenderName(userId, fallback = 'Yeni mesaj') {
 async function showIncomingMessageToast(message, isDM, userId) {
   if (!message?.id || !message.user_id || message.user_id === userId || useAuthStore.getState().user?.id !== userId) return;
   const preferences = getAppPreferences(userId);
+  const currentState = useNotificationStore.getState();
+  const focused = document.visibilityState === 'visible' && document.hasFocus();
+  if (isDM && focused && currentState.activeDMChannelId === message.dm_channel_id) return;
   const fallbackName = isDM ? 'Yeni özel mesaj' : 'Yeni mesaj';
   const dm = isDM ? useFriendStore.getState().dmChannels.find((item) => item.id === message.dm_channel_id) : null;
   const sender = dm?.user1_id === message.user_id ? dm?.user1 : dm?.user2;
@@ -95,6 +99,9 @@ async function showIncomingMessageToast(message, isDM, userId) {
     if (channel?.server_id) toast.server_id = channel.server_id;
     else if (server?.id) toast.server_id = server.id;
     toast.title = `${senderName} · #${channel?.name || 'sunucu'}`;
+    const mode = getServerNotificationMode(toast.server_id, preferences);
+    if (mode !== 'all') return; // Mention-only alerts come from the exact database recipient list.
+    if (focused && currentState.activeServerChannelId === message.channel_id) return;
   }
   if (shouldSuppressNotification(toast, preferences, { presenceIsDnd: usePresenceStore.getState().status === 'dnd' })) return;
   const showedToast = useNotificationStore.getState().queueToast(toast);
@@ -182,9 +189,10 @@ export const useNotificationStore = create((set, get) => ({
     const startedAt = Date.now();
     set({ fetchRequestId });
 
-    const [{ data, error }, { data: unreadRows, error: unreadError }] = await Promise.all([
+    const [{ data, error }, { data: unreadRows, error: unreadError }, serverUnreadResult] = await Promise.all([
       supabase.from('notifications').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(30),
       supabase.from('notifications').select('server_id, channel_id, dm_channel_id').eq('user_id', user.id).eq('is_read', false),
+      supabase.rpc('get_my_server_unread_counts'),
     ]);
 
     if (generation !== get().requestGeneration || fetchRequestId !== get().fetchRequestId) return;
@@ -202,21 +210,31 @@ export const useNotificationStore = create((set, get) => ({
       const allUnreadRows = [...unreadById.values()];
       const notificationsById = new Map(data.map((notification) => [notification.id, notification]));
       get().notifications.filter((notification) => Date.parse(notification.created_at) >= startedAt).forEach((notification) => notificationsById.set(notification.id, notification));
-      const visibleServerRows = allUnreadRows.filter((row) => row.server_id && !isNotificationLocationMuted(row, preferences));
+      const visibleServerRows = allUnreadRows.filter((row) => row.server_id && getServerNotificationMode(row.server_id, preferences) === 'mentions' && !isNotificationLocationMuted(row, preferences));
+      const serverUnreadCounts = {};
+      const channelUnreadCounts = {};
+      (serverUnreadResult.data || []).forEach((row) => {
+        if (!row.server_id || getServerNotificationMode(row.server_id, preferences) !== 'all' || isNotificationLocationMuted(row, preferences)) return;
+        const count = Math.max(0, Number(row.unread_count) || 0);
+        if (count) {
+          serverUnreadCounts[row.server_id] = (serverUnreadCounts[row.server_id] || 0) + count;
+          channelUnreadCounts[row.channel_id] = (channelUnreadCounts[row.channel_id] || 0) + count;
+        }
+      });
+      visibleServerRows.forEach((row) => {
+        serverUnreadCounts[row.server_id] = (serverUnreadCounts[row.server_id] || 0) + 1;
+        if (row.channel_id) channelUnreadCounts[row.channel_id] = (channelUnreadCounts[row.channel_id] || 0) + 1;
+      });
+      const visibleUnreadRows = allUnreadRows.filter((row) => !row.server_id || !isNotificationLocationMuted(row, preferences));
       set({ 
         notifications: [...notificationsById.values()].sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at)).slice(0, 30),
-        unreadCount: allUnreadRows.length,
+        unreadCount: visibleUnreadRows.length,
         dmUnreadCounts: allUnreadRows.reduce((counts, row) => { if (row.dm_channel_id) counts[row.dm_channel_id] = (counts[row.dm_channel_id] || 0) + 1; return counts; }, {}),
-        serverUnreadCounts: visibleServerRows.reduce((counts, row) => {
-          if (row.server_id) counts[row.server_id] = (counts[row.server_id] || 0) + 1;
-          return counts;
-        }, {}),
-        channelUnreadCounts: visibleServerRows.reduce((counts, row) => {
-          if (row.channel_id) counts[row.channel_id] = (counts[row.channel_id] || 0) + 1;
-          return counts;
-        }, {}),
+        serverUnreadCounts,
+        channelUnreadCounts,
       });
     }
+    if (serverUnreadResult.error) console.warn('Sunucu okunmamış sayaçları eşitlenemedi; migration_message_notification_read_states.sql uygulanmış mı kontrol et:', serverUnreadResult.error.message);
   },
 
   markAsRead: async (notificationId) => {
@@ -230,7 +248,8 @@ export const useNotificationStore = create((set, get) => ({
     if (!error) {
       const notification = get().notifications.find((item) => item.id === notificationId);
       const wasUnread = Boolean(notification && !notification.is_read);
-      const countsOnServer = Boolean(wasUnread && !isNotificationLocationMuted(notification, getAppPreferences(useAuthStore.getState().user?.id)));
+      const preferences = getAppPreferences(useAuthStore.getState().user?.id);
+      const countsOnServer = Boolean(wasUnread && getServerNotificationMode(notification?.server_id, preferences) === 'mentions' && !isNotificationLocationMuted(notification, preferences));
       set(state => ({
         notifications: state.notifications.map(n => n.id === notificationId ? { ...n, is_read: true } : n),
         unreadCount: Math.max(0, state.unreadCount - (wasUnread ? 1 : 0)),
@@ -256,6 +275,8 @@ export const useNotificationStore = create((set, get) => ({
     if (!user?.id) return;
     const { error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
     if (error) { console.error('Bildirimler okundu olarak işaretlenemedi:', error.message); return; }
+    const { error: cursorError } = await supabase.rpc('mark_all_server_channels_read');
+    if (cursorError) console.warn('Sunucu kanallarının okundu durumu kaydedilemedi:', cursorError.message);
     set((state) => ({
       notifications: state.notifications.map((notification) => ({ ...notification, is_read: true })),
       unreadCount: 0,
@@ -286,15 +307,22 @@ export const useNotificationStore = create((set, get) => ({
   markChannelNotificationsRead: async (channelId) => {
     const user = useAuthStore.getState().user;
     if (!user?.id || !channelId) return;
-    const { data, error } = await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('channel_id', channelId).eq('is_read', false).select('id, server_id');
+    set({ activeServerChannelId: channelId });
+    const [{ data, error }, cursorResult] = await Promise.all([
+      supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('channel_id', channelId).eq('is_read', false).select('id, server_id'),
+      supabase.rpc('mark_server_channel_read', { channel_uuid: channelId }),
+    ]);
     if (error) { console.error('Kanal bildirimleri okundu olarak işaretlenemedi:', error.message); return; }
+    if (cursorResult.error) console.warn('Kanal okuma işareti kaydedilemedi:', cursorResult.error.message);
     set((state) => {
       const preferences = getAppPreferences(user.id);
       const readIds = new Set((data || []).map((notification) => notification.id));
       const newlyRead = (data || []).length;
       const countableRead = (data || []).filter((notification) => !isNotificationLocationMuted(notification, preferences)).length;
-      const serverId = data?.find((notification) => notification.server_id)?.server_id;
-      const remainingServerCount = serverId ? Math.max(0, (state.serverUnreadCounts[serverId] || 0) - countableRead) : 0;
+      const serverId = data?.find((notification) => notification.server_id)?.server_id
+        || useServerStore.getState().servers.find((server) => (server.categories || []).some((category) => category.channels?.some((channel) => channel.id === channelId)))?.id;
+      const previousChannelCount = state.channelUnreadCounts[channelId] || 0;
+      const remainingServerCount = serverId ? Math.max(0, (state.serverUnreadCounts[serverId] || 0) - Math.max(countableRead, previousChannelCount)) : 0;
       return {
         notifications: state.notifications.map((notification) => readIds.has(notification.id) ? { ...notification, is_read: true } : notification),
         unreadCount: Math.max(0, state.unreadCount - newlyRead),
@@ -319,6 +347,28 @@ export const useNotificationStore = create((set, get) => ({
   },
 
   setActiveDMChannel: (dmChannelId) => set({ activeDMChannelId: dmChannelId || null }),
+  setActiveServerChannel: (channelId) => set({ activeServerChannelId: channelId || null }),
+
+  receiveServerMessageNotification: (message, userId = useAuthStore.getState().user?.id) => {
+    if (!message?.id || !message.channel_id || !message.user_id || message.user_id === userId || useAuthStore.getState().user?.id !== userId) return;
+    const now = Date.now();
+    for (const [id, at] of processedServerMessages) if (now - at > 60_000) processedServerMessages.delete(id);
+    if (processedServerMessages.has(message.id)) return;
+    processedServerMessages.set(message.id, now);
+    set((state) => ({ notificationEventVersion: state.notificationEventVersion + 1 }));
+    const preferences = getAppPreferences(userId);
+    const servers = useServerStore.getState().servers;
+    const channel = servers.flatMap((server) => (server.categories || []).flatMap((category) => category.channels || [])).find((item) => item.id === message.channel_id);
+    const serverId = channel?.server_id || servers.find((server) => server.channels?.some((item) => item.id === message.channel_id))?.id;
+    if (!serverId || getServerNotificationMode(serverId, preferences) !== 'all') return;
+    const active = get().activeServerChannelId === message.channel_id && document.visibilityState === 'visible' && document.hasFocus();
+    if (active) { void supabase.rpc('mark_server_channel_read', { channel_uuid: message.channel_id }); return; }
+    if (isNotificationLocationMuted({ server_id: serverId, channel_id: message.channel_id }, preferences)) return;
+    set((state) => ({
+      serverUnreadCounts: { ...state.serverUnreadCounts, [serverId]: (state.serverUnreadCounts[serverId] || 0) + 1 },
+      channelUnreadCounts: { ...state.channelUnreadCounts, [message.channel_id]: (state.channelUnreadCounts[message.channel_id] || 0) + 1 },
+    }));
+  },
 
   queueToast: (notification) => {
     if (!notification?.id || get().activeToasts.some((toast) => toast.id === notification.id)) return false;
@@ -351,7 +401,10 @@ export const useNotificationStore = create((set, get) => ({
         event: 'INSERT',
         schema: 'public',
         table: 'messages',
-      }, (payload) => { void showIncomingMessageToast(payload.new, false, user.id); })
+      }, (payload) => {
+        get().receiveServerMessageNotification(payload.new, user.id);
+        void showIncomingMessageToast(payload.new, false, user.id);
+      })
       .on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
@@ -366,6 +419,21 @@ export const useNotificationStore = create((set, get) => ({
         const newNotif = payload.new;
         if (get().notifications.some((notification) => notification.id === newNotif.id)) return;
         set((state) => ({ notificationEventVersion: state.notificationEventVersion + 1 }));
+
+        if (newNotif.server_id && newNotif.message_id) {
+          // The message event owns the all-messages counter; mention rows are
+          // retained in the notification center but must not count twice.
+          if (getServerNotificationMode(newNotif.server_id, getAppPreferences(user.id)) === 'all') {
+            const isOpen = get().activeServerChannelId === newNotif.channel_id && document.visibilityState === 'visible' && document.hasFocus();
+            const countable = !isNotificationLocationMuted(newNotif, getAppPreferences(user.id));
+            if (isOpen) {
+              void supabase.from('notifications').update({ is_read: true }).eq('id', newNotif.id).eq('user_id', user.id);
+              void supabase.rpc('mark_server_channel_read', { channel_uuid: newNotif.channel_id });
+            }
+            set((state) => ({ notifications: [{ ...newNotif, is_read: isOpen }, ...state.notifications].slice(0, 30), unreadCount: state.unreadCount + (isOpen || !countable ? 0 : 1) }));
+            return;
+          }
+        }
 
         // The DM notification is inserted in the same database transaction as
         // its message. It provides a second realtime signal if the chat stream
@@ -386,20 +454,22 @@ export const useNotificationStore = create((set, get) => ({
         
         const preferences = getAppPreferences(user.id);
         const isOpenDM = Boolean(newNotif.dm_channel_id && get().activeDMChannelId === newNotif.dm_channel_id && document.visibilityState === 'visible' && document.hasFocus());
+        const isOpenServerChannel = Boolean(newNotif.channel_id && get().activeServerChannelId === newNotif.channel_id && document.visibilityState === 'visible' && document.hasFocus());
         const doNotDisturb = shouldSuppressNotification(newNotif, preferences, { presenceIsDnd: usePresenceStore.getState().status === 'dnd' });
         const countServerActivity = !isNotificationLocationMuted(newNotif, preferences);
-        if (isOpenDM) void supabase.from('notifications').update({ is_read: true }).eq('id', newNotif.id).eq('user_id', user.id);
-        const notification = isOpenDM ? { ...newNotif, is_read: true } : newNotif;
-        const showedToast = !doNotDisturb && get().queueToast(notification);
+        if (isOpenDM || isOpenServerChannel) void supabase.from('notifications').update({ is_read: true }).eq('id', newNotif.id).eq('user_id', user.id);
+        if (isOpenServerChannel) void supabase.rpc('mark_server_channel_read', { channel_uuid: newNotif.channel_id });
+        const notification = isOpenDM || isOpenServerChannel ? { ...newNotif, is_read: true } : newNotif;
+        const showedToast = !doNotDisturb && !isOpenServerChannel && get().queueToast(notification);
         if (showedToast && !isOpenDM && preferences.notificationSound) playNotificationSound(preferences.notificationSoundVolume);
         if (showedToast && preferences.desktopNotifications) showDesktopNotification(newNotif.title, newNotif.body);
 
         set(state => ({
           notifications: [notification, ...state.notifications].slice(0, 30),
-          unreadCount: state.unreadCount + (isOpenDM ? 0 : 1),
+          unreadCount: state.unreadCount + (isOpenDM || isOpenServerChannel || (newNotif.server_id && !countServerActivity) ? 0 : 1),
           dmUnreadCounts: notification.dm_channel_id && !isOpenDM ? { ...state.dmUnreadCounts, [notification.dm_channel_id]: (state.dmUnreadCounts[notification.dm_channel_id] || 0) + 1 } : state.dmUnreadCounts,
-          serverUnreadCounts: countServerActivity && newNotif.server_id ? { ...state.serverUnreadCounts, [newNotif.server_id]: (state.serverUnreadCounts[newNotif.server_id] || 0) + 1 } : state.serverUnreadCounts,
-          channelUnreadCounts: countServerActivity && newNotif.channel_id ? { ...state.channelUnreadCounts, [newNotif.channel_id]: (state.channelUnreadCounts[newNotif.channel_id] || 0) + 1 } : state.channelUnreadCounts,
+          serverUnreadCounts: countServerActivity && getServerNotificationMode(newNotif.server_id, preferences) === 'mentions' && newNotif.server_id && !isOpenServerChannel ? { ...state.serverUnreadCounts, [newNotif.server_id]: (state.serverUnreadCounts[newNotif.server_id] || 0) + 1 } : state.serverUnreadCounts,
+          channelUnreadCounts: countServerActivity && getServerNotificationMode(newNotif.server_id, preferences) === 'mentions' && newNotif.channel_id && !isOpenServerChannel ? { ...state.channelUnreadCounts, [newNotif.channel_id]: (state.channelUnreadCounts[newNotif.channel_id] || 0) + 1 } : state.channelUnreadCounts,
         }));
       })
       .on('postgres_changes', {
@@ -451,6 +521,7 @@ export const useNotificationStore = create((set, get) => ({
     toastTimers.forEach(clearTimeout);
     toastTimers.clear();
     recentMessageToastKeys.clear();
+    processedServerMessages.clear();
     senderNameCache.clear();
     set({ activeToasts: [] });
   }

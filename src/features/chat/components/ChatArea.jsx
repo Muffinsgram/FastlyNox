@@ -124,7 +124,7 @@ export function ChatArea({ activeChannelId, channelName, onOpenChannelMention, o
     const roleIds = [...(message.content || '').matchAll(/<@&([0-9a-f-]{36}|[0-9]+)>/giu)].map((match) => match[1]);
     const ownPublicId = mentionProfiles[user?.id]?.public_id;
     const assignedPublicIds = mentionRoles.filter((role) => assignedRoleIds.includes(role.id)).map((role) => String(role.public_id));
-    return tokens.some((mention) => mention.slice(1).toLowerCase() === user?.username?.toLowerCase() || mention.toLowerCase() === '@everyone') || directIds.includes(user?.id) || directIds.includes(String(ownPublicId)) || roleIds.some((roleId) => assignedRoleIds.includes(roleId) || assignedPublicIds.includes(roleId));
+    return tokens.some((mention) => mention.slice(1).toLowerCase() === user?.username?.toLowerCase() || ['@everyone', '@here'].includes(mention.toLowerCase())) || directIds.includes(user?.id) || directIds.includes(String(ownPublicId)) || roleIds.some((roleId) => assignedRoleIds.includes(roleId) || assignedPublicIds.includes(roleId));
   }), [channelMessages, user?.username, user?.id, assignedRoleIds, mentionProfiles, mentionRoles]);
   const latestIncomingAt = useMemo(() => [...channelMessages].reverse().find((message) => message.user_id !== user?.id && !message.isOptimistic)?.created_at || null, [channelMessages, user?.id]);
   const { typingUsers } = useChatPresence({ scope: `server:${activeChannelId}`, user, isTyping: isTypingNow, lastReadAt: latestIncomingAt });

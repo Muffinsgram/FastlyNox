@@ -218,7 +218,7 @@ export default function App() {
   const [draggedCategoryId, setDraggedCategoryId] = useState(null);
   const [dropTargetCategoryId, setDropTargetCategoryId] = useState(null);
   const [channelOrderError, setChannelOrderError] = useState('');
-  const [serverCapabilities, setServerCapabilities] = useState({ serverId: null, manageChannels: false });
+  const [serverCapabilities, setServerCapabilities] = useState({ serverId: null, manageChannels: false, moveMembers: false });
   const [voiceSession, setVoiceSession] = useState(null);
   const [incomingCallInvite, setIncomingCallInvite] = useState(null);
   const voiceSessionRef = useRef(null);
@@ -429,8 +429,8 @@ export default function App() {
         return next;
       });
       try {
-        void supabase.rpc('clear_server_voice_presence', { channel_uuid: current.channelId })
-          .then(({ error }) => { if (error) console.warn('Ses kanalı durumu temizlenemedi:', error.message); });
+        const { error } = await supabase.rpc('clear_server_voice_presence', { channel_uuid: current.channelId });
+        if (error) console.warn('Ses kanalı durumu temizlenemedi:', error.message);
       } catch (error) {
         console.warn('Ses kanalı durumu temizlenemedi:', error);
       }
@@ -508,12 +508,20 @@ export default function App() {
   }, [session?.user?.id]);
 
   useEffect(() => {
-    if (!activeServerId || !user?.id) { setServerCapabilities({ serverId: null, manageChannels: false }); return undefined; }
+    if (!activeServerId || !user?.id) { setServerCapabilities({ serverId: null, manageChannels: false, moveMembers: false }); return undefined; }
     const server = servers.find((item) => item.id === activeServerId);
-    if (server?.owner_id === user.id || server?.member_role === 'admin') { setServerCapabilities({ serverId: activeServerId, manageChannels: true }); return undefined; }
+    if (server?.owner_id === user.id || server?.member_role === 'admin') { setServerCapabilities({ serverId: activeServerId, manageChannels: true, moveMembers: true }); return undefined; }
     let active = true;
-    void supabase.rpc('has_server_permission', { server_uuid: activeServerId, permission_key: 'manage_channels' })
-      .then(({ data, error }) => { if (active) setServerCapabilities({ serverId: activeServerId, manageChannels: !error && data === true }); });
+    void Promise.all([
+      supabase.rpc('has_server_permission', { server_uuid: activeServerId, permission_key: 'manage_channels' }),
+      supabase.rpc('has_server_permission', { server_uuid: activeServerId, permission_key: 'move_members' }),
+    ]).then(([manageChannels, moveMembers]) => {
+      if (active) setServerCapabilities({
+        serverId: activeServerId,
+        manageChannels: !manageChannels.error && manageChannels.data === true,
+        moveMembers: !moveMembers.error && moveMembers.data === true,
+      });
+    });
     return () => { active = false; };
   }, [activeServerId, servers, user?.id]);
 
@@ -523,8 +531,11 @@ export default function App() {
   }, [activeServerId, layout, subscribeToServer]);
 
   useEffect(() => {
-    if (activeChannelId && layout === 'server') void markChannelNotificationsRead(activeChannelId);
-  }, [activeChannelId, layout, markChannelNotificationsRead]);
+    const selectedChannel = servers.flatMap((server) => (server.categories || []).flatMap((category) => category.channels || [])).find((channel) => channel.id === activeChannelId);
+    const isTextChannel = selectedChannel?.type === 'text';
+    useNotificationStore.getState().setActiveServerChannel(layout === 'server' && isTextChannel ? activeChannelId : null);
+    if (activeChannelId && layout === 'server' && isTextChannel) void markChannelNotificationsRead(activeChannelId);
+  }, [activeChannelId, layout, markChannelNotificationsRead, servers]);
 
   // Clear cached private data when the account changes, then load only that account's servers.
   useEffect(() => {
@@ -648,7 +659,12 @@ export default function App() {
   const currentChannelName = activeChannel?.name || 'sohbet';
   const activeChannelType = activeChannel?.type || 'text';
   const voiceChannelNameById = new Map((currentServerData?.categories || []).flatMap((category) => category.channels || []).filter((channel) => channel.type === 'voice').map((channel) => [channel.id, channel.name]));
-  const voiceMemberChannels = Object.fromEntries(Object.entries(voicePresenceByChannel).flatMap(([channelId, participants]) => participants.map((participant) => [participant.id, voiceChannelNameById.get(channelId) || 'Ses kanalında'])));
+  const isSelfInVisibleVoiceChannel = (channelId) => voiceSession?.kind !== 'dm' && voiceSession?.channelId === channelId && voiceSession?.serverId === activeServerId;
+  const visibleVoicePresenceByChannel = Object.fromEntries(Object.entries(voicePresenceByChannel).map(([channelId, participants]) => [
+    channelId,
+    participants.filter((participant) => participant.id !== user?.id || isSelfInVisibleVoiceChannel(channelId)),
+  ]));
+  const voiceMemberChannels = Object.fromEntries(Object.entries(visibleVoicePresenceByChannel).flatMap(([channelId, participants]) => participants.map((participant) => [participant.id, voiceChannelNameById.get(channelId) || 'Ses kanalında'])));
   const canManageChannels = currentServerData?.owner_id === user?.id || currentServerData?.member_role === 'admin' || (serverCapabilities.serverId === activeServerId && serverCapabilities.manageChannels);
   const canReorderChannels = canManageChannels;
 
@@ -659,9 +675,20 @@ export default function App() {
       return;
     }
     if (channel.type === 'voice') {
-      if (voiceSession && voiceSession.channelId !== channel.id) {
-        setVoiceNotice(`Şu anda “${voiceSession.channelName}” ses odasındasın. Başka bir ses odasına geçmek için önce mevcut odadan ayrıl.`);
+      if (voiceSession?.kind === 'dm') {
+        setVoiceNotice('Ses kanalına geçmek için önce devam eden aramadan ayrıl.');
         return;
+      }
+      if (voiceSession && voiceSession.channelId !== channel.id) {
+        const previousChannelId = voiceSession.channelId;
+        setVoicePresenceByChannel((previous) => {
+          const next = { ...previous };
+          next[previousChannelId] = (next[previousChannelId] || []).filter((member) => member.id !== user?.id);
+          if (!next[previousChannelId].length) delete next[previousChannelId];
+          return next;
+        });
+        void supabase.rpc('clear_server_voice_presence', { channel_uuid: previousChannelId })
+          .then(({ error }) => { if (error) console.warn('Önceki ses kanalı durumu temizlenemedi:', error.message); });
       }
       setVoiceNotice('');
       setVoiceSession({ channelId: channel.id, channelName: channel.name, serverId: activeServerId });
@@ -742,8 +769,22 @@ export default function App() {
   const handleVoiceMemberDrop = async (member, targetChannel) => {
     if (!member || targetChannel?.type !== 'voice' || targetChannel.id === member.sourceChannelId || targetChannel.server_id && targetChannel.server_id !== member.serverId) return;
     if (member.userId !== user?.id) {
-      setVoiceNotice('Başka bir üyeyi taşımak için ses kanalında üyeye sağ tıklayıp taşıma yetkisini kullan.');
+      if (!serverCapabilities.moveMembers) {
+        setVoiceNotice('Başka bir üyeyi taşımak için üyeleri taşıma yetkisi gerekiyor.');
+        setDraggedVoiceMember(null);
+        return;
+      }
+      const { data, error } = await supabase.functions.invoke('server-voice-control', {
+        body: { serverId: member.serverId, channelId: member.sourceChannelId, targetUserId: member.userId, action: 'move_member', destinationChannelId: targetChannel.id },
+      });
       setDraggedVoiceMember(null);
+      setDropTargetChannelId(null);
+      if (error || !data?.success) {
+        setVoiceNotice(data?.error || error?.message || 'Üye ses kanalına taşınamadı.');
+        return;
+      }
+      setVoiceNotice(`${member.username || 'Üye'} ${targetChannel.name} ses kanalına taşındı.`);
+      playUiSound('move', user?.id);
       return;
     }
     if (voiceSession?.kind === 'dm') {
@@ -901,12 +942,13 @@ export default function App() {
                                 <span className="flex shrink-0 items-center gap-2">{ch.is_private && <LockKeyhole className="h-3 w-3 text-violet-200/70" aria-label="Gizli kanal" />}{ch.nsfw && <Flame className="h-3 w-3 text-rose-300/80" aria-label="18+ kanal" />}{channelUnreadCounts[ch.id] > 0 && <span aria-label={`${channelUnreadCounts[ch.id]} okunmamış bildirim`} className="grid h-4 min-w-4 place-items-center rounded-full bg-violet-400 px-1 text-[9px] font-black text-white">{channelUnreadCounts[ch.id] > 9 ? '9+' : channelUnreadCounts[ch.id]}</span>}{voiceSession?.channelId === ch.id && <span className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold text-emerald-300"><span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" /> Bağlı</span>}</span>
                               </button>
                               {canManageChannels && <button type="button" aria-label={`${ch.name} kanal seçenekleri`} title="Kanal seçenekleri" onClick={(event) => { event.stopPropagation(); const bounds = event.currentTarget.getBoundingClientRect(); setManagementContext({ kind: 'channel', channel: ch, x: bounds.right, y: bounds.bottom }); }} className="absolute right-1 top-1 grid h-7 w-7 place-items-center rounded-md text-slate-500 opacity-0 transition hover:bg-white/10 hover:text-white group-hover/channel:opacity-100 focus:opacity-100"><MoreHorizontal className="h-4 w-4" /></button>}
-                              {ch.type === 'voice' && (voicePresenceByChannel[ch.id]?.length > 0 || (voiceSession?.channelId === ch.id && voiceParticipants.length > 0)) && (
+                              {ch.type === 'voice' && (visibleVoicePresenceByChannel[ch.id]?.length > 0 || (voiceSession?.channelId === ch.id && voiceSession?.kind !== 'dm' && voiceParticipants.length > 0)) && (
                                 <div aria-label={`${ch.name} ses kanalındaki kişiler`} className="ml-7 mt-1 space-y-1 pb-1">
-                                  {(voicePresenceByChannel[ch.id] || (voiceSession?.channelId === ch.id ? voiceParticipants : [])).map((presence) => {
+                                  {(visibleVoicePresenceByChannel[ch.id]?.length ? visibleVoicePresenceByChannel[ch.id] : (voiceSession?.channelId === ch.id && voiceSession?.kind !== 'dm' ? voiceParticipants : [])).map((presence) => {
                                     const participant = voiceSession?.channelId === ch.id ? voiceParticipants.find((item) => item.id === presence.id) || presence : presence;
                                     const isSelf = participant.id === user?.id;
-                                    return <div key={participant.id} draggable={isSelf && voiceSession?.channelId === ch.id} title={isSelf ? 'Sürükleyip başka ses kanalına bırak · tıkla: profil' : 'Tıkla: profili görüntüle · sağ tık: ses seçenekleri'} onClick={(event) => { event.stopPropagation(); void fetchProfiles([participant.id]).then((profiles) => { const profile = profiles[0] || { id: participant.id, username: participant.username, avatar_url: participant.avatar_url }; setSelectedVoiceProfile(profile); }); }} onDragStart={(event) => { if (!isSelf || voiceSession?.channelId !== ch.id) { event.preventDefault(); return; } event.stopPropagation(); event.dataTransfer.setData('application/x-fastlynox-voice-member', participant.id); event.dataTransfer.effectAllowed = 'move'; setDraggedVoiceMember({ userId: participant.id, username: participant.username, sourceChannelId: ch.id, serverId: activeServerId }); }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (voiceSession?.channelId === ch.id) setVoiceMemberMenuRequest({ participantId: participant.id, x: event.clientX, y: event.clientY, requestId: Date.now() }); }} className={`flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-[11px] text-slate-400 transition hover:bg-white/[0.045] hover:text-slate-200 ${isSelf && voiceSession?.channelId === ch.id ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${draggedVoiceMember?.userId === participant.id ? 'opacity-40' : ''}`}>
+                                    const canDragMember = isSelf ? voiceSession?.channelId === ch.id : serverCapabilities.serverId === activeServerId && serverCapabilities.moveMembers;
+                                    return <div key={participant.id} draggable={canDragMember} title={canDragMember ? 'Sürükleyip başka ses kanalına bırak · tıkla: profil' : 'Tıkla: profili görüntüle · sağ tık: ses seçenekleri'} onClick={(event) => { event.stopPropagation(); void fetchProfiles([participant.id]).then((profiles) => { const profile = profiles[0] || { id: participant.id, username: participant.username, avatar_url: participant.avatar_url }; setSelectedVoiceProfile(profile); }); }} onDragStart={(event) => { if (!canDragMember) { event.preventDefault(); return; } event.stopPropagation(); event.dataTransfer.setData('application/x-fastlynox-voice-member', participant.id); event.dataTransfer.effectAllowed = 'move'; setDraggedVoiceMember({ userId: participant.id, username: participant.username, sourceChannelId: ch.id, serverId: activeServerId }); }} onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (voiceSession?.channelId === ch.id) setVoiceMemberMenuRequest({ participantId: participant.id, x: event.clientX, y: event.clientY, requestId: Date.now() }); }} className={`flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-[11px] text-slate-400 transition hover:bg-white/[0.045] hover:text-slate-200 ${canDragMember ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${draggedVoiceMember?.userId === participant.id ? 'opacity-40' : ''}`}>
                                       <img src={getAvatarUrl(participant.avatar_url, participant.username)} alt="" className={`h-5 w-5 shrink-0 rounded-full object-cover ${participant.speaking ? 'ring-2 ring-emerald-400/90' : ''}`} />
                                       <span className="min-w-0 flex-1 truncate">{participant.username}</span>
                                       {participant.speaking && <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,.7)]" aria-label="Konuşuyor" />}
