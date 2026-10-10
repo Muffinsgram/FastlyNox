@@ -26,6 +26,7 @@ function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalk
   const [recording, setRecording] = useState('');
   const [notice, setNotice] = useState('');
   const [launchError, setLaunchError] = useState('');
+  const [launchCheck, setLaunchCheck] = useState('');
   const bindings = useMemo(() => ({ ...DEFAULT_KEYBINDS, ...value }), [value]);
   useEffect(() => { if (!window.fastlynoxDesktop?.setAutoStart) return; void window.fastlynoxDesktop.setAutoStart(launchAtStartup !== false).then(ok => setLaunchError(ok ? '' : 'Otomatik başlatma ayarı uygulanamadı.')).catch(() => setLaunchError('Otomatik başlatma ayarı uygulanamadı.')); }, [launchAtStartup]);
   useEffect(() => {
@@ -47,12 +48,28 @@ function KeybindSettingsPanel({ value, onChange, pushToTalkEnabled, onPushToTalk
     ['toggleDeafen', 'Kulaklığı aç / kapat', 'Gelen sesleri ve mikrofonu kapatıp aç.'],
     ['pushToTalk', 'Bas-konuş', 'Tuşa basılıyken konuş; bırakınca mikrofonu eski durumuna döndür.'],
   ];
+  const resetBindings = () => { onChange({ ...DEFAULT_KEYBINDS }); setNotice('Kısayollar varsayılan değerlere döndürüldü.'); };
+  const checkAutoStart = async () => {
+    const desktop = window.fastlynoxDesktop;
+    if (!desktop?.getAutoStart) { setLaunchCheck('Bu kontrol yalnızca masaüstü uygulamasında kullanılabilir.'); return; }
+    setLaunchCheck('Kontrol ediliyor…');
+    try {
+      const enabled = await desktop.getAutoStart();
+      if (enabled) { setLaunchError(''); setLaunchCheck('Otomatik başlatma etkin.'); }
+      else {
+        const applied = await desktop.setAutoStart?.(launchAtStartup !== false);
+        setLaunchCheck(applied ? 'Ayar yeniden uygulandı.' : 'Otomatik başlatma kapalı. Windows başlangıç uygulamalarını kontrol et.');
+      }
+    } catch { setLaunchCheck('Durum okunamadı. Uygulamayı yeniden başlatıp tekrar dene.'); }
+  };
   return <section className="max-w-2xl space-y-3">
     <div className="rounded-2xl border border-violet-200/10 bg-violet-300/[0.04] p-4 text-xs leading-5 text-slate-300">Bir atamaya tıkla, ardından istediğin tuş bileşimini bas. <kbd className="rounded border border-white/10 bg-black/20 px-1.5 py-0.5">Esc</kbd> ile vazgeçebilirsin.</div>
     <PreferenceRow icon={<Mic className="h-4 w-4" />} title="Bas-konuş modu" description="Mikrofon, atadığın tuşa basılı tuttuğun sürece açılır." checked={Boolean(pushToTalkEnabled)} onChange={onPushToTalkChange} />
     {rows.map(([key, title, description]) => <div key={key} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><span><span className="block text-sm font-semibold text-white">{title}</span><span className="mt-1 block text-xs text-slate-400">{description}</span></span><button type="button" onClick={() => { setNotice(''); setRecording(key); }} className={`min-w-36 rounded-xl border px-3 py-2 text-xs font-semibold transition ${recording === key ? 'border-violet-200/30 bg-violet-300/15 text-violet-100 animate-pulse' : 'border-white/10 bg-white/[0.05] text-slate-200 hover:bg-white/10'}`}>{recording === key ? 'Bir tuşa bas…' : formatKeybind(bindings[key])}</button></div>)}
+    <div className="flex justify-end"><button type="button" onClick={resetBindings} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-white/[0.06]">Kısayolları varsayılana döndür</button></div>
     <PreferenceRow icon={<Settings2 className="h-4 w-4" />} title="Bilgisayar açılınca başlat" description="Fastlynox Windows oturum açılışında çalışır." checked={launchAtStartup !== false} onChange={onLaunchAtStartupChange} />
     {launchError && <p role="status" className="px-2 text-xs text-rose-200">{launchError}</p>}
+    {window.fastlynoxDesktop && <div className="flex items-center justify-between gap-3 px-2"><span role="status" className="text-xs text-slate-400">{launchCheck}</span><button type="button" onClick={() => void checkAutoStart()} className="rounded-lg border border-white/10 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-white/[0.06]">Başlangıcı denetle</button></div>}
     {notice && <p role="status" className="px-2 text-xs text-violet-200">{notice}</p>}
     {!window.fastlynoxDesktop && <p className="px-2 text-[10px] text-slate-500">Masaüstü otomatik başlatma yalnızca kurulu uygulamada kullanılabilir.</p>}
   </section>;
@@ -93,11 +110,6 @@ export function UserSettingsModal({ onClose }) {
     }).catch(() => {});
     return () => { active = false; };
   }, [user?.id]);
-  useEffect(() => {
-    if (activeTab !== 'keybinds' || !window.fastlynoxDesktop?.setAutoStart) return;
-    void window.fastlynoxDesktop.setAutoStart(preferences.launchAtStartup !== false).catch(() => {});
-  }, [activeTab, preferences.launchAtStartup]);
-
   const enableDesktopNotifications = async () => {
     if (typeof Notification === 'undefined') { setNotificationPermission('unsupported'); return; }
     try { setNotificationPermission(await Notification.requestPermission()); }
@@ -236,6 +248,9 @@ export function UserSettingsModal({ onClose }) {
                 <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-cyan-300/[0.08] text-cyan-100"><Volume2 className="h-4 w-4" /></span><span><span className="block text-sm font-semibold text-white">Arayüz ses efektleri</span><span className="mt-1 block text-xs text-slate-400">Odaya girme/çıkma, arama ve ses tahtası efektlerinin cihazındaki seviyesi.</span></span></div>
                 <label className="mt-4 block"><span className="mb-2 flex justify-between text-xs text-slate-300"><span>Ses seviyesi</span><span>{preferences.uiSoundVolume ?? 65}%</span></span><input aria-label="Arayüz ses efekti seviyesi" type="range" min="0" max="100" step="1" value={preferences.uiSoundVolume ?? 65} onChange={(event) => updatePreference('uiSoundVolume', Number(event.target.value))} className="w-full accent-violet-400" /></label>
                 <div className="mt-3 flex items-center justify-between gap-3"><p className="text-xs text-slate-500">Varsayılan seviye yükseltildi. Sürgü 0’a gelirse efekt sesi kapanır.</p><button type="button" onClick={() => playUiSound('join', user?.id)} disabled={!preferences.soundEffects || !(preferences.uiSoundVolume ?? 65)} className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-white/[0.08] disabled:opacity-40"><Play className="h-3.5 w-3.5" />Dene</button></div>
+                <div className="mt-4 grid gap-3 border-t border-white/[0.07] pt-3 sm:grid-cols-2">
+                  {[["microphoneToggleSoundVolume", "Mikrofon açma / kapama", "microphoneOn", Mic], ["headphoneToggleSoundVolume", "Kulaklık açma / kapama", "headphonesOn", Headphones]].map(([key, label, preview, Icon]) => <div key={key} className="rounded-xl border border-white/[0.06] bg-black/10 p-3"><div className="flex items-center gap-2"><Icon className="h-3.5 w-3.5 text-cyan-200" /><span className="min-w-0 flex-1 text-[11px] font-semibold text-slate-200">{label}</span><span className="text-[10px] tabular-nums text-slate-400">{preferences[key] ?? 55}%</span></div><input aria-label={`${label} sesi`} type="range" min="0" max="100" step="1" value={preferences[key] ?? 55} onChange={event => updatePreference(key, Number(event.target.value))} className="mt-2 w-full accent-cyan-300" /><button type="button" disabled={!preferences.soundEffects || !(preferences[key] ?? 55)} onClick={() => playUiSound(preview, user?.id)} className="mt-1 text-[10px] font-semibold text-cyan-100/80 hover:text-cyan-100 disabled:opacity-40">Sesi dene</button></div>)}
+                </div>
               </div>
               <PreferenceRow icon={<Volume2 className="h-4 w-4" />} title="Arayüz ses efektleri" description="Ses odasına girme, ayrılma, geri dönme ve arama seslerini etkinleştir." checked={preferences.soundEffects} onChange={(value) => updatePreference('soundEffects', value)} />
               <p className="px-1 pt-2 text-xs text-slate-500">Ses ve cihaz tercihleri bu cihazda saklanır.</p>
@@ -271,15 +286,19 @@ function PreferenceRow({ icon, title, description, checked, onChange }) {
 function VoiceSettingsPanel({ value, onChange }) {
   const [devices, setDevices] = useState({ audioinput: [], audiooutput: [] });
   const [micTest, setMicTest] = useState({ active: false, level: 0, error: '' });
+  const [diagnostic, setDiagnostic] = useState({ busy: false, results: null });
   const micTestRef = useRef(null);
   const finishMicTestRef = useRef(() => {});
-  const settings = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, ...value };
+  const settings = { inputDeviceId: '', outputDeviceId: '', audioQuality: 'high', echoCancellation: true, noiseSuppression: true, noiseProcessor: 'krisp', autoGainControl: true, voiceIsolation: false, voiceActivationEnabled: false, voiceSensitivity: 60, ...value };
+  const [sensitivityDraft, setSensitivityDraft] = useState(settings.voiceSensitivity);
+  useEffect(() => setSensitivityDraft(settings.voiceSensitivity), [settings.voiceSensitivity]);
 
   const finishMicTest = useCallback((session = micTestRef.current) => {
     if (!session || micTestRef.current !== session) return;
     micTestRef.current = null;
     window.clearInterval(session.interval);
     window.clearTimeout(session.timeout);
+    if (session.monitor) { session.monitor.pause(); session.monitor.srcObject = null; }
     session.stream?.getTracks().forEach(track => track.stop());
     try { session.source?.disconnect(); } catch { /* Already disconnected. */ }
     try { session.analyser?.disconnect(); } catch { /* Already disconnected. */ }
@@ -292,7 +311,7 @@ function VoiceSettingsPanel({ value, onChange }) {
 
   const startMicTest = useCallback(async () => {
     if (micTestRef.current) { finishMicTestRef.current(); return; }
-    const session = { stream: null, context: null, source: null, analyser: null, interval: null, timeout: null };
+    const session = { stream: null, context: null, source: null, analyser: null, monitor: null, interval: null, timeout: null };
     micTestRef.current = session;
     setMicTest({ active: true, level: 0, error: '' });
     window.dispatchEvent(new CustomEvent('fastlynox:microphone-test', { detail: { active: true } }));
@@ -307,6 +326,15 @@ function VoiceSettingsPanel({ value, onChange }) {
       const stream = await navigator.mediaDevices.getUserMedia({ audio });
       if (micTestRef.current !== session) { stream.getTracks().forEach(track => track.stop()); return; }
       session.stream = stream;
+      session.monitor = new Audio();
+      session.monitor.autoplay = true;
+      session.monitor.volume = 0.6;
+      session.monitor.srcObject = stream;
+      if (settings.outputDeviceId && typeof session.monitor.setSinkId === 'function') {
+        try { await session.monitor.setSinkId(settings.outputDeviceId); } catch { /* Use the system default output if this device cannot be selected. */ }
+      }
+      await session.monitor.play();
+      if (micTestRef.current !== session) return;
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextClass) throw new Error('Mikrofon seviye ölçeri bu cihazda desteklenmiyor.');
       session.context = new AudioContextClass();
@@ -333,7 +361,7 @@ function VoiceSettingsPanel({ value, onChange }) {
         setMicTest({ active: false, level: 0, error: message });
       }
     }
-  }, [finishMicTest, settings.inputDeviceId, settings.echoCancellation, settings.noiseSuppression, settings.autoGainControl]);
+  }, [finishMicTest, settings.inputDeviceId, settings.outputDeviceId, settings.echoCancellation, settings.noiseSuppression, settings.autoGainControl]);
 
   useEffect(() => {
     let active = true;
@@ -349,6 +377,24 @@ function VoiceSettingsPanel({ value, onChange }) {
   }, []);
 
   const update = (key, nextValue) => onChange({ ...settings, [key]: nextValue });
+  const runDiagnostics = async () => {
+    setDiagnostic({ busy: true, results: null });
+    let permission = 'Denetlenemedi';
+    try { permission = navigator.permissions?.query ? (await navigator.permissions.query({ name: 'microphone' })).state : 'Tarayıcı izin API’si yok'; } catch { permission = 'İzin durumu okunamadı'; }
+    let found = [];
+    try { found = await navigator.mediaDevices?.enumerateDevices?.() || []; } catch { /* shown in device counts */ }
+    const inputs = found.filter(device => device.kind === 'audioinput');
+    const outputs = found.filter(device => device.kind === 'audiooutput');
+    const exists = (id, list) => !id || list.some(device => device.deviceId === id);
+    setDiagnostic({ busy: false, results: [
+      { label: 'Ağ bağlantısı', value: navigator.onLine ? 'Çevrim içi' : 'Çevrim dışı', ok: navigator.onLine },
+      { label: 'Mikrofon izni', value: permission, ok: permission === 'granted' || permission === 'prompt' },
+      { label: 'Medya aygıtları', value: `${inputs.length} mikrofon · ${outputs.length} ses çıkışı`, ok: inputs.length > 0 },
+      { label: 'Seçili mikrofon', value: exists(settings.inputDeviceId, inputs) ? 'Kullanılabilir' : 'Bulunamadı; sistem varsayılanını seç', ok: exists(settings.inputDeviceId, inputs) },
+      { label: 'Seçili ses çıkışı', value: exists(settings.outputDeviceId, outputs) ? 'Kullanılabilir' : 'Bulunamadı; sistem varsayılanını seç', ok: exists(settings.outputDeviceId, outputs) },
+      { label: 'Mikrofon testi', value: micTest.error ? `Hata: ${micTest.error}` : micTest.active ? 'Çalışıyor' : 'Hazır', ok: !micTest.error },
+    ] });
+  };
   const makeOptions = kind => [
     { value: '', label: devices[kind][0]?.label ? `Sistem varsayılanı · ${devices[kind][0].label}` : 'Sistem varsayılanı' },
     ...devices[kind].map((device, index) => ({ value: device.deviceId, label: device.label || `${kind === 'audioinput' ? 'Mikrofon' : 'Hoparlör'} ${index + 1}` })),
@@ -362,13 +408,18 @@ function VoiceSettingsPanel({ value, onChange }) {
       <label><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400"><Headphones className="mr-1 inline h-3 w-3" />Ses çıkışı</span><AnimatedSelect ariaLabel="Varsayılan hoparlör" value={settings.outputDeviceId} onValueChange={deviceId => update('outputDeviceId', deviceId)} options={makeOptions('audiooutput')} className="w-full" /></label>
     </div>
     <label className="mt-3 block"><span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wide text-slate-400">Gürültü filtresi</span><AnimatedSelect ariaLabel="Gürültü filtresi" value={settings.noiseProcessor} onValueChange={value => update('noiseProcessor', value)} options={[{ value: 'krisp', label: 'Krisp · en güçlü filtre' }, { value: 'rnnoise', label: 'RNNoise · cihazda, çevrim dışı' }, { value: 'standard', label: 'Standart · düşük işlemci kullanımı' }]} className="w-full" /></label>
+    <div className="mt-3 space-y-2">
+      <PreferenceRow icon={<AudioLines className="h-4 w-4" />} title="Konuşma algılama" description="Mikrofonu yalnızca sesin eşik değerini geçtiğinde iletir." checked={Boolean(settings.voiceActivationEnabled)} onChange={checked => update('voiceActivationEnabled', checked)} />
+      {settings.voiceActivationEnabled && <label className="block rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><span className="flex items-center justify-between text-xs font-semibold text-white"><span>Mikrofon hassasiyeti</span><span>{sensitivityDraft}%</span></span><input aria-label="Mikrofon hassasiyeti" type="range" min="0" max="100" value={sensitivityDraft} onChange={event => setSensitivityDraft(Number(event.target.value))} onPointerUp={event => update('voiceSensitivity', Number(event.currentTarget.value))} onKeyUp={event => update('voiceSensitivity', Number(event.currentTarget.value))} className="mt-3 w-full accent-violet-400" /><span className="mt-1 block text-[10px] text-slate-500">Yüksek değer, daha kısık konuşmaları da algılar.</span></label>}
+    </div>
     <div className="mt-3 grid gap-2 sm:grid-cols-2">
       {[["echoCancellation", 'Yankı engelleme', 'Hoparlör yankısını azalt'], ["noiseSuppression", 'Gürültü engelleme', 'Arka plan sesini azalt'], ["autoGainControl", 'Ses seviyesini dengele', 'Mikrofon seviyesini otomatik ayarla']].map(([key, title, description]) => <PreferenceRow key={key} icon={<AudioLines className="h-4 w-4" />} title={title} description={description} checked={Boolean(settings[key])} onChange={checked => update(key, checked)} />)}
     </div>
+    <div className="mt-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-3.5"><div className="flex items-center justify-between gap-3"><div><p className="text-xs font-semibold text-white">Ses sorunlarını denetle</p><p className="mt-1 text-[10px] text-slate-500">İzinleri, bağlantıyı ve seçili aygıtları kontrol eder.</p></div><button type="button" disabled={diagnostic.busy} onClick={() => void runDiagnostics()} className="rounded-xl bg-violet-300/10 px-3 py-2 text-[10px] font-semibold text-violet-100 hover:bg-violet-300/15 disabled:opacity-50">{diagnostic.busy ? 'Denetleniyor…' : 'Denetle'}</button></div>{diagnostic.results && <ul className="mt-3 space-y-1.5 border-t border-white/[0.06] pt-3">{diagnostic.results.map(item => <li key={item.label} className="flex justify-between gap-3 text-[10px]"><span className="text-slate-400">{item.label}</span><span className={item.ok ? 'text-emerald-200' : 'text-amber-200'}>{item.value}</span></li>)}</ul>}</div>
     <div className="mt-3 rounded-2xl border border-white/[0.08] bg-[#0b1019]/70 p-3.5">
       <div className="flex items-center gap-3">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cyan-300/[0.09] text-cyan-100"><Mic className="h-4 w-4" /></span>
-        <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-slate-100">Mikrofon testi</p><p className="mt-1 text-[10px] leading-4 text-slate-400">Konuşarak giriş seviyeni kontrol et. Ses kaydedilmez ve hoparlöre verilmez.</p></div>
+        <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-slate-100">Mikrofon testi</p><p className="mt-1 text-[10px] leading-4 text-slate-400">Ses seviyesini ölçer ve mikrofonunu %60 düzeyinde geri verir. Yankıyı önlemek için kulaklık kullan.</p></div>
         <button type="button" onClick={() => void startMicTest()} className={`shrink-0 rounded-xl px-3 py-2 text-[11px] font-semibold transition ${micTest.active ? 'border border-rose-300/20 bg-rose-400/10 text-rose-100 hover:bg-rose-400/15' : 'bg-cyan-200/10 text-cyan-100 hover:bg-cyan-200/15'}`}>{micTest.active ? 'Testi bitir' : 'Test et'}</button>
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.07]" role="meter" aria-label="Mikrofon giriş seviyesi" aria-valuemin={0} aria-valuemax={100} aria-valuenow={micTest.level}><div className={`h-full rounded-full transition-[width] duration-100 ${micTest.level > 82 ? 'bg-amber-300' : 'bg-gradient-to-r from-cyan-400 to-emerald-300'}`} style={{ width: `${micTest.level}%` }} /></div>

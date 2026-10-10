@@ -1,6 +1,7 @@
 import workletUrl from '@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url';
 import wasmUrl from '@sapphi-red/web-noise-suppressor/rnnoise.wasm?url';
 import simdUrl from '@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url';
+import voiceGateUrl from './voiceActivityGate.worklet.js?url';
 
 let binary;
 const warnFallback = () => window.dispatchEvent(new CustomEvent('fastlynox:noise-fallback'));
@@ -86,35 +87,119 @@ export class MicrophoneNoiseProcessor {
   }
 }
 
+class VoiceActivationGateProcessor {
+  name = 'fastlynox-voice-activation-gate';
+
+  constructor(innerProcessor, sensitivity) {
+    this.innerProcessor = innerProcessor;
+    this.sensitivity = Math.max(0, Math.min(100, Number(sensitivity) || 0));
+    this.configurationKey = `voice-gate:${this.sensitivity}:${innerProcessor?.name || 'standard'}`;
+  }
+
+  async init(options) {
+    if (!window.AudioWorkletNode || !AudioContext.prototype.audioWorklet) throw new Error('Mikrofon hassasiyet filtresi bu cihazda desteklenmiyor.');
+    if (this.innerProcessor) await this.innerProcessor.init(options);
+    try {
+      this.context = new AudioContext({ latencyHint: 'interactive' });
+      await Promise.all([this.context.audioWorklet.addModule(voiceGateUrl), this.context.resume()]);
+      const sourceTrack = this.innerProcessor?.processedTrack || options.track;
+      this.source = this.context.createMediaStreamSource(new MediaStream([sourceTrack]));
+      this.gate = new AudioWorkletNode(this.context, 'fastlynox-voice-activity-gate', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        parameterData: { thresholdDb: -30 - this.sensitivity * 0.4 },
+      });
+      this.destination = this.context.createMediaStreamDestination();
+      this.source.connect(this.gate).connect(this.destination);
+      this.processedTrack = this.destination.stream.getAudioTracks()[0];
+    } catch (error) {
+      await this.destroy();
+      throw error;
+    }
+  }
+
+  async restart(options) {
+    await this.destroy();
+    await this.init(options);
+  }
+
+  async onPublish(room) {
+    if (this.innerProcessor?.onPublish) await this.innerProcessor.onPublish(room);
+  }
+
+  async destroy() {
+    const { source, gate, destination, context, processedTrack, innerProcessor } = this;
+    this.source = this.gate = this.destination = this.context = this.processedTrack = undefined;
+    source?.disconnect();
+    gate?.disconnect();
+    destination?.disconnect();
+    processedTrack?.stop();
+    if (context && context.state !== 'closed') await context.close().catch(() => {});
+    if (innerProcessor) await innerProcessor.destroy();
+  }
+}
+
 const updates = new WeakMap();
 export function syncNoiseProcessor(track, settings) {
   const operation = (updates.get(track) || Promise.resolve()).catch(() => {}).then(async () => {
     if (track.mediaStreamTrack.readyState === 'ended') return;
-    const enabled = settings.noiseSuppression && settings.noiseProcessor !== 'standard';
     const current = track.getProcessor();
-    if (!enabled) {
-      if (current?.name === 'fastlynox-rnnoise' || current?.name === 'livekit-noise-filter') await track.stopProcessor();
+    const noiseEnabled = settings.noiseSuppression && settings.noiseProcessor !== 'standard';
+    const gateEnabled = Boolean(settings.voiceActivationEnabled);
+    if (!noiseEnabled && !gateEnabled) {
+      if (current?.configurationKey || current?.name === 'fastlynox-rnnoise' || current?.name === 'livekit-noise-filter' || current?.name === 'fastlynox-voice-activation-gate') await track.stopProcessor();
       return;
     }
-    const target = settings.noiseProcessor === 'krisp' ? 'livekit-noise-filter' : 'fastlynox-rnnoise';
-    if (current?.name === target) return;
-    if (current) await track.stopProcessor();
-    if (target === 'livekit-noise-filter') {
+
+    let noiseProcessor;
+    let noiseName = 'standard';
+    if (noiseEnabled && settings.noiseProcessor === 'krisp') {
       try {
         const { KrispNoiseFilter, isKrispNoiseFilterSupported } = await import('@livekit/krisp-noise-filter');
         if (!isKrispNoiseFilterSupported()) throw new Error('Bu cihaz Krisp filtresini desteklemiyor.');
-        const processor = KrispNoiseFilter({ quality: 'high', useBVC: false, bufferOverflowMs: 140, bufferDropMs: 300, onBufferDrop: warnFallback });
-        await track.setProcessor(processor);
-        await processor.setEnabled(true);
-        window.dispatchEvent(new CustomEvent('fastlynox:noise-quality', { detail: 'krisp' }));
-        return;
+        noiseProcessor = KrispNoiseFilter({ quality: 'high', useBVC: false, bufferOverflowMs: 140, bufferDropMs: 300, onBufferDrop: warnFallback });
+        noiseName = noiseProcessor.name;
       } catch (error) {
         console.warn('Krisp etkinleştirilemedi; RNNoise yedeği kullanılıyor.', error);
         window.dispatchEvent(new CustomEvent('fastlynox:noise-fallback', { detail: 'rnnoise' }));
+        noiseProcessor = new MicrophoneNoiseProcessor();
+        noiseName = noiseProcessor.name;
+      }
+    } else if (noiseEnabled) {
+      noiseProcessor = new MicrophoneNoiseProcessor();
+      noiseName = noiseProcessor.name;
+    }
+
+    const sensitivity = Number(settings.voiceSensitivity ?? 60);
+    const configurationKey = `${noiseName}:gate-${gateEnabled ? sensitivity : 'off'}`;
+    if (current?.configurationKey === configurationKey) return;
+    if (current) await track.stopProcessor();
+    if (!gateEnabled) {
+      await track.setProcessor(noiseProcessor);
+      if (noiseName === 'livekit-noise-filter') {
+        await noiseProcessor.setEnabled(true);
+        window.dispatchEvent(new CustomEvent('fastlynox:noise-quality', { detail: 'krisp' }));
+      } else window.dispatchEvent(new CustomEvent('fastlynox:noise-quality', { detail: noiseEnabled ? 'rnnoise' : 'standard' }));
+      Object.defineProperty(noiseProcessor, 'configurationKey', { value: configurationKey, configurable: true });
+      return;
+    }
+
+    const gatedProcessor = new VoiceActivationGateProcessor(noiseProcessor, sensitivity);
+    gatedProcessor.configurationKey = configurationKey;
+    try {
+      await track.setProcessor(gatedProcessor);
+      if (noiseName === 'livekit-noise-filter') await noiseProcessor.setEnabled(true);
+      window.dispatchEvent(new CustomEvent('fastlynox:noise-quality', { detail: noiseName === 'standard' ? 'standard' : noiseName === 'livekit-noise-filter' ? 'krisp' : 'rnnoise' }));
+    } catch (error) {
+      await gatedProcessor.destroy().catch(() => {});
+      window.dispatchEvent(new CustomEvent('fastlynox:voice-activation-fallback', { detail: error instanceof Error ? error.message : '' }));
+      if (noiseProcessor) {
+        await track.setProcessor(noiseProcessor);
+        if (noiseName === 'livekit-noise-filter') await noiseProcessor.setEnabled(true);
+        Object.defineProperty(noiseProcessor, 'configurationKey', { value: `${noiseName}:gate-fallback`, configurable: true });
       }
     }
-    await track.setProcessor(new MicrophoneNoiseProcessor());
-    window.dispatchEvent(new CustomEvent('fastlynox:noise-quality', { detail: 'rnnoise' }));
   });
   updates.set(track, operation);
   return operation;

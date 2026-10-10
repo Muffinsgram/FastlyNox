@@ -159,6 +159,19 @@ export default function App() {
         const currentRows = rows || [];
         const userIds = [...new Set(currentRows.map((row) => row.user_id))];
         const missingProfileIds = userIds.filter((id) => !voiceProfileCacheRef.current.has(id));
+        const buildRoster = (moderationRows = []) => {
+          const moderation = new Map(moderationRows.map((row) => [`${row.channel_id}:${row.user_id}`, row]));
+          const next = {};
+          currentRows.forEach((row) => {
+            const profile = voiceProfileCacheRef.current.get(row.user_id) || {};
+            const mod = moderation.get(`${row.channel_id}:${row.user_id}`) || {};
+            (next[row.channel_id] ||= []).push({ id: row.user_id, username: profile.username || 'Fastlynox kullanıcısı', avatar_url: profile.avatar_url || null, microphoneEnabled: row.microphone_enabled, deafened: row.deafened, serverMuted: Boolean(mod.server_muted), serverDeafened: Boolean(mod.server_deafened), speaking: false });
+          });
+          return next;
+        };
+        // Show join/leave changes as soon as the presence query returns instead
+        // of holding the whole roster behind profile and moderation lookups.
+        setVoicePresenceByChannel(buildRoster());
         const [newProfiles, moderationResult] = await Promise.all([
           missingProfileIds.length ? fetchProfiles(missingProfileIds).catch((error) => {
             console.warn('Ses katılımcılarının profilleri alınamadı:', error);
@@ -169,14 +182,7 @@ export default function App() {
         ]);
         if (!alive) return;
         (newProfiles || []).forEach((profile) => voiceProfileCacheRef.current.set(profile.id, profile));
-        const moderation = new Map((moderationResult.data || []).map((row) => [`${row.channel_id}:${row.user_id}`, row]));
-        const next = {};
-        currentRows.forEach((row) => {
-          const profile = voiceProfileCacheRef.current.get(row.user_id) || {};
-          const mod = moderation.get(`${row.channel_id}:${row.user_id}`) || {};
-          (next[row.channel_id] ||= []).push({ id: row.user_id, username: profile.username || 'Fastlynox kullanıcısı', avatar_url: profile.avatar_url || null, microphoneEnabled: row.microphone_enabled, deafened: row.deafened, serverMuted: Boolean(mod.server_muted), serverDeafened: Boolean(mod.server_deafened), speaking: false });
-        });
-        setVoicePresenceByChannel(next);
+        setVoicePresenceByChannel(buildRoster(moderationResult.data || []));
       } catch (error) {
         console.warn('Ses kanalı roster yenilenemedi:', error);
       } finally {
@@ -184,7 +190,7 @@ export default function App() {
         if (refreshQueued && alive) { refreshQueued = false; queueRefresh(); }
       }
     };
-    const queueRefresh = () => { clearTimeout(timer); timer = window.setTimeout(() => void refresh(), 180); };
+    const queueRefresh = () => { clearTimeout(timer); timer = window.setTimeout(() => void refresh(), 35); };
     void refresh();
     const subscription = supabase.channel(`voice-presence:${activeServerId}`)
       // Delete payloads normally contain only primary-key columns, so filtering
@@ -198,7 +204,7 @@ export default function App() {
         const changedChannel = payload.new?.channel_id || payload.old?.channel_id;
         if (channelIds.includes(changedChannel)) queueRefresh();
       })
-      .subscribe();
+      .subscribe((status) => { if (status === 'SUBSCRIBED') void refresh(); });
     const fallbackRefresh = window.setInterval(() => void refresh(), 30_000);
     return () => { alive = false; clearTimeout(timer); clearInterval(fallbackRefresh); void supabase.removeChannel(subscription); };
   }, [activeServerId, user?.id, activeVoiceChannelKey]);

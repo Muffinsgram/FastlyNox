@@ -11,6 +11,50 @@ let startupPending = false;
 let startupTimeout;
 let selectedScreenSourceId = null;
 const startupPreferencePath = () => path.join(app.getPath('userData'), 'startup-preference.json');
+const startupShortcutPath = () => path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'Fastlynox.lnk');
+const loginItemOptions = () => ({ path: process.execPath, args: [] });
+function hasStartupShortcut() {
+  if (process.platform !== 'win32') return false;
+  try { return path.resolve(shell.readShortcutLink(startupShortcutPath()).target) === path.resolve(process.execPath); }
+  catch { return false; }
+}
+function isAutoStartEnabled() {
+  if (!app.isPackaged) return false;
+  try { if (app.getLoginItemSettings(loginItemOptions()).openAtLogin) return true; }
+  catch { /* Fall back to the per-user Startup folder shortcut. */ }
+  return hasStartupShortcut();
+}
+function applyAutoStart(enabled) {
+  if (!app.isPackaged || typeof enabled !== 'boolean') return false;
+  let registered = false;
+  try {
+    app.setLoginItemSettings({ ...loginItemOptions(), openAtLogin: enabled });
+    registered = app.getLoginItemSettings(loginItemOptions()).openAtLogin === enabled;
+  }
+  catch (error) { console.warn('Windows oturum açılışı kaydı ayarlanamadı; başlangıç kısayolu deneniyor.', error); }
+  if (process.platform === 'win32') {
+    try {
+      if (enabled && !registered && !hasStartupShortcut()) {
+        fs.mkdirSync(path.dirname(startupShortcutPath()), { recursive: true });
+        const shortcut = { target: process.execPath, args: [], description: 'Fastlynox bilgisayar açılışında başlat' };
+        const operation = fs.existsSync(startupShortcutPath()) ? 'replace' : 'create';
+        if (shell.writeShortcutLink(startupShortcutPath(), operation, shortcut) === false) return false;
+      } else if (!enabled && fs.existsSync(startupShortcutPath())) {
+        fs.rmSync(startupShortcutPath());
+      }
+    } catch (error) {
+      console.warn('Windows başlangıç kısayolu ayarlanamadı.', error);
+    }
+  }
+  const applied = isAutoStartEnabled() === enabled;
+  if (applied) {
+    try {
+      fs.mkdirSync(path.dirname(startupPreferencePath()), { recursive: true });
+      fs.writeFileSync(startupPreferencePath(), JSON.stringify({ enabled }), 'utf8');
+    } catch (error) { console.warn('Otomatik başlatma tercihi kaydedilemedi.', error); }
+  }
+  return applied;
+}
 let selectedScreenShareAudio = false;
 let lastUpdateStatus = { state: 'idle' };
 
@@ -205,16 +249,8 @@ ipcMain.handle('fastlynox:window-control', (event, action) => {
 });
 
 ipcMain.handle('fastlynox:app-version', () => app.getVersion());
-ipcMain.handle('fastlynox:get-auto-start', () => app.isPackaged ? app.getLoginItemSettings({ path: process.execPath }).openAtLogin : false);
-ipcMain.handle('fastlynox:set-auto-start', (_event, enabled) => {
-  if (!app.isPackaged || typeof enabled !== 'boolean') return false;
-  try {
-    app.setLoginItemSettings({ openAtLogin: enabled, path: process.execPath, name: 'Fastlynox' });
-    fs.mkdirSync(path.dirname(startupPreferencePath()), { recursive: true });
-    fs.writeFileSync(startupPreferencePath(), JSON.stringify({ enabled }), 'utf8');
-    return app.getLoginItemSettings({ path: process.execPath }).openAtLogin === enabled;
-  } catch { return false; }
-});
+ipcMain.handle('fastlynox:get-auto-start', () => isAutoStartEnabled());
+ipcMain.handle('fastlynox:set-auto-start', (_event, enabled) => applyAutoStart(enabled));
 ipcMain.handle('fastlynox:is-maximized', (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() || false);
 ipcMain.handle('fastlynox:check-update', checkForUpdates);
 ipcMain.handle('fastlynox:install-update', () => {
@@ -247,11 +283,7 @@ app.whenReady().then(() => {
   if (app.isPackaged) {
     let startupPreference;
     try { startupPreference = JSON.parse(fs.readFileSync(startupPreferencePath(), 'utf8')).enabled; } catch { startupPreference = true; }
-    try {
-      app.setLoginItemSettings({ openAtLogin: startupPreference !== false, path: process.execPath, name: 'Fastlynox' });
-      fs.mkdirSync(path.dirname(startupPreferencePath()), { recursive: true });
-      fs.writeFileSync(startupPreferencePath(), JSON.stringify({ enabled: startupPreference !== false }), 'utf8');
-    } catch (error) { console.warn('Otomatik başlatma ayarı uygulanamadı.', error); }
+    if (!applyAutoStart(startupPreference !== false)) console.warn('Otomatik başlatma kaydı bu Windows hesabına uygulanamadı.');
   }
   app.setAsDefaultProtocolClient('fastlynox');
   createTray();
