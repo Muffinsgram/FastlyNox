@@ -13,16 +13,24 @@ const senderNameCache = new Map();
 const processedServerMessages = new Map();
 let notificationAudioContext;
 
-function showDesktopNotification(title, body) {
+async function showDesktopNotification(title, body) {
   const nativeNotification = window.fastlynoxDesktop?.showNativeNotification;
   if (typeof nativeNotification === 'function') {
-    void nativeNotification({ title, body }).catch(() => {});
-    return;
+    try {
+      if (await nativeNotification({ title, body })) return true;
+    } catch (error) {
+      console.warn('Windows bildirimi Electron üzerinden gösterilemedi:', error);
+    }
   }
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    try { new Notification(title, { body }); }
-    catch { /* Keep the in-app toast available if the OS blocks the popup. */ }
+    try {
+      new Notification(title, { body, icon: '/favicon.ico', tag: `fastlynox:${title}:${body}` });
+      return true;
+    } catch (error) {
+      console.warn('Masaüstü bildirimi gösterilemedi:', error);
+    }
   }
+  return false;
 }
 
 function notificationMessagePreview(message, isDM = false) {
@@ -107,7 +115,7 @@ async function showIncomingMessageToast(message, isDM, userId) {
   const showedToast = useNotificationStore.getState().queueToast(toast);
   if (!showedToast) return;
   if (preferences.notificationSound) playNotificationSound(preferences.notificationSoundVolume);
-  if (preferences.desktopNotifications) showDesktopNotification(toast.title, toast.body);
+  if (preferences.desktopNotifications) void showDesktopNotification(toast.title, toast.body);
 
   // Never hold the visible toast behind profile/channel lookups. Those requests
   // can take seconds on a weak connection, while the incoming message itself
@@ -462,7 +470,7 @@ export const useNotificationStore = create((set, get) => ({
         const notification = isOpenDM || isOpenServerChannel ? { ...newNotif, is_read: true } : newNotif;
         const showedToast = !doNotDisturb && !isOpenServerChannel && get().queueToast(notification);
         if (showedToast && !isOpenDM && preferences.notificationSound) playNotificationSound(preferences.notificationSoundVolume);
-        if (showedToast && preferences.desktopNotifications) showDesktopNotification(newNotif.title, newNotif.body);
+        if (showedToast && preferences.desktopNotifications) void showDesktopNotification(newNotif.title, newNotif.body);
 
         set(state => ({
           notifications: [notification, ...state.notifications].slice(0, 30),

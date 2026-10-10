@@ -5,6 +5,9 @@ const http = require('node:http');
 const { execFile } = require('node:child_process');
 const { autoUpdater } = require('electron-updater');
 
+const APP_USER_MODEL_ID = 'com.muffinsgram.fastlynox';
+const TOAST_ACTIVATOR_CLSID = '{8D1E13D7-65F8-4F23-91B0-7F3D56D341A2}';
+
 let mainWindow;
 let splashWindow;
 let tray;
@@ -493,14 +496,29 @@ ipcMain.handle('fastlynox:set-voice-hotkeys-enabled', (event, enabled) => {
 
 ipcMain.handle('fastlynox:app-version', () => app.getVersion());
 ipcMain.handle('fastlynox:show-notification', (event, options = {}) => {
-  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow || !Notification.isSupported()) return false;
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow) return false;
+  if (!Notification.isSupported()) {
+    console.warn('Bu sistemde yerel masaüstü bildirimi desteklenmiyor.');
+    return false;
+  }
   const title = typeof options.title === 'string' ? options.title.trim().slice(0, 120) : '';
   const body = typeof options.body === 'string' ? options.body.trim().slice(0, 300) : '';
   if (!title && !body) return false;
   try {
-    new Notification({ title: title || 'Fastlynox', body }).show();
+    const notification = new Notification({
+      title: title || 'Fastlynox',
+      body,
+      icon: path.join(__dirname, 'app-icon.ico'),
+      silent: false,
+      timeoutType: 'default',
+    });
+    notification.on('failed', (_event, error) => console.warn('Windows bildirimi gösterilemedi:', error));
+    notification.show();
     return true;
-  } catch { return false; }
+  } catch (error) {
+    console.warn('Windows bildirimi oluşturulamadı:', error);
+    return false;
+  }
 });
 ipcMain.handle('fastlynox:spotify-oauth-start', async (_event, request = {}) => {
   const { clientId, state, codeChallenge } = request;
@@ -611,7 +629,8 @@ ipcMain.on('fastlynox:renderer-ready', (event) => {
 
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return;
-  app.setAppUserModelId('com.muffinsgram.fastlynox');
+  app.setAppUserModelId(APP_USER_MODEL_ID);
+  if (process.platform === 'win32') app.setToastActivatorCLSID(TOAST_ACTIVATOR_CLSID);
   if (app.isPackaged) {
     let startupPreference;
     try { startupPreference = JSON.parse(fs.readFileSync(startupPreferencePath(), 'utf8')).enabled; } catch { startupPreference = true; }
