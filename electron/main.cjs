@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, Tray, desktopCapturer, session, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, desktopCapturer, session, globalShortcut, Notification } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -492,6 +492,16 @@ ipcMain.handle('fastlynox:set-voice-hotkeys-enabled', (event, enabled) => {
 });
 
 ipcMain.handle('fastlynox:app-version', () => app.getVersion());
+ipcMain.handle('fastlynox:show-notification', (event, options = {}) => {
+  if (BrowserWindow.fromWebContents(event.sender) !== mainWindow || !Notification.isSupported()) return false;
+  const title = typeof options.title === 'string' ? options.title.trim().slice(0, 120) : '';
+  const body = typeof options.body === 'string' ? options.body.trim().slice(0, 300) : '';
+  if (!title && !body) return false;
+  try {
+    new Notification({ title: title || 'Fastlynox', body }).show();
+    return true;
+  } catch { return false; }
+});
 ipcMain.handle('fastlynox:spotify-oauth-start', async (_event, request = {}) => {
   const { clientId, state, codeChallenge } = request;
   if (!/^[a-zA-Z0-9]{20,80}$/u.test(clientId || '') || !/^[a-zA-Z0-9_-]{40,64}$/u.test(state || '') || !/^[a-zA-Z0-9_-]{40,64}$/u.test(codeChallenge || '')) return null;

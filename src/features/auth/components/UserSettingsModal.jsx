@@ -144,7 +144,7 @@ export function UserSettingsModal({ onClose }) {
   const [profileMessage, setProfileMessage] = useState('');
   const [accountMessage, setAccountMessage] = useState('');
   const [preferences, setPreferences] = useState(() => getAppPreferences(user?.id));
-  const [notificationPermission, setNotificationPermission] = useState(() => typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
+  const [notificationPermission, setNotificationPermission] = useState(() => window.fastlynoxDesktop?.showNativeNotification ? 'granted' : typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
   const refreshNotificationCounts = useNotificationStore((state) => state.fetchNotifications);
   useEffect(() => {
     let active = true;
@@ -157,11 +157,17 @@ export function UserSettingsModal({ onClose }) {
     return () => { active = false; };
   }, [user?.id]);
   const enableDesktopNotifications = async () => {
+    if (window.fastlynoxDesktop?.showNativeNotification) { setNotificationPermission('granted'); return; }
     if (typeof Notification === 'undefined') { setNotificationPermission('unsupported'); return; }
     try { setNotificationPermission(await Notification.requestPermission()); }
     catch { setNotificationPermission(Notification.permission); }
   };
-  const sendTestDesktopNotification = () => {
+  const sendTestDesktopNotification = async () => {
+    if (window.fastlynoxDesktop?.showNativeNotification) {
+      try { await window.fastlynoxDesktop.showNativeNotification({ title: 'Fastlynox', body: 'Masaüstü bildirimleri hazır.' }); }
+      catch { /* Native notifications may be blocked by the operating system. */ }
+      return;
+    }
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
     try { new Notification('Fastlynox', { body: 'Masaüstü bildirimleri hazır.' }); }
     catch { /* Native notifications may be blocked by the operating system. */ }
@@ -282,7 +288,7 @@ export function UserSettingsModal({ onClose }) {
               </div>
               <label className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><span><span className="block text-sm font-semibold text-white">Hızlı arama kısayolu</span><span className="mt-1 block text-xs text-slate-400">Sunucu, kanal, DM ve mesaj aramasını her ekrandan aç.</span></span><AnimatedSelect ariaLabel="Hızlı arama kısayolu" value={preferences.searchShortcut || 'ctrl+k'} onValueChange={(value) => updatePreference('searchShortcut', value)} options={[{ value: 'ctrl+k', label: 'Ctrl + K' }, { value: 'ctrl+shift+k', label: 'Ctrl + Shift + K' }, { value: 'alt+k', label: 'Alt + K' }]} className="min-w-44" /></label>
               <PreferenceRow icon={<Bell className="h-4 w-4" />} title="Rahatsız etmeyin" description="Masaüstü bildirimi ve açılır uyarıları sessize alır. Okunmamış rozetleri yine birikir." checked={preferences.doNotDisturb} onChange={(value) => updatePreference('doNotDisturb', value)} />
-              <PreferenceRow icon={<Bell className="h-4 w-4" />} title="Masaüstü bildirimleri" description="Yeni bildirimleri uygulama arka plandayken göster." checked={preferences.desktopNotifications} onChange={(value) => updatePreference('desktopNotifications', value)} />
+              <PreferenceRow icon={<Bell className="h-4 w-4" />} title="Masaüstü bildirimleri" description="Yeni mesajlarda Windows bildirimi göster." checked={preferences.desktopNotifications} onChange={(value) => updatePreference('desktopNotifications', value)} />
               {preferences.desktopNotifications && <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4"><div><p className="text-sm font-semibold text-white">Masaüstü izni</p><p className="mt-1 text-xs text-slate-400">Durum: {notificationPermission === 'granted' ? 'İzin verildi' : notificationPermission === 'denied' ? 'Engellendi · işletim sistemi ayarlarından aç' : notificationPermission === 'unsupported' ? 'Bu ortam bildirimleri desteklemiyor' : 'Henüz izin istenmedi'}. Rahatsız Etme ve sessiz saatler bildirimleri bastırır.</p></div>{notificationPermission === 'granted' ? <button type="button" onClick={sendTestDesktopNotification} className="rounded-xl border border-violet-200/15 bg-violet-300/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-300/15">Test bildirimi</button> : notificationPermission !== 'unsupported' && <button type="button" onClick={() => void enableDesktopNotifications()} className="rounded-xl border border-violet-200/15 bg-violet-300/10 px-3 py-2 text-xs font-semibold text-violet-100 hover:bg-violet-300/15">İzin iste</button>}</div>}
               <PreferenceRow icon={<Volume2 className="h-4 w-4" />} title="Bildirim sesi" description="Bildirim geldiğinde kısa bir ses çal." checked={preferences.notificationSound} onChange={(value) => updatePreference('notificationSound', value)} />
               {preferences.notificationSound && <label className="flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-3"><span className="shrink-0 text-xs font-medium text-slate-300">Bildirim ses düzeyi</span><input aria-label="Bildirim ses düzeyi" type="range" min="0" max="100" value={preferences.notificationSoundVolume ?? 65} onChange={(event) => updatePreference('notificationSoundVolume', Number(event.target.value))} className="min-w-0 flex-1 accent-violet-400" /><span className="w-9 text-right text-xs tabular-nums text-slate-400">{preferences.notificationSoundVolume ?? 65}%</span></label>}

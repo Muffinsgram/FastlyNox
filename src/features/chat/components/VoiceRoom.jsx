@@ -7,7 +7,8 @@ import { AppWindow, AudioLines, Ban, Camera, CameraOff, Check, Expand, Headphone
 import { generateLiveKitToken } from '../../../lib/livekit';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { useServerStore } from '../../../store/useServerStore';
-import { fetchProfiles, getAvatarUrl } from '../../../lib/profileMedia';
+import { fetchProfile, fetchProfiles, getAvatarUrl } from '../../../lib/profileMedia';
+import { UserProfileModal } from '../../../components/layout/UserProfileModal';
 import { ChatArea } from './ChatArea';
 import { playUiSound } from '../../../lib/uiSounds';
 import { getAppPreferences, saveAppPreferences } from '../../../lib/appPreferences';
@@ -102,6 +103,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   const currentUser = useAuthStore((state) => state.user);
   const server = useServerStore((state) => state.servers.find((item) => item.id === serverId));
   const [profiles, setProfiles] = useState([]);
+  const [viewedProfile, setViewedProfile] = useState(null);
   const [watchedScreenShares, setWatchedScreenShares] = useState(() => new Set());
   const [expandedShareId, setExpandedShareId] = useState(null);
   const [shareFullscreenError, setShareFullscreenError] = useState('');
@@ -119,6 +121,12 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
   const [mutedShares, setMutedShares] = useState(() => getAppPreferences(currentUser?.id).voiceScreenShareMuted || {});
   const [shareVolumes, setShareVolumes] = useState(() => getAppPreferences(currentUser?.id).voiceScreenShareVolumes || {});
   const participantIds = participants.map((participant) => participant.identity).filter(Boolean);
+  const openParticipantProfile = async (participant) => {
+    const profile = participant.identity === currentUser?.id
+      ? currentUser
+      : await fetchProfile(participant.identity);
+    if (profile) setViewedProfile(profile);
+  };
   const participantKey = participantIds.slice().sort().join(',');
   const previousRemoteParticipantsRef = useRef(null);
   const fullscreenShareRef = useRef(null);
@@ -483,7 +491,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
             const profile = participant.identity === currentUser?.id ? currentUser : profileById.get(participant.identity);
             const speaking = speakingIds.has(participant.identity);
             return (
-              <li key={participant.identity} onContextMenu={event => { event.preventDefault(); if (!participant.isLocal) setContextMenu({ x: event.clientX, y: event.clientY, participantId: participant.identity }); }} className={`macos-surface relative min-h-36 overflow-hidden rounded-[22px] border bg-[#111722]/85 transition-all ${speaking && !moderationByUser[participant.identity]?.server_muted ? 'border-emerald-300/70 shadow-[0_0_0_1px_rgba(52,211,153,.16),0_0_32px_rgba(16,185,129,.12)]' : 'border-white/[0.08]'}`}>
+              <li key={participant.identity} role="button" tabIndex={0} aria-label={`${profile?.username || participant.name || 'Katılımcı'} profilini görüntüle`} onClick={() => void openParticipantProfile(participant)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void openParticipantProfile(participant); } }} onContextMenu={event => { event.preventDefault(); if (!participant.isLocal) setContextMenu({ x: event.clientX, y: event.clientY, participantId: participant.identity }); }} className={`macos-surface relative min-h-36 cursor-pointer rounded-[22px] border bg-[#111722]/85 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60 ${speaking && !moderationByUser[participant.identity]?.server_muted ? 'border-emerald-300/70 shadow-[0_0_0_1px_rgba(52,211,153,.16),0_0_32px_rgba(16,185,129,.12)]' : 'border-white/[0.08]'}`}>
                 <div className="relative flex h-full min-h-36 flex-col items-center justify-center gap-3 bg-[radial-gradient(ellipse_at_top,rgba(139,92,246,.08),transparent_65%)] p-5">
                   <div className={`relative rounded-full p-1 transition-all ${speaking ? 'bg-emerald-400 shadow-[0_0_0_5px_rgba(52,211,153,.13),0_0_26px_rgba(52,211,153,.48)]' : 'bg-white/10'}`}>
                     <img src={getAvatarUrl(profile?.avatar_url, profile?.username || participant.name || participant.identity)} alt={`${profile?.username || participant.name || 'Katılımcı'} profil fotoğrafı`} className="h-[4.5rem] w-[4.5rem] rounded-full border-2 border-[#111722] object-cover" />
@@ -559,6 +567,7 @@ function VoiceParticipants({ serverId, channelId, localDeafened, outputVolume, o
           </section>, document.body,
         );
       })()}
+      {viewedProfile && <UserProfileModal profile={viewedProfile} role={null} serverId={serverId} serverName={server?.name || ''} onClose={() => setViewedProfile(null)} />}
       {moderationDialog && createPortal(
         <div className="fixed inset-0 z-[420] grid place-items-center bg-[#05070c]/70 p-4 backdrop-blur-md" onMouseDown={(event) => { if (event.target === event.currentTarget && !moderationBusy) setModerationDialog(null); }}>
           <section role="dialog" aria-modal="true" aria-labelledby="voice-member-moderation-title" className="w-full max-w-md overflow-hidden rounded-[24px] border border-white/[0.12] bg-[linear-gradient(145deg,rgba(26,32,46,.98),rgba(14,18,27,.98))] shadow-[0_35px_120px_rgba(0,0,0,.72)]">

@@ -12,6 +12,18 @@ const recentMessageToastKeys = new Map();
 const senderNameCache = new Map();
 let notificationAudioContext;
 
+function showDesktopNotification(title, body) {
+  const nativeNotification = window.fastlynoxDesktop?.showNativeNotification;
+  if (typeof nativeNotification === 'function') {
+    void nativeNotification({ title, body }).catch(() => {});
+    return;
+  }
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    try { new Notification(title, { body }); }
+    catch { /* Keep the in-app toast available if the OS blocks the popup. */ }
+  }
+}
+
 function notificationMessagePreview(message, isDM = false) {
   return (message?.content || '').trim().slice(0, 180) || (message?.image_url ? (isDM ? '🖼️ Fotoğraf' : '📎 Bir ek gönderdi.') : 'Yeni mesaj');
 }
@@ -88,11 +100,7 @@ async function showIncomingMessageToast(message, isDM, userId) {
   const showedToast = useNotificationStore.getState().queueToast(toast);
   if (!showedToast) return;
   if (preferences.notificationSound) playNotificationSound(preferences.notificationSoundVolume);
-  const isAppFocused = document.visibilityState === 'visible' && document.hasFocus();
-  if (preferences.desktopNotifications && !isAppFocused && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    try { new Notification(toast.title, { body: toast.body }); }
-    catch { /* Keep the in-app toast available if the OS blocks a desktop popup. */ }
-  }
+  if (preferences.desktopNotifications) showDesktopNotification(toast.title, toast.body);
 
   // Never hold the visible toast behind profile/channel lookups. Those requests
   // can take seconds on a weak connection, while the incoming message itself
@@ -380,15 +388,11 @@ export const useNotificationStore = create((set, get) => ({
         const isOpenDM = Boolean(newNotif.dm_channel_id && get().activeDMChannelId === newNotif.dm_channel_id && document.visibilityState === 'visible' && document.hasFocus());
         const doNotDisturb = shouldSuppressNotification(newNotif, preferences, { presenceIsDnd: usePresenceStore.getState().status === 'dnd' });
         const countServerActivity = !isNotificationLocationMuted(newNotif, preferences);
-        const isAppFocused = typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus();
         if (isOpenDM) void supabase.from('notifications').update({ is_read: true }).eq('id', newNotif.id).eq('user_id', user.id);
         const notification = isOpenDM ? { ...newNotif, is_read: true } : newNotif;
         const showedToast = !doNotDisturb && get().queueToast(notification);
         if (showedToast && !isOpenDM && preferences.notificationSound) playNotificationSound(preferences.notificationSoundVolume);
-        if (showedToast && preferences.desktopNotifications && !isAppFocused && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-          try { new Notification(newNotif.title, { body: newNotif.body }); }
-          catch { /* Keep in-app notification delivery working if the OS blocks a desktop popup. */ }
-        }
+        if (showedToast && preferences.desktopNotifications) showDesktopNotification(newNotif.title, newNotif.body);
 
         set(state => ({
           notifications: [notification, ...state.notifications].slice(0, 30),

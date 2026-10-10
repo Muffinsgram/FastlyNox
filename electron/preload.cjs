@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('fastcordWindow', {
 });
 
 contextBridge.exposeInMainWorld('fastlynoxDesktop', {
+  showNativeNotification: (options) => ipcRenderer.invoke('fastlynox:show-notification', options),
   getVersion: () => ipcRenderer.invoke('fastlynox:app-version'),
   detectGameActivity: () => ipcRenderer.invoke('fastlynox:detect-game-activity'),
   beginSpotifyOAuth: (request) => ipcRenderer.invoke('fastlynox:spotify-oauth-start', request),
