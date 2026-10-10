@@ -7,6 +7,8 @@ import { RoleEmoji } from '../../../components/ui/RoleEmoji';
 import { supabase } from '../../../lib/supabase';
 import { fetchProfiles, getAvatarUrl } from '../../../lib/profileMedia';
 import { usePresenceStore } from '../../../store/usePresenceStore';
+import { resolvePresenceStatus } from '../../../lib/presenceSessions';
+import { memberRefreshFailure, memberRetryDelay, roleRefreshPatch } from '../../../lib/memberRefresh';
 import { useAuthStore } from '../../../store/useAuthStore';
 import { useServerStore } from '../../../store/useServerStore';
 import { AnimatedSelect } from '../../../components/ui/AnimatedSelect';
@@ -37,6 +39,7 @@ export function ServerMemberList({ activeServerId, voiceMemberChannels = {} }) {
   const [clock, setClock] = useState(Date.now());
   const statuses = usePresenceStore((state) => state.statuses);
   const presenceVisibility = usePresenceStore((state) => state.visibility);
+  const voiceStatuses = usePresenceStore((state) => state.voiceStatuses);
   const ownPresenceStatus = usePresenceStore((state) => state.status);
   const user = useAuthStore((state) => state.user);
   const server = useServerStore((state) => state.servers.find((item) => item.id === activeServerId));
@@ -69,16 +72,7 @@ export function ServerMemberList({ activeServerId, voiceMemberChannels = {} }) {
     return () => window.clearInterval(timer);
   }, []);
 
-  const getStatus = (userId) => {
-    const presence = statuses[userId];
-    const hidden = presenceVisibility[userId] === false || presence?.status === 'invisible';
-    if (hidden) return 'offline';
-    if (userId === user?.id) return ['online', 'idle', 'dnd'].includes(ownPresenceStatus) ? ownPresenceStatus : (voiceMemberChannels[userId] ? 'online' : 'offline');
-    const fresh = presence && clock - new Date(presence.updatedAt).getTime() <= 100_000;
-    if (voiceMemberChannels[userId]) return fresh && ['idle', 'dnd'].includes(presence.status) ? presence.status : 'online';
-    if (!fresh) return 'offline';
-    return ['online', 'idle', 'dnd'].includes(presence.status) ? presence.status : 'offline';
-  };
+  const getStatus = (userId) => resolvePresenceStatus(userId, statuses, presenceVisibility, voiceStatuses, clock, user?.id, ownPresenceStatus);
   const statusLabel = (status) => status === 'online' ? 'Çevrim içi' : status === 'idle' ? 'Boşta' : status === 'dnd' ? 'Rahatsız etmeyin' : 'Çevrim dışı';
 
   const moderateMember = async (member, shouldBan) => {
@@ -129,7 +123,7 @@ export function ServerMemberList({ activeServerId, voiceMemberChannels = {} }) {
       ? await supabase.from('server_member_roles').delete().eq('server_id', activeServerId).eq('user_id', targetId).eq('role_id', role.id)
       : await supabase.from('server_member_roles').insert({ server_id: activeServerId, user_id: targetId, role_id: role.id });
     setRoleActionId(null);
-    if (error) { setActionNotice(`Rol güncellenemedi: ${error.message}`); window.setTimeout(() => setActionNotice(''), 3500); return; }
+    if (error) { setActionNotice(memberRefreshFailure(error, 'Rol değişikliği').message.replace('Otomatik yeniden deneniyor.', 'Yeniden dene.')); window.setTimeout(() => setActionNotice(''), 3500); return; }
     setRoleAssignments((current) => ({
       ...current,
       [targetId]: assigned ? (current[targetId] || []).filter((id) => id !== role.id) : [...(current[targetId] || []), role.id],
@@ -165,47 +159,74 @@ export function ServerMemberList({ activeServerId, voiceMemberChannels = {} }) {
     let alive = true;
     let fetchVersion = 0;
     let refreshTimer;
+    let fetching = false;
+    let fetchQueued = false;
+    let failures = 0;
+    let retryAt = 0;
+    setMembers([]);
+    setCustomRoles([]);
+    setRoleAssignments({});
+    setActionNotice('');
     const queueFetch = () => {
+      if (!alive) return;
       clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => void fetchMembers(), 120);
+      refreshTimer = setTimeout(() => void fetchMembers(), Math.max(120, retryAt - Date.now()));
+    };
+    const reportFailure = (error, subject) => {
+      const failure = memberRefreshFailure(error, subject);
+      setActionNotice(failure.message);
+      if (failure.transient) {
+        retryAt = Date.now() + memberRetryDelay(++failures);
+        queueFetch();
+      }
     };
     const fetchMembers = async () => {
+      if (!alive) return;
+      if (fetching) { fetchQueued = true; return; }
+      fetching = true;
       const version = ++fetchVersion;
-      const [memberResult, roleResult, assignmentResult] = await Promise.all([
-        supabase.from('server_members').select('*').eq('server_id', activeServerId),
-        supabase.from('server_roles').select('id,name,color,position,emoji,gradient_color,animated').eq('server_id', activeServerId).order('position', { ascending: false }).order('id', { ascending: true }),
-        supabase.from('server_member_roles').select('user_id,role_id').eq('server_id', activeServerId),
-      ]);
-      if (!alive || version !== fetchVersion) return;
-      const { data: memberRows, error } = memberResult;
-      const { data: roleRows, error: roleError } = roleResult;
-      const { data: assignmentRows, error: assignmentError } = assignmentResult;
-      if (error) {
-        console.error('fetchMembers Error:', error);
-        setMembers([]);
-        setActionNotice(`Üyeler yenilenemedi: ${error.message}`);
-        return;
-      }
+      try {
+        const [memberResult, roleResult, assignmentResult] = await Promise.all([
+          supabase.from('server_members').select('*').eq('server_id', activeServerId),
+          supabase.from('server_roles').select('id,name,color,position,emoji,gradient_color,animated').eq('server_id', activeServerId).order('position', { ascending: false }).order('id', { ascending: true }),
+          supabase.from('server_member_roles').select('user_id,role_id').eq('server_id', activeServerId),
+        ]);
+        if (!alive || version !== fetchVersion) return;
+        const { data: memberRows, error } = memberResult;
+        const { error: roleError } = roleResult;
+        const { error: assignmentError } = assignmentResult;
+        if (error) {
+          console.error('fetchMembers Error:', error);
+          reportFailure(error, 'Üyeler');
+          return;
+        }
 
-      const rows = memberRows || [];
-      const profiles = rows.length ? await fetchProfiles(rows.map((member) => member.user_id)) : [];
-      if (!alive || version !== fetchVersion) return;
-      setMembers(rows.map((member) => ({
-        ...member,
-        profiles: profiles?.find((profile) => profile.id === member.user_id) || {},
-      })));
-      setCustomRoles(roleRows || []);
-      const assignments = {};
-      (assignmentRows || []).forEach(({ user_id, role_id }) => {
-        (assignments[user_id] ||= []).push(role_id);
-      });
-      setRoleAssignments(assignments);
-      const secondaryError = roleError || assignmentError;
-      if (secondaryError) {
-        console.error('fetchMemberRoles Error:', secondaryError);
-        setActionNotice(`Rol bilgileri yenilenemedi: ${secondaryError.message}`);
-      } else {
-        setActionNotice('');
+        const rows = memberRows || [];
+        const profiles = rows.length ? await fetchProfiles(rows.map((member) => member.user_id)) : [];
+        if (!alive || version !== fetchVersion) return;
+        setMembers((current) => rows.map((member) => ({
+          ...member,
+          profiles: profiles?.find((profile) => profile.id === member.user_id) || current.find((item) => item.user_id === member.user_id)?.profiles || {},
+        })));
+        const patch = roleRefreshPatch(roleResult, assignmentResult);
+        if (patch) {
+          setCustomRoles(patch.roles);
+          setRoleAssignments(patch.assignments);
+        }
+        const secondaryError = roleError || assignmentError;
+        if (secondaryError) {
+          console.error('fetchMemberRoles Error:', secondaryError);
+          reportFailure(secondaryError, 'Rol bilgileri');
+        } else {
+          failures = 0;
+          retryAt = 0;
+          setActionNotice('');
+        }
+      } catch (error) {
+        if (alive && version === fetchVersion) reportFailure(error, 'Üye ve rol bilgileri');
+      } finally {
+        fetching = false;
+        if (alive && fetchQueued) { fetchQueued = false; queueFetch(); }
       }
     };
 
@@ -239,7 +260,7 @@ export function ServerMemberList({ activeServerId, voiceMemberChannels = {} }) {
     return presenceFilter === 'all' ? sections : sections.filter((group) => group.id === presenceFilter);
   // Presence store and the clock intentionally trigger recalculation as statuses change/stale out.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [members, statuses, presenceVisibility, clock, presenceFilter, ownPresenceStatus, user?.id]);
+  }, [members, statuses, presenceVisibility, voiceStatuses, clock, presenceFilter, ownPresenceStatus, user?.id]);
 
   const getRoleGroups = (statusMembers) => {
     const groups = new Map();

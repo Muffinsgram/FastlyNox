@@ -37,3 +37,24 @@ export function mergePresenceSessionEvent(rows = {}, eventType, row) {
 export function prunePresenceSessions(rows = {}, now = Date.now(), ttlMs = PRESENCE_TTL_MS) {
   return Object.fromEntries(Object.entries(rows).filter(([, row]) => now - presenceTimestamp(row.heartbeat_at) <= ttlMs));
 }
+
+// Keep legacy clients independent: a session event for one user must not erase
+// the fallback status of another user who has no connection-scoped row.
+export function combinePresenceStatuses(sessions = {}, legacyStatuses = {}, now = Date.now()) {
+  const legacy = Object.fromEntries(Object.entries(legacyStatuses).filter(([, row]) => now - presenceTimestamp(row.updatedAt) <= PRESENCE_TTL_MS));
+  return { ...legacy, ...aggregatePresenceSessions(Object.values(sessions), now) };
+}
+
+export function resolvePresenceStatus(userId, statuses = {}, visibility = {}, voiceStatuses = {}, now = Date.now(), ownUserId, ownStatus) {
+  if (!userId || visibility[userId] === false) return 'offline';
+  const presence = statuses[userId];
+  if (userId === ownUserId) return ['online', 'idle', 'dnd'].includes(ownStatus) ? ownStatus : 'offline';
+  if (presence?.status === 'invisible') return 'offline';
+  const fresh = now - presenceTimestamp(presence?.updatedAt) <= PRESENCE_TTL_MS;
+  if (fresh && ['online', 'idle', 'dnd'].includes(presence.status)) return presence.status;
+  // Invisible is stored as offline in the database. Voice attendance must not
+  // override a fresh explicit offline choice.
+  if (fresh && presence?.status === 'offline') return 'offline';
+  if (now - presenceTimestamp(voiceStatuses[userId]?.updatedAt) <= 30_000) return 'online';
+  return 'offline';
+}

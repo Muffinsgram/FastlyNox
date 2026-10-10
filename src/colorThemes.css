@@ -1,0 +1,63 @@
+/* Theme overrides intentionally contain color properties only. */
+html[data-color-theme]:not([data-color-theme="original"]) {
+  --theme-stroke: color-mix(in srgb, var(--theme-accent) 16%, transparent);
+}
+html[data-color-theme]:not([data-color-theme="original"]) .macos-shell {
+  --mac-glass: color-mix(in srgb, var(--theme-panel) 88%, transparent);
+  --mac-glass-strong: color-mix(in srgb, var(--theme-sidebar) 92%, transparent);
+  --mac-stroke: var(--theme-stroke);
+  background: var(--theme-bg);
+}
+html[data-color-theme]:not([data-color-theme="original"]) :is(.macos-main, .macos-chat, .macos-home, .macos-app-content) {
+  background: radial-gradient(ellipse at top, color-mix(in srgb, var(--theme-accent) 6%, transparent), transparent 55%), var(--theme-bg) !important;
+}
+html[data-color-theme]:not([data-color-theme="original"]) :is(.macos-rail, .macos-titlebar) {
+  background: color-mix(in srgb, var(--theme-sidebar) 95%, transparent) !important;
+}
+html[data-color-theme]:not([data-color-theme="original"]) :is(.macos-panel, .macos-chat-header) {
+  background: color-mix(in srgb, var(--theme-panel) 92%, transparent) !important;
+}
+html[data-color-theme]:not([data-color-theme="original"]) .macos-composer {
+  background: color-mix(in srgb, var(--theme-surface) 80%, transparent) !important;
+  border-color: var(--theme-stroke) !important;
+}
+html[data-color-theme]:not([data-color-theme="original"]) .macos-composer:focus-within {
+  border-color: color-mix(in srgb, var(--theme-accent) 55%, transparent) !important;
+}
+html[data-color-theme]:not([data-color-theme="original"]) .macos-surface {
+  background: linear-gradient(145deg, var(--theme-panel), color-mix(in srgb, var(--theme-panel) 75%, var(--theme-bg)));
+}
+html[data-color-theme]:not([data-color-theme="original"]) :is(.macos-shell, .macos-auth) :is(input, textarea, select) {
+  accent-color: var(--theme-accent);
+}
+html[data-color-theme]:not([data-color-theme="original"]) :is(button, input, textarea, select):focus-visible {
+  outline-color: var(--theme-accent);
+}
+/* Fixed dark surfaces used by popovers, settings, voice rooms, and docks. */
+html[data-color-theme]:not([data-color-theme="original"]) :is([class*="bg-[#0b0e14]"], [class*="bg-[#0B0E14]"], [class*="bg-[#0a0d12]"], [class*="bg-[#080b11]"]) {
+  background-color: var(--theme-bg);
+}
+html[data-color-theme]:not([data-color-theme="original"]) :is([class*="bg-[#111722]"], [class*="bg-[#11151d]"], [class*="bg-[#151a24]"], [class*="bg-[#151a22]"], [class*="bg-[#0c111a]"], [class*="bg-[#171b24]"], [class*="bg-[#10141c]"], [class*="bg-[#0b1018]"], [class*="bg-[#10151f]"], [class*="bg-[#0b1019]"]) {
+  background-color: var(--theme-panel);
+}
+html[data-color-theme]:not([data-color-theme="original"]) :is([class*="bg-[#080b10]"], [class*="bg-[#0a0d14]"], [class*="bg-[#0d1117]"]) {
+  background-color: var(--theme-sidebar);
+}
+html[data-color-theme]:not([data-color-theme="original"]) .macos-shell [role="dialog"] > div {
+  background-color: var(--theme-panel);
+}
+html[data-color-theme]:not([data-color-theme="original"]) [data-lk-theme] {
+  --lk-bg: var(--theme-bg);
+  --lk-bg2: var(--theme-panel);
+  --lk-bg3: var(--theme-surface);
+  --lk-control-bg: var(--theme-panel);
+  --lk-control-hover-bg: var(--theme-surface);
+  --lk-accent-bg: var(--theme-accent);
+  --lk-accent-fg: var(--theme-button-text);
+}
+html[data-color-theme]:not([data-color-theme="original"]) :is(button, a).bg-violet-500 {
+  color: var(--theme-button-text);
+}
+html[data-color-theme]:not([data-color-theme="original"]) [class*="bg-[#11151e]"] {
+  background-color: var(--theme-panel);
+}

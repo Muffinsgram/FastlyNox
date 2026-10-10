@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Download, Expand, X, ZoomIn } from 'lucide-react';
 import { supabase } from '../../../lib/supabase';
+import { ZoomableMedia } from './ZoomableMedia';
 
 const SIGNED_URL_LIFETIME_SECONDS = 60 * 60;
 
@@ -118,12 +119,14 @@ export function AttachmentImage({ imagePath }) {
             <button type="button" onClick={() => setIsViewerOpen(false)} aria-label="Görüntüleyiciyi kapat" title="Kapat (Esc)" className="grid h-9 w-9 place-items-center rounded-xl text-slate-200 transition hover:bg-white/10"><X className="h-4 w-4" /></button>
           </div>
           {downloadError && <p role="alert" className="fixed bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-xl border border-rose-300/20 bg-[#21151a]/90 px-4 py-2 text-xs text-rose-200">{downloadError}</p>}
+          <ZoomableMedia clickZoom zoom={isZoomed ? 2 : 1} onZoom={scale => setIsZoomed(scale > 1)} className="h-[84vh] w-[92vw] shrink-0">
           <img
             src={imageUrl}
             alt={isRemoteGif ? 'GIF büyütülmüş görünüm' : 'Görsel büyütülmüş görünüm'}
-            onClick={(event) => { event.stopPropagation(); setIsZoomed((zoomed) => !zoomed); }}
-            className={`my-auto cursor-zoom-in rounded-xl shadow-2xl transition-all duration-200 ${isZoomed ? 'max-h-none max-w-none cursor-zoom-out' : 'max-h-[84vh] max-w-[92vw] object-contain'}`}
+            draggable={false}
+            className="h-full w-full object-contain"
           />
+          </ZoomableMedia>
         </div>
       )}
     </>

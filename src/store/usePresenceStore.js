@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
-import { aggregatePresenceSessions, mergePresenceSessionEvent, presenceSessionKey, presenceTimestamp, PRESENCE_TTL_MS, prunePresenceSessions } from '../lib/presenceSessions';
+import { combinePresenceStatuses, mergePresenceSessionEvent, presenceSessionKey, presenceTimestamp, PRESENCE_TTL_MS, prunePresenceSessions } from '../lib/presenceSessions';
 
 const STATUS_VALUES = ['online', 'idle', 'dnd', 'invisible'];
 const HEARTBEAT_MS = 25_000;
@@ -29,6 +29,15 @@ const readLocalStatus = (userId) => {
 };
 
 const newSessionId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+const voiceRowsToStatuses = (rows = []) => {
+  const statuses = {};
+  (rows || []).forEach((row) => {
+    if (!statuses[row.user_id] || presenceTimestamp(row.updated_at) > presenceTimestamp(statuses[row.user_id].updatedAt)) {
+      statuses[row.user_id] = { updatedAt: row.updated_at, channelId: row.channel_id };
+    }
+  });
+  return statuses;
+};
 
 const writePresenceSession = async (userId, sessionId, status) => {
   if (!userId || !sessionId) return { error: new Error('Presence bağlantısı bulunamadı.') };
@@ -51,17 +60,14 @@ function applySessionEvent(state, eventType, row) {
   if (!row?.user_id || !row?.session_id) return state;
   const sessions = mergePresenceSessionEvent(state.presenceSessions, eventType, row);
   if (sessions === state.presenceSessions) return state;
-  return { presenceSessions: sessions, statuses: aggregatePresenceSessions(Object.values(sessions)) };
+  return { presenceSessions: sessions, statuses: combinePresenceStatuses(sessions, state.legacyStatuses) };
 }
 
 function prunePresenceState(state, now = Date.now()) {
   const sessions = prunePresenceSessions(state.presenceSessions, now);
-  const legacyStatuses = Object.fromEntries(Object.entries(state.statuses).filter(([, presence]) => now - presenceTimestamp(presence.updatedAt) <= PRESENCE_TTL_MS));
-  const statuses = { ...legacyStatuses, ...aggregatePresenceSessions(Object.values(sessions), now) };
-  const sessionsChanged = Object.keys(sessions).length !== Object.keys(state.presenceSessions).length;
-  const statusesChanged = Object.keys(statuses).length !== Object.keys(state.statuses).length;
-  if (!sessionsChanged && !statusesChanged) return state;
-  return { presenceSessions: sessions, statuses };
+  const legacyStatuses = Object.fromEntries(Object.entries(state.legacyStatuses).filter(([, presence]) => now - presenceTimestamp(presence.updatedAt) <= PRESENCE_TTL_MS));
+  const voiceStatuses = Object.fromEntries(Object.entries(state.voiceStatuses).filter(([, presence]) => now - presenceTimestamp(presence.updatedAt) <= 30_000));
+  return { presenceSessions: sessions, legacyStatuses, voiceStatuses, statuses: combinePresenceStatuses(sessions, legacyStatuses, now) };
 }
 
 export const usePresenceStore = create((set, get) => ({
@@ -69,6 +75,8 @@ export const usePresenceStore = create((set, get) => ({
   sessionId: null,
   status: 'online',
   statuses: {},
+  legacyStatuses: {},
+  voiceStatuses: {},
   presenceSessions: {},
   visibility: {},
   error: '',
@@ -99,79 +107,86 @@ export const usePresenceStore = create((set, get) => ({
     }
     if (!userId) {
       activeSessionId = null;
-      set({ userId: null, sessionId: null, status: 'online', statuses: {}, presenceSessions: {}, visibility: {}, error: '', initialized: true });
+      set({ userId: null, sessionId: null, status: 'online', statuses: {}, legacyStatuses: {}, voiceStatuses: {}, presenceSessions: {}, visibility: {}, error: '', initialized: true });
       return;
     }
 
     const localStatus = readLocalStatus(userId);
     const sessionId = newSessionId();
     activeSessionId = sessionId;
-    set({ userId, sessionId, status: localStatus, statuses: {}, presenceSessions: {}, error: '', initialized: false });
+    set({ userId, sessionId, status: localStatus, statuses: {}, legacyStatuses: {}, voiceStatuses: {}, presenceSessions: {}, visibility: {}, error: '', initialized: false });
 
+    let snapshotPending = false;
     const refreshSnapshot = async () => {
-      const eventVersionAtStart = sessionEventVersion;
-      const cutoff = new Date(Date.now() - PRESENCE_TTL_MS).toISOString();
-      const [{ data: sessions, error: sessionsError }, { data: privacyRows }, { data: legacyRows }] = await Promise.all([
-        supabase.from('user_presence_sessions').select('user_id,session_id,status,heartbeat_at').gt('heartbeat_at', cutoff).limit(2000),
-        supabase.from('user_privacy_settings').select('user_id,show_online').limit(1000),
-        supabase.from('user_presence_status').select('user_id,status,updated_at').gt('updated_at', cutoff).limit(1000),
-      ]);
-      if (currentGeneration !== generation) return;
-      if (sessionsError) {
-        console.error('Bağlantı durumları eşitlenemedi:', sessionsError.message);
-        const fallback = Object.fromEntries((legacyRows || []).map((row) => [row.user_id, { status: row.status, updatedAt: row.updated_at }]));
-        set({ statuses: fallback, visibility: Object.fromEntries((privacyRows || []).map((row) => [row.user_id, row.show_online !== false])), initialized: true, error: 'Çoklu pencere durum eşitlemesi için migration_realtime_sync_reliability.sql dosyasını Supabase’te çalıştır. Eski durum tablosu geçici olarak kullanılıyor.' });
-        return;
+      if (snapshotPending || currentGeneration !== generation) return;
+      snapshotPending = true;
+      try {
+        const eventVersionAtStart = sessionEventVersion;
+        const cutoff = new Date(Date.now() - PRESENCE_TTL_MS).toISOString();
+        const [{ data: sessions, error: sessionsError }, { data: privacyRows, error: privacyError }, { data: legacyRows, error: legacyError }, { data: voiceRows, error: voiceError }] = await Promise.all([
+          supabase.from('user_presence_sessions').select('user_id,session_id,status,heartbeat_at').gt('heartbeat_at', cutoff).limit(2000),
+          supabase.from('user_privacy_settings').select('user_id,show_online').limit(1000),
+          supabase.from('user_presence_status').select('user_id,status,updated_at').gt('updated_at', cutoff).limit(1000),
+          supabase.from('server_voice_presence').select('user_id,channel_id,updated_at').gt('updated_at', new Date(Date.now() - 30_000).toISOString()).limit(2000),
+        ]);
+        if (currentGeneration !== generation) return;
+        if (sessionsError) {
+          console.error('Bağlantı durumları eşitlenemedi:', sessionsError.message);
+        }
+        // A realtime event that arrived while the snapshot was in flight is
+        // newer than this query's view. Keep the live state and retry once the
+        // current burst of events settles instead of replacing it with stale rows.
+        if (eventVersionAtStart !== sessionEventVersion) {
+          window.setTimeout(() => {
+            if (currentGeneration === generation) void refreshSnapshot();
+          }, 1000);
+          return;
+        }
+        set((state) => {
+          const presenceSessions = sessionsError ? prunePresenceSessions(state.presenceSessions) : Object.fromEntries((sessions || []).map((row) => [presenceSessionKey(row), row]));
+          const legacyStatuses = legacyError ? state.legacyStatuses : Object.fromEntries((legacyRows || []).map((row) => [row.user_id, { status: row.status, updatedAt: row.updated_at }]));
+          const voiceStatuses = voiceError ? state.voiceStatuses : voiceRowsToStatuses(voiceRows);
+          return {
+            presenceSessions, legacyStatuses, voiceStatuses,
+            statuses: combinePresenceStatuses(presenceSessions, legacyStatuses),
+            visibility: privacyError ? state.visibility : Object.fromEntries((privacyRows || []).map((row) => [row.user_id, row.show_online !== false])),
+            initialized: true,
+          };
+        });
+      } catch (error) {
+        console.warn('Durum bilgileri yenilenemedi:', error.message);
+      } finally {
+        snapshotPending = false;
       }
-      // A realtime event that arrived while the snapshot was in flight is
-      // newer than this query's view. Keep the live state and retry once the
-      // current burst of events settles instead of replacing it with stale rows.
-      if (eventVersionAtStart !== sessionEventVersion) {
-        window.setTimeout(() => {
-          if (currentGeneration === generation) void refreshSnapshot();
-        }, 250);
-        return;
-      }
-      const freshSessions = sessions || [];
-      const sessionUserIds = new Set(freshSessions.map((row) => row.user_id));
-      const fallbackRows = (legacyRows || []).filter((row) => !sessionUserIds.has(row.user_id)).map((row) => ({ ...row, updatedAt: row.updated_at }));
-      const statuses = { ...aggregatePresenceSessions(freshSessions), ...Object.fromEntries(fallbackRows.map((row) => [row.user_id, { status: row.status, updatedAt: row.updated_at }])) };
-      const ownStatus = localStatus;
-      set({
-        presenceSessions: Object.fromEntries(freshSessions.map((row) => [presenceSessionKey(row), row])),
-        statuses,
-        status: ownStatus,
-        visibility: Object.fromEntries((privacyRows || []).map((row) => [row.user_id, row.show_online !== false])),
-        initialized: true,
-        error: '',
-      });
-      try { localStorage.setItem(localKey(userId), ownStatus); } catch { /* local status cache is optional */ }
     };
 
     const handleSessionChange = ({ eventType, new: row, old }) => {
+      if (currentGeneration !== generation) return;
       const sessionRow = eventType === 'DELETE' ? old : row;
       if (!sessionRow?.user_id) return;
       sessionEventVersion += 1;
       set((state) => applySessionEvent(state, eventType, sessionRow));
     };
     const handleLegacyChange = ({ eventType, new: row, old }) => {
+      if (currentGeneration !== generation) return;
       const target = row?.user_id || old?.user_id;
       if (!target) return;
+      sessionEventVersion += 1;
       set((state) => {
-        if (Object.values(state.presenceSessions).some((item) => item.user_id === target && Date.now() - presenceTimestamp(item.heartbeat_at) <= PRESENCE_TTL_MS)) return state;
-        const previous = state.statuses[target];
+        const previous = state.legacyStatuses[target];
         const incomingTimestamp = row?.updated_at || old?.updated_at;
         if (previous && presenceTimestamp(previous.updatedAt) > presenceTimestamp(incomingTimestamp)) return state;
-        const statuses = { ...state.statuses };
-        if (eventType === 'DELETE') delete statuses[target];
-        else if (row?.status) statuses[target] = { status: row.status, updatedAt: row.updated_at };
-        return { statuses };
+        const legacyStatuses = { ...state.legacyStatuses };
+        if (eventType === 'DELETE') delete legacyStatuses[target];
+        else if (row?.status) legacyStatuses[target] = { status: row.status, updatedAt: row.updated_at };
+        return { legacyStatuses, statuses: combinePresenceStatuses(state.presenceSessions, legacyStatuses) };
       });
-      if (target === userId && row?.status && STATUS_VALUES.includes(row.status)) set({ status: row.status });
     };
     const handlePrivacyChange = ({ eventType, new: row, old }) => {
+      if (currentGeneration !== generation) return;
       const target = row?.user_id || old?.user_id;
       if (!target) return;
+      sessionEventVersion += 1;
       set((state) => {
         const visibility = { ...state.visibility };
         if (eventType === 'DELETE') delete visibility[target];
@@ -180,24 +195,36 @@ export const usePresenceStore = create((set, get) => ({
       });
     };
 
-    let sessionSubscribedOnce = false;
     const channel = supabase.channel('global:user-presence-sessions')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_presence_sessions' }, handleSessionChange)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_privacy_settings' }, handlePrivacyChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'server_voice_presence' }, ({ eventType, new: row, old }) => {
+        if (currentGeneration !== generation) return;
+        const incoming = eventType === 'DELETE' ? old : row;
+        if (!incoming?.user_id) return;
+        sessionEventVersion += 1;
+        set((state) => {
+          const previous = state.voiceStatuses[incoming.user_id];
+          if (previous && presenceTimestamp(previous.updatedAt) > presenceTimestamp(incoming.updated_at)) return state;
+          const voiceStatuses = { ...state.voiceStatuses };
+          if (eventType === 'DELETE') {
+            if (previous?.channelId !== incoming.channel_id) return state;
+            delete voiceStatuses[incoming.user_id];
+          } else voiceStatuses[incoming.user_id] = { updatedAt: incoming.updated_at, channelId: incoming.channel_id };
+          return { voiceStatuses };
+        });
+      })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          if (sessionSubscribedOnce) void refreshSnapshot();
-          sessionSubscribedOnce = true;
+          void refreshSnapshot();
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') console.warn('Presence kanalı yeniden bağlanmayı deniyor:', status);
       });
     activeChannel = channel;
-    let legacySubscribedOnce = false;
     const legacy = supabase.channel('global:user-presence-legacy')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'user_presence_status' }, handleLegacyChange)
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          if (legacySubscribedOnce) void refreshSnapshot();
-          legacySubscribedOnce = true;
+          void refreshSnapshot();
         }
       });
     legacyChannel = legacy;
@@ -208,6 +235,7 @@ export const usePresenceStore = create((set, get) => ({
         writePresenceSession(userId, sessionId, status),
         writeLegacyPresence(userId, status),
       ]);
+      if (currentGeneration !== generation) return;
       if (sessionError) {
         console.error('Presence bağlantısı kaydedilemedi:', sessionError.message);
         set({ error: `Çevrim içi durumun diğer cihazlara aktarılamadı: ${sessionError.message}` });
@@ -227,6 +255,7 @@ export const usePresenceStore = create((set, get) => ({
 
     heartbeatTimer = window.setInterval(() => {
       void syncOwnSession(get().status);
+      void refreshSnapshot();
       set((state) => prunePresenceState(state));
     }, HEARTBEAT_MS);
     pruneTimer = window.setInterval(() => set((state) => prunePresenceState(state)), 15_000);

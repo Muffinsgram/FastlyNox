@@ -9,17 +9,12 @@ import { RemindersPanel } from './RemindersPanel';
 import { SocialFeed } from './SocialFeed';
 import { SavedMessagesPanel } from './SavedMessagesPanel';
 import { usePresenceStore } from '../../../store/usePresenceStore';
+import { resolvePresenceStatus } from '../../../lib/presenceSessions';
 import { getAppPreferences } from '../../../lib/appPreferences';
 import { saveAppPreferences } from '../../../lib/appPreferences';
 import { ActionContextMenu } from '../../../components/layout/ActionContextMenu';
 import { useNotificationStore } from '../../../store/useNotificationStore';
 
-const visiblePresence = (profile, statuses, visibility) => {
-  if (profile?.id && visibility?.[profile.id] === false) return null;
-  const presence = profile?.id ? statuses[profile.id] : null;
-  if (!presence || Date.now() - new Date(presence.updatedAt).getTime() > 100_000) return null;
-  return ['online', 'idle', 'dnd'].includes(presence.status) ? presence.status : null;
-};
 const presenceLabel = (status) => status === 'idle' ? 'Boşta' : status === 'dnd' ? 'Rahatsız etmeyin' : status === 'online' ? 'Çevrim içi' : 'Çevrim dışı';
 const presenceDot = (status) => status === 'idle' ? 'bg-amber-300' : status === 'dnd' ? 'bg-rose-400' : status === 'online' ? 'bg-emerald-400' : 'bg-slate-600';
 const formatDMTime = (value) => {
@@ -46,12 +41,21 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
   const [dmContextMenu, setDmContextMenu] = useState(null);
   const presenceStatuses = usePresenceStore((state) => state.statuses);
   const presenceVisibility = usePresenceStore((state) => state.visibility);
+  const voiceStatuses = usePresenceStore((state) => state.voiceStatuses);
+  const ownPresenceStatus = usePresenceStore((state) => state.status);
+  const [presenceClock, setPresenceClock] = useState(Date.now);
+  const visiblePresence = (profile) => resolvePresenceStatus(profile?.id, presenceStatuses, presenceVisibility, voiceStatuses, presenceClock, user?.id, ownPresenceStatus);
   const dmUnreadCounts = useNotificationStore((state) => state.dmUnreadCounts);
   const markDMNotificationsRead = useNotificationStore((state) => state.markDMNotificationsRead);
   const setActiveDMChannel = useNotificationStore((state) => state.setActiveDMChannel);
   const [showGettingStarted, setShowGettingStarted] = useState(() => {
     try { return !localStorage.getItem(`fastcord:onboarding:${user?.id || 'guest'}`); } catch { return false; }
   });
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setPresenceClock(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!navigationRequest?.tab) return;
@@ -126,7 +130,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
   const acceptedFriends = friendships.filter(f => f.status === 'accepted');
   const onlineFriends = acceptedFriends.filter((friend) => {
     const profile = friend.requester_id === user.id ? friend.addressee : friend.requester;
-    return Boolean(visiblePresence(profile, presenceStatuses, presenceVisibility));
+    return visiblePresence(profile) !== 'offline';
   });
   const displayedFriends = activeTab === 'online' ? onlineFriends : acceptedFriends;
 
@@ -309,7 +313,7 @@ export function HomeLayout({ onOpenSearch, pendingDMId, onPendingDMHandled, onSt
                         <div className="space-y-2">
                           {displayedFriends.map(friend => {
                             const otherProfile = friend.requester_id === user.id ? friend.addressee : friend.requester;
-                            const friendPresence = visiblePresence(otherProfile, presenceStatuses, presenceVisibility);
+                            const friendPresence = visiblePresence(otherProfile);
                             
                             return (
                               <div key={friend.id} onClick={(e) => { e.stopPropagation(); openDM(otherProfile.id); }} className="flex items-center justify-between bg-white/[0.02] hover:bg-white/[0.04] p-3 rounded-xl group border border-white/5 transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 cursor-pointer">

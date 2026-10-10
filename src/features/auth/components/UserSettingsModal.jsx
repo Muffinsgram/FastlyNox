@@ -16,6 +16,7 @@ import { ServerNotificationSettings } from './ServerNotificationSettings';
 import { useNotificationStore } from '../../../store/useNotificationStore';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { playUiSound } from '../../../lib/uiSounds';
+import { ThemePicker } from './ThemePicker';
 
 const DEFAULT_KEYBINDS = { toggleMicrophone: 'Ctrl+Alt+KeyM', toggleDeafen: 'Ctrl+Alt+KeyD', pushToTalk: 'KeyV' };
 
@@ -175,7 +176,7 @@ export function UserSettingsModal({ onClose }) {
   };
 
   const updatePreference = (name, value) => {
-    const next = { ...preferences, [name]: value };
+    const next = { ...preferences, [name]: value, ...(name === 'colorTheme' ? { accentTheme: 'auto' } : {}) };
     setPreferences(next);
     saveAppPreferences(user?.id, next);
     if (['mutedServerIds', 'mutedChannelIds'].includes(name)) void refreshNotificationCounts();
@@ -278,9 +279,10 @@ export function UserSettingsModal({ onClose }) {
             </div>
           ) : activeTab === 'preferences' ? (
             <section className="max-w-2xl space-y-3">
+              <ThemePicker value={preferences.colorTheme} onChange={(value) => updatePreference('colorTheme', value)} />
               <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
                 <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-violet-300/[0.08] text-violet-200"><Palette className="h-4 w-4" /></span><span><span className="block text-sm font-semibold text-white">Vurgu rengi</span><span className="mt-1 block text-xs text-slate-400">Buton ve seçili alanların rengini kişiselleştir.</span></span></div>
-                <div className="mt-4 flex flex-wrap gap-2">{[['violet', 'Mor', '#9baaff'], ['cyan', 'Turkuaz', '#67e8f9'], ['emerald', 'Zümrüt', '#6ee7b7'], ['rose', 'Gül', '#fda4af']].map(([id, label, color]) => <button key={id} type="button" aria-pressed={preferences.accentTheme === id} onClick={() => updatePreference('accentTheme', id)} className={`flex items-center gap-2 rounded-full border px-3 py-2 text-xs transition ${preferences.accentTheme === id ? 'border-white/25 bg-white/[0.08] text-white' : 'border-white/[0.07] text-slate-400 hover:bg-white/[0.04]'}`}><span className="h-3 w-3 rounded-full ring-2 ring-black/20" style={{ backgroundColor: color }} />{label}{preferences.accentTheme === id && <span className="text-[10px] text-emerald-200">Seçili</span>}</button>)}</div>
+                <div className="mt-4 flex flex-wrap gap-2">{[['auto', 'Temaya uyumlu', 'var(--theme-accent)'], ['violet', 'Mor', '#9baaff'], ['cyan', 'Turkuaz', '#67e8f9'], ['emerald', 'Zümrüt', '#6ee7b7'], ['rose', 'Gül', '#fda4af']].map(([id, label, color]) => <button key={id} type="button" aria-pressed={preferences.accentTheme === id} onClick={() => updatePreference('accentTheme', id)} className={`flex items-center gap-2 rounded-full border px-3 py-2 text-xs transition ${preferences.accentTheme === id ? 'border-white/25 bg-white/[0.08] text-white' : 'border-white/[0.07] text-slate-400 hover:bg-white/[0.04]'}`}><span className="h-3 w-3 rounded-full ring-2 ring-black/20" style={{ backgroundColor: color }} />{label}{preferences.accentTheme === id && <span className="text-[10px] text-emerald-200">Seçili</span>}</button>)}</div>
               </div>
               <div className="rounded-2xl border border-white/[0.08] bg-white/[0.025] p-4">
                 <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-violet-300/[0.08] text-violet-200"><MessageSquareText className="h-4 w-4" /></span><span><span className="block text-sm font-semibold text-white">Mesaj aralığı</span><span className="mt-1 block text-xs text-slate-400">Sohbeti daha ferah veya daha yoğun göster.</span></span></div>
